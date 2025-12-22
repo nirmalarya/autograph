@@ -41,7 +41,7 @@ class User(Base):
     # Relationships
     teams = relationship("Team", back_populates="owner")
     files = relationship("File", back_populates="owner")
-    comments = relationship("Comment", back_populates="user")
+    comments = relationship("Comment", back_populates="user", foreign_keys="Comment.user_id")
     folders = relationship("Folder", back_populates="owner")
     git_connections = relationship("GitConnection", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="user")
@@ -220,7 +220,7 @@ class Comment(Base):
     
     # Relationships
     file = relationship("File", back_populates="comments")
-    user = relationship("User", back_populates="comments")
+    user = relationship("User", back_populates="comments", foreign_keys=[user_id])
     parent = relationship("Comment", remote_side=[id], backref="replies")
     mentions = relationship("Mention", back_populates="comment", cascade="all, delete-orphan")
 

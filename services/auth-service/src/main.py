@@ -1,5 +1,6 @@
 """Auth Service - User authentication and authorization."""
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -7,6 +8,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr
 import os
+import traceback
 from dotenv import load_dotenv
 
 from .database import get_db
@@ -19,6 +21,21 @@ app = FastAPI(
     description="Authentication and authorization service",
     version="1.0.0"
 )
+
+# Add exception handler for debugging
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all exceptions and return detailed error."""
+    error_detail = {
+        "error": str(exc),
+        "type": type(exc).__name__,
+        "traceback": traceback.format_exc()
+    }
+    print(f"ERROR: {error_detail}")
+    return JSONResponse(
+        status_code=500,
+        content=error_detail
+    )
 
 # Security configuration
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
