@@ -11,8 +11,48 @@ import redis
 from dotenv import load_dotenv
 from datetime import datetime
 from jose import JWTError, jwt
+import uuid
+import logging
+import json
 
 load_dotenv()
+
+# Configure structured logging
+class StructuredLogger:
+    """Structured logger with JSON output for distributed tracing."""
+    
+    def __init__(self, service_name: str):
+        self.service_name = service_name
+        self.logger = logging.getLogger(service_name)
+        self.logger.setLevel(logging.INFO)
+        
+        # JSON formatter
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        self.logger.addHandler(handler)
+    
+    def log(self, level: str, message: str, correlation_id: str = None, **kwargs):
+        """Log structured message with correlation ID."""
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": self.service_name,
+            "level": level.upper(),
+            "message": message,
+            "correlation_id": correlation_id,
+            **kwargs
+        }
+        self.logger.info(json.dumps(log_data))
+    
+    def info(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("info", message, correlation_id, **kwargs)
+    
+    def error(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("error", message, correlation_id, **kwargs)
+    
+    def warning(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("warning", message, correlation_id, **kwargs)
+
+logger = StructuredLogger("api-gateway")
 
 # Redis connection for rate limiting
 redis_client = redis.Redis(
@@ -111,6 +151,8 @@ def verify_jwt_token(token: str) -> dict:
 @app.middleware("http")
 async def authenticate_request(request: Request, call_next):
     """Middleware to authenticate requests using JWT."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    
     # Check if route is public
     path = request.url.path
     if any(path.startswith(route) for route in PUBLIC_ROUTES):
@@ -119,6 +161,11 @@ async def authenticate_request(request: Request, call_next):
     # Get authorization header
     auth_header = request.headers.get("Authorization")
     if not auth_header:
+        logger.warning(
+            "Authentication failed: missing header",
+            correlation_id=correlation_id,
+            path=path
+        )
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Authorization header missing"}
@@ -127,6 +174,11 @@ async def authenticate_request(request: Request, call_next):
     # Extract token
     parts = auth_header.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
+        logger.warning(
+            "Authentication failed: invalid header format",
+            correlation_id=correlation_id,
+            path=path
+        )
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Invalid authorization header format"}
@@ -139,13 +191,73 @@ async def authenticate_request(request: Request, call_next):
         payload = verify_jwt_token(token)
         # Add user_id to request state for downstream services
         request.state.user_id = payload.get("sub")
+        
+        logger.info(
+            "Authentication successful",
+            correlation_id=correlation_id,
+            user_id=payload.get("sub"),
+            path=path
+        )
     except HTTPException as e:
+        logger.warning(
+            "Authentication failed: invalid token",
+            correlation_id=correlation_id,
+            error=str(e.detail),
+            path=path
+        )
         return JSONResponse(
             status_code=e.status_code,
             content={"detail": e.detail}
         )
     
     return await call_next(request)
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    """Middleware to add correlation ID for distributed tracing."""
+    # Get or generate correlation ID
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    # Store in request state
+    request.state.correlation_id = correlation_id
+    
+    # Log incoming request
+    logger.info(
+        "Incoming request",
+        correlation_id=correlation_id,
+        method=request.method,
+        path=request.url.path,
+        client_ip=get_remote_address(request)
+    )
+    
+    # Process request
+    try:
+        response = await call_next(request)
+        
+        # Add correlation ID to response headers
+        response.headers["X-Correlation-ID"] = correlation_id
+        
+        # Log outgoing response
+        logger.info(
+            "Outgoing response",
+            correlation_id=correlation_id,
+            status_code=response.status_code,
+            method=request.method,
+            path=request.url.path
+        )
+        
+        return response
+    except Exception as e:
+        # Log error with correlation ID
+        logger.error(
+            "Request processing error",
+            correlation_id=correlation_id,
+            error=str(e),
+            method=request.method,
+            path=request.url.path
+        )
+        raise
 
 
 @app.get("/health")
@@ -242,9 +354,16 @@ async def proxy_integrations(path: str, request: Request):
 
 
 async def proxy_request(service_name: str, path: str, request: Request):
-    """Proxy request to microservice."""
+    """Proxy request to microservice with correlation ID."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
     service_url = SERVICES.get(service_name)
     if not service_url:
+        logger.error(
+            "Service not found",
+            correlation_id=correlation_id,
+            service=service_name
+        )
         raise HTTPException(status_code=404, detail=f"Service {service_name} not found")
     
     # Build target URL
@@ -253,15 +372,40 @@ async def proxy_request(service_name: str, path: str, request: Request):
     # Get request body
     body = await request.body()
     
+    # Prepare headers with correlation ID
+    headers = dict(request.headers)
+    headers["X-Correlation-ID"] = correlation_id
+    
+    # Forward user_id if available
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        headers["X-User-ID"] = str(user_id)
+    
+    logger.info(
+        "Forwarding request to service",
+        correlation_id=correlation_id,
+        service=service_name,
+        target_url=target_url,
+        method=request.method
+    )
+    
     # Forward request
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.request(
                 method=request.method,
                 url=target_url,
-                headers=dict(request.headers),
+                headers=headers,
                 params=dict(request.query_params),
                 content=body
+            )
+            
+            logger.info(
+                "Service response received",
+                correlation_id=correlation_id,
+                service=service_name,
+                status_code=response.status_code,
+                response_time_ms=response.elapsed.total_seconds() * 1000
             )
             
             return JSONResponse(
@@ -270,8 +414,21 @@ async def proxy_request(service_name: str, path: str, request: Request):
                 headers=dict(response.headers)
             )
         except httpx.ConnectError:
+            logger.error(
+                "Service connection failed",
+                correlation_id=correlation_id,
+                service=service_name,
+                target_url=target_url
+            )
             raise HTTPException(status_code=503, detail=f"Service {service_name} unavailable")
         except Exception as e:
+            logger.error(
+                "Proxy error",
+                correlation_id=correlation_id,
+                service=service_name,
+                error=str(e),
+                error_type=type(e).__name__
+            )
             raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
 

@@ -9,6 +9,8 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr
 import os
 import traceback
+import json
+import logging
 from dotenv import load_dotenv
 
 from .database import get_db
@@ -16,22 +18,95 @@ from .models import User
 
 load_dotenv()
 
+# Configure structured logging
+class StructuredLogger:
+    """Structured logger with JSON output for distributed tracing."""
+    
+    def __init__(self, service_name: str):
+        self.service_name = service_name
+        self.logger = logging.getLogger(service_name)
+        self.logger.setLevel(logging.INFO)
+        
+        # JSON formatter
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        self.logger.addHandler(handler)
+    
+    def log(self, level: str, message: str, correlation_id: str = None, **kwargs):
+        """Log structured message with correlation ID."""
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": self.service_name,
+            "level": level.upper(),
+            "message": message,
+            "correlation_id": correlation_id,
+            **kwargs
+        }
+        self.logger.info(json.dumps(log_data))
+    
+    def info(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("info", message, correlation_id, **kwargs)
+    
+    def error(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("error", message, correlation_id, **kwargs)
+    
+    def warning(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("warning", message, correlation_id, **kwargs)
+
+logger = StructuredLogger("auth-service")
+
 app = FastAPI(
     title="AutoGraph v3 Auth Service",
     description="Authentication and authorization service",
     version="1.0.0"
 )
 
+# Middleware to log correlation ID
+@app.middleware("http")
+async def log_correlation_id(request: Request, call_next):
+    """Middleware to extract and log correlation ID."""
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    request.state.correlation_id = correlation_id
+    
+    logger.info(
+        "Request received",
+        correlation_id=correlation_id,
+        method=request.method,
+        path=request.url.path
+    )
+    
+    try:
+        response = await call_next(request)
+        logger.info(
+            "Response sent",
+            correlation_id=correlation_id,
+            status_code=response.status_code
+        )
+        return response
+    except Exception as e:
+        logger.error(
+            "Request processing error",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise
+
 # Add exception handler for debugging
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch all exceptions and return detailed error."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
     error_detail = {
         "error": str(exc),
         "type": type(exc).__name__,
         "traceback": traceback.format_exc()
     }
-    print(f"ERROR: {error_detail}")
+    logger.error(
+        "Unhandled exception",
+        correlation_id=correlation_id,
+        error=str(exc),
+        error_type=type(exc).__name__
+    )
     return JSONResponse(
         status_code=500,
         content=error_detail
