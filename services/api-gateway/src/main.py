@@ -7,6 +7,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import httpx
 import os
+import sys
 import redis
 from dotenv import load_dotenv
 from datetime import datetime
@@ -16,6 +17,10 @@ import logging
 import json
 
 load_dotenv()
+
+# Add shared modules to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+from shared.python.redis_pool import get_redis_client
 
 # Configure structured logging
 class StructuredLogger:
@@ -54,13 +59,12 @@ class StructuredLogger:
 
 logger = StructuredLogger("api-gateway")
 
-# Redis connection for rate limiting
-redis_client = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-    db=1,  # Use db 1 for rate limiting
-    decode_responses=True
-)
+# Redis connection with connection pooling
+# Using connection pool with max_connections=50 for high concurrency
+# Note: Client is created lazily on first use
+def get_redis():
+    """Get Redis client with connection pooling."""
+    return get_redis_client(db=1)  # Use db 1 for rate limiting
 
 # Custom key function for user-based rate limiting
 def get_user_identifier(request: Request) -> str:
