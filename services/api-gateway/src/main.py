@@ -2,19 +2,51 @@
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import httpx
 import os
+import redis
 from dotenv import load_dotenv
 from datetime import datetime
 from jose import JWTError, jwt
 
 load_dotenv()
 
+# Redis connection for rate limiting
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    db=1,  # Use db 1 for rate limiting
+    decode_responses=True
+)
+
+# Custom key function for user-based rate limiting
+def get_user_identifier(request: Request) -> str:
+    """Get user ID from JWT token or fall back to IP address."""
+    # Try to get user_id from request state (set by auth middleware)
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        return f"user:{user_id}"
+    # Fall back to IP address for non-authenticated requests
+    return f"ip:{get_remote_address(request)}"
+
+# Rate limiter configuration
+limiter = Limiter(
+    key_func=get_user_identifier,
+    storage_uri=f"redis://{os.getenv('REDIS_HOST', 'localhost')}:{os.getenv('REDIS_PORT', '6379')}/1"
+)
+
 app = FastAPI(
     title="AutoGraph v3 API Gateway",
     description="API Gateway for AutoGraph v3 microservices",
     version="1.0.0"
 )
+
+# Add rate limit exceeded handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # JWT configuration
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
@@ -117,7 +149,8 @@ async def authenticate_request(request: Request, call_next):
 
 
 @app.get("/health")
-async def health_check():
+@limiter.limit("1000/minute")  # IP-based rate limit
+async def health_check(request: Request):
     """API Gateway health check."""
     return {
         "status": "healthy",
@@ -128,7 +161,8 @@ async def health_check():
 
 
 @app.get("/health/services")
-async def services_health():
+@limiter.limit("1000/minute")  # IP-based rate limit
+async def services_health(request: Request):
     """Check health of all microservices."""
     health_status = {}
     
@@ -159,42 +193,49 @@ async def services_health():
 
 
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("1000/minute")  # IP-based for auth (public routes)
 async def proxy_auth(path: str, request: Request):
     """Route requests to auth service."""
     return await proxy_request("auth", path, request)
 
 
 @app.api_route("/api/diagrams/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_diagrams(path: str, request: Request):
     """Route requests to diagram service."""
     return await proxy_request("diagram", path, request)
 
 
 @app.api_route("/api/ai/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_ai(path: str, request: Request):
     """Route requests to AI service."""
     return await proxy_request("ai", path, request)
 
 
 @app.api_route("/api/collaboration/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_collaboration(path: str, request: Request):
     """Route requests to collaboration service."""
     return await proxy_request("collaboration", path, request)
 
 
 @app.api_route("/api/git/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_git(path: str, request: Request):
     """Route requests to git service."""
     return await proxy_request("git", path, request)
 
 
 @app.api_route("/api/export/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_export(path: str, request: Request):
     """Route requests to export service."""
     return await proxy_request("export", path, request)
 
 
 @app.api_route("/api/integrations/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@limiter.limit("100/minute")  # User-based rate limit
 async def proxy_integrations(path: str, request: Request):
     """Route requests to integration hub."""
     return await proxy_request("integration", path, request)
