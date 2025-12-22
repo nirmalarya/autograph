@@ -21,6 +21,7 @@ load_dotenv()
 # Add shared modules to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 from shared.python.redis_pool import get_redis_client
+from shared.python.circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
 
 # Configure structured logging
 class StructuredLogger:
@@ -113,6 +114,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Circuit breakers for each microservice
+# Protects against cascading failures by failing fast when a service is down
+circuit_breakers = {
+    "auth": CircuitBreaker(
+        name="auth-service",
+        failure_threshold=5,    # Open after 5 failures
+        timeout=30.0,           # Wait 30s before trying again
+        success_threshold=2,    # Need 2 successes to close
+        expected_exception=Exception
+    ),
+    "diagram": CircuitBreaker(
+        name="diagram-service",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+    "ai": CircuitBreaker(
+        name="ai-service",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+    "collaboration": CircuitBreaker(
+        name="collaboration-service",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+    "git": CircuitBreaker(
+        name="git-service",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+    "export": CircuitBreaker(
+        name="export-service",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+    "integration": CircuitBreaker(
+        name="integration-hub",
+        failure_threshold=5,
+        timeout=30.0,
+        success_threshold=2,
+        expected_exception=Exception
+    ),
+}
 
 # Service endpoints
 SERVICES = {
@@ -308,6 +363,21 @@ async def services_health(request: Request):
     }
 
 
+@app.get("/health/circuit-breakers")
+@limiter.limit("1000/minute")  # IP-based rate limit
+async def circuit_breakers_status(request: Request):
+    """Get circuit breaker status for all services."""
+    breaker_status = {}
+    
+    for service_name, breaker in circuit_breakers.items():
+        breaker_status[service_name] = breaker.get_stats()
+    
+    return {
+        "circuit_breakers": breaker_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 @limiter.limit("1000/minute")  # IP-based for auth (public routes)
 async def proxy_auth(path: str, request: Request):
@@ -358,7 +428,7 @@ async def proxy_integrations(path: str, request: Request):
 
 
 async def proxy_request(service_name: str, path: str, request: Request):
-    """Proxy request to microservice with correlation ID."""
+    """Proxy request to microservice with correlation ID and circuit breaker protection."""
     correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
     
     service_url = SERVICES.get(service_name)
@@ -369,6 +439,15 @@ async def proxy_request(service_name: str, path: str, request: Request):
             service=service_name
         )
         raise HTTPException(status_code=404, detail=f"Service {service_name} not found")
+    
+    # Get circuit breaker for this service
+    circuit_breaker = circuit_breakers.get(service_name)
+    if not circuit_breaker:
+        logger.warning(
+            "No circuit breaker configured for service",
+            correlation_id=correlation_id,
+            service=service_name
+        )
     
     # Build target URL
     target_url = f"{service_url}/{path}"
@@ -390,8 +469,29 @@ async def proxy_request(service_name: str, path: str, request: Request):
         correlation_id=correlation_id,
         service=service_name,
         target_url=target_url,
-        method=request.method
+        method=request.method,
+        circuit_state=circuit_breaker.state.value if circuit_breaker else "none"
     )
+    
+    # Check circuit breaker before making request
+    if circuit_breaker and circuit_breaker.state == CircuitState.OPEN:
+        if not circuit_breaker._should_attempt_reset():
+            logger.error(
+                "Circuit breaker open - failing fast",
+                correlation_id=correlation_id,
+                service=service_name,
+                circuit_state=circuit_breaker.state.value,
+                failure_count=circuit_breaker.failure_count
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Service {service_name} temporarily unavailable (circuit breaker open)"
+            )
+        else:
+            # Move to half-open to test
+            circuit_breaker._state = CircuitState.HALF_OPEN
+            circuit_breaker._success_count = 0
+            logger.info(f"Circuit breaker '{circuit_breaker.name}' moved to HALF_OPEN state")
     
     # Forward request
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -412,26 +512,39 @@ async def proxy_request(service_name: str, path: str, request: Request):
                 response_time_ms=response.elapsed.total_seconds() * 1000
             )
             
+            # Mark success in circuit breaker
+            if circuit_breaker:
+                circuit_breaker._on_success()
+            
             return JSONResponse(
                 content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"data": response.text},
                 status_code=response.status_code,
                 headers=dict(response.headers)
             )
         except httpx.ConnectError:
+            # Mark failure in circuit breaker
+            if circuit_breaker:
+                circuit_breaker._on_failure()
             logger.error(
                 "Service connection failed",
                 correlation_id=correlation_id,
                 service=service_name,
-                target_url=target_url
+                target_url=target_url,
+                circuit_state=circuit_breaker.state.value if circuit_breaker else "none",
+                failure_count=circuit_breaker.failure_count if circuit_breaker else 0
             )
             raise HTTPException(status_code=503, detail=f"Service {service_name} unavailable")
         except Exception as e:
+            # Mark failure in circuit breaker
+            if circuit_breaker:
+                circuit_breaker._on_failure()
             logger.error(
                 "Proxy error",
                 correlation_id=correlation_id,
                 service=service_name,
                 error=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
+                circuit_state=circuit_breaker.state.value if circuit_breaker else "none"
             )
             raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
