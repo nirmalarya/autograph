@@ -6,10 +6,11 @@ WORKDIR /app
 RUN apk add --no-cache \
     build-base \
     cairo-dev \
-    jpeg-dev \
+    libjpeg-turbo-dev \
     pango-dev \
     giflib-dev \
-    pixman-dev
+    pixman-dev \
+    pkgconfig
 
 # Copy package files
 COPY package.json package-lock.json* ./
