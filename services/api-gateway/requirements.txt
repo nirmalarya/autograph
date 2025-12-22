@@ -1,22 +1,25 @@
-# AutoGraph v3 - Diagram Service Dependencies
+# AutoGraph v3 - API Gateway Dependencies
 
 # FastAPI
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 
-# Database
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.9
+# HTTP Client
+httpx==0.27.0
 
 # Validation
 pydantic==2.10.0
 pydantic-settings==2.6.0
 
-# Storage
-minio==7.2.9
+# Authentication
+python-jose[cryptography]==3.3.0
 
 # Redis
 redis==5.2.0
+hiredis==3.0.0
+
+# Rate Limiting
+slowapi==0.1.9
 
 # Utilities
 python-dotenv==1.0.1
