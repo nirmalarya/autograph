@@ -163,29 +163,46 @@ async def health_check():
 @app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     """Register a new user."""
-    # Check if user already exists
-    existing_user = get_user_by_email(db, user_data.email)
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+    try:
+        print(f"DEBUG: Registration request for email: {user_data.email}")
+        
+        # Check if user already exists
+        existing_user = get_user_by_email(db, user_data.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Create new user
+        print(f"DEBUG: Creating new user...")
+        hashed_password = get_password_hash(user_data.password)
+        new_user = User(
+            email=user_data.email,
+            password_hash=hashed_password,
+            full_name=user_data.full_name,
+            is_active=True,
+            role="user"
         )
-    
-    # Create new user
-    hashed_password = get_password_hash(user_data.password)
-    new_user = User(
-        email=user_data.email,
-        password_hash=hashed_password,
-        full_name=user_data.full_name,
-        is_active=True,
-        role="user"
-    )
-    
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return new_user
+        
+        print(f"DEBUG: Adding user to database...")
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        print(f"DEBUG: User created successfully with ID: {new_user.id}")
+        return new_user
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR in register: {e}")
+        import traceback
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {str(e)}"
+        )
 
 
 @app.post("/login", response_model=Token)

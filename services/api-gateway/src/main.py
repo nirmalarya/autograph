@@ -1,11 +1,12 @@
 """API Gateway - Routes requests to microservices."""
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+from jose import JWTError, jwt
 
 load_dotenv()
 
@@ -14,6 +15,19 @@ app = FastAPI(
     description="API Gateway for AutoGraph v3 microservices",
     version="1.0.0"
 )
+
+# JWT configuration
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+JWT_ALGORITHM = "HS256"
+
+# Public routes that don't require authentication
+PUBLIC_ROUTES = [
+    "/health",
+    "/health/services",
+    "/api/auth/register",
+    "/api/auth/login",
+    "/api/auth/token",
+]
 
 # CORS configuration
 app.add_middleware(
@@ -34,6 +48,72 @@ SERVICES = {
     "export": f"http://localhost:{os.getenv('EXPORT_SERVICE_PORT', '8097')}",
     "integration": f"http://localhost:{os.getenv('INTEGRATION_HUB_PORT', '8099')}",
 }
+
+
+def verify_jwt_token(token: str) -> dict:
+    """Verify JWT token and return payload."""
+    try:
+        # Decode and verify token (includes expiration check)
+        payload = jwt.decode(
+            token, 
+            JWT_SECRET, 
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": True}  # Explicitly verify expiration
+        )
+        token_type = payload.get("type")
+        
+        if token_type != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+        
+        return payload
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )
+
+
+@app.middleware("http")
+async def authenticate_request(request: Request, call_next):
+    """Middleware to authenticate requests using JWT."""
+    # Check if route is public
+    path = request.url.path
+    if any(path.startswith(route) for route in PUBLIC_ROUTES):
+        return await call_next(request)
+    
+    # Get authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Authorization header missing"}
+        )
+    
+    # Extract token
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Invalid authorization header format"}
+        )
+    
+    token = parts[1]
+    
+    # Verify token
+    try:
+        payload = verify_jwt_token(token)
+        # Add user_id to request state for downstream services
+        request.state.user_id = payload.get("sub")
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=e.status_code,
+            content={"detail": e.detail}
+        )
+    
+    return await call_next(request)
 
 
 @app.get("/health")

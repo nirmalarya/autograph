@@ -24,6 +24,17 @@ async def health_check():
     }
 
 
+@app.get("/")
+async def list_diagrams():
+    """List diagrams endpoint (protected)."""
+    # This endpoint requires authentication from API Gateway
+    return {
+        "diagrams": [],
+        "total": 0,
+        "message": "Diagram list endpoint - authentication verified"
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("DIAGRAM_SERVICE_PORT", "8082")))
