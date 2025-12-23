@@ -930,6 +930,7 @@ PUBLIC_ROUTES = [
     "/api/auth/token",
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints
+    "/api/diagrams/shared/",  # Public shared diagram access
     "/test/",  # All test endpoints on gateway
 ]
 
@@ -3889,7 +3890,10 @@ async def simulate_disaster_recovery(
 
 # Import feature flag module
 import sys
-sys.path.append("/app/shared/python")
+import os
+# Support both Docker (/app) and local development paths
+shared_path = "/app/shared/python" if os.path.exists("/app/shared/python") else os.path.join(os.path.dirname(__file__), "../../../shared/python")
+sys.path.append(shared_path)
 from feature_flags import FeatureFlag, FeatureFlagManager, RolloutStrategy
 
 # Global feature flag manager instance

@@ -20,7 +20,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder
+from .models import File, User, Version, Folder, Share
 
 load_dotenv()
 
@@ -1305,6 +1305,263 @@ async def get_versions(
     )
     
     return versions
+
+
+# ==========================================
+# SHARE ENDPOINTS
+# ==========================================
+
+@app.post("/{diagram_id}/share")
+async def create_share_link(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a public share link for a diagram.
+    
+    Request body (optional):
+    {
+        "permission": "view" | "edit",  // Default: "view"
+        "is_public": true | false,       // Default: true
+        "password": "optional_password", // For password-protected shares
+        "expires_in_days": 7             // Optional expiration
+    }
+    
+    Returns:
+    {
+        "share_id": "uuid",
+        "token": "unique_token",
+        "share_url": "http://localhost:3000/shared/{token}",
+        "permission": "view",
+        "is_public": true,
+        "expires_at": "2025-12-30T00:00:00Z" or null
+    }
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        logger.warning(
+            "Unauthorized share creation attempt - no user ID",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating share link",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get diagram (only active diagrams can be shared)
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Share creation failed - diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization (only owner can share)
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized share creation attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Only the owner can share this diagram")
+    
+    # Parse request body (optional)
+    body = {}
+    try:
+        body = await request.json()
+    except:
+        pass  # No body provided, use defaults
+    
+    permission = body.get("permission", "view")
+    is_public = body.get("is_public", True)
+    password = body.get("password")
+    expires_in_days = body.get("expires_in_days")
+    
+    # Validate permission
+    if permission not in ["view", "edit"]:
+        raise HTTPException(status_code=400, detail="Permission must be 'view' or 'edit'")
+    
+    # Generate unique share token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    
+    # Calculate expiration
+    expires_at = None
+    if expires_in_days:
+        from datetime import timedelta
+        expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+    
+    # Hash password if provided
+    password_hash = None
+    if password:
+        import bcrypt
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    # Create share record
+    import uuid
+    share = Share(
+        id=str(uuid.uuid4()),
+        file_id=diagram_id,
+        token=token,
+        permission=permission,
+        is_public=is_public,
+        password_hash=password_hash,
+        expires_at=expires_at,
+        view_count=0,
+        created_by=user_id,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(share)
+    db.commit()
+    db.refresh(share)
+    
+    # Build share URL
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    share_url = f"{frontend_url}/shared/{token}"
+    
+    logger.info(
+        "Share link created successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        share_id=share.id,
+        token=token[:10] + "...",
+        permission=permission,
+        is_public=is_public
+    )
+    
+    return {
+        "share_id": share.id,
+        "token": token,
+        "share_url": share_url,
+        "permission": permission,
+        "is_public": is_public,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "has_password": password is not None
+    }
+
+
+@app.get("/shared/{token}")
+async def get_shared_diagram(
+    token: str,
+    password: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Access a shared diagram via its public token.
+    
+    Query params:
+    - password: Optional password for password-protected shares
+    
+    Returns:
+    {
+        "id": "diagram_id",
+        "title": "Diagram Title",
+        "type": "canvas",
+        "canvas_data": {...},
+        "note_content": "...",
+        "permission": "view",
+        "owner": {...}
+    }
+    """
+    logger.info(
+        "Accessing shared diagram",
+        token=token[:10] + "..."
+    )
+    
+    # Find share by token
+    share = db.query(Share).filter(Share.token == token).first()
+    
+    if not share:
+        logger.warning(
+            "Share not found",
+            token=token[:10] + "..."
+        )
+        raise HTTPException(status_code=404, detail="Share link not found")
+    
+    # Check if expired
+    if share.expires_at and share.expires_at < datetime.utcnow():
+        logger.warning(
+            "Share link expired",
+            token=token[:10] + "...",
+            expires_at=share.expires_at.isoformat()
+        )
+        raise HTTPException(status_code=410, detail="Share link has expired")
+    
+    # Check password if required
+    if share.password_hash:
+        if not password:
+            raise HTTPException(status_code=401, detail="Password required")
+        
+        import bcrypt
+        if not bcrypt.checkpw(password.encode('utf-8'), share.password_hash.encode('utf-8')):
+            logger.warning(
+                "Invalid password for shared diagram",
+                token=token[:10] + "..."
+            )
+            raise HTTPException(status_code=401, detail="Invalid password")
+    
+    # Get diagram
+    diagram = db.query(File).filter(
+        File.id == share.file_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Shared diagram not found or deleted",
+            token=token[:10] + "...",
+            file_id=share.file_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found or has been deleted")
+    
+    # Update view count and last accessed
+    share.view_count = (share.view_count or 0) + 1
+    share.last_accessed_at = datetime.utcnow()
+    db.commit()
+    
+    # Get owner info
+    owner = db.query(User).filter(User.id == diagram.owner_id).first()
+    
+    logger.info(
+        "Shared diagram accessed successfully",
+        token=token[:10] + "...",
+        diagram_id=diagram.id,
+        view_count=share.view_count
+    )
+    
+    return {
+        "id": diagram.id,
+        "title": diagram.title,
+        "type": diagram.file_type,
+        "canvas_data": diagram.canvas_data,
+        "note_content": diagram.note_content,
+        "permission": share.permission,
+        "is_public": share.is_public,
+        "owner": {
+            "id": owner.id if owner else None,
+            "full_name": owner.full_name if owner else "Unknown",
+            "email": owner.email if owner else None
+        },
+        "created_at": diagram.created_at.isoformat(),
+        "updated_at": diagram.updated_at.isoformat()
+    }
 
 
 if __name__ == "__main__":
