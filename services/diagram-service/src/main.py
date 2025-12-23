@@ -443,8 +443,10 @@ class DiagramResponse(BaseModel):
     is_deleted: bool
     view_count: int
     current_version: int
+    last_edited_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    last_accessed_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -1002,10 +1004,20 @@ async def get_diagram(
         )
         raise HTTPException(status_code=403, detail="You do not have permission to access this diagram")
     
+    # Increment view count
+    if diagram.view_count is None:
+        diagram.view_count = 0
+    diagram.view_count += 1
+    diagram.last_accessed_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
     logger.info(
         "Diagram fetched successfully",
         correlation_id=correlation_id,
-        diagram_id=diagram_id
+        diagram_id=diagram_id,
+        view_count=diagram.view_count
     )
     
     return diagram
@@ -1126,6 +1138,9 @@ async def update_diagram(
         diagram.canvas_data = update_data.canvas_data
     if update_data.note_content is not None:
         diagram.note_content = update_data.note_content
+    
+    # Track who last edited the diagram
+    diagram.last_edited_by = user_id
     
     # Create new version with auto-incremented version number
     create_version(db, diagram, description=update_data.description, created_by=user_id)

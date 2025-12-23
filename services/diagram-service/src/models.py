@@ -41,7 +41,7 @@ class User(Base):
     
     # Relationships
     teams = relationship("Team", back_populates="owner")
-    files = relationship("File", back_populates="owner")
+    files = relationship("File", back_populates="owner", foreign_keys="File.owner_id")
     comments = relationship("Comment", back_populates="user", foreign_keys="Comment.user_id")
     folders = relationship("Folder", back_populates="owner")
     git_connections = relationship("GitConnection", back_populates="user")
@@ -137,6 +137,7 @@ class File(Base):
     is_deleted = Column(Boolean, default=False)  # Soft delete
     deleted_at = Column(DateTime(timezone=True))
     view_count = Column(Integer, default=0)
+    last_edited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     
     # Version control
     current_version = Column(Integer, default=1)
@@ -147,7 +148,7 @@ class File(Base):
     last_accessed_at = Column(DateTime(timezone=True))
     
     # Relationships
-    owner = relationship("User", back_populates="files")
+    owner = relationship("User", back_populates="files", foreign_keys=[owner_id])
     team = relationship("Team", back_populates="files")
     folder = relationship("Folder", back_populates="files")
     versions = relationship("Version", back_populates="file", cascade="all, delete-orphan")
