@@ -22,7 +22,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction
 
 load_dotenv()
 
@@ -2553,14 +2553,55 @@ async def revoke_share_link(
     }
 
 
-@app.post("/{diagram_id}/comments")
-async def add_comment(
+# ==========================================
+# COMMENTS API ENDPOINTS (Full Implementation)
+# ==========================================
+
+class CreateCommentRequest(BaseModel):
+    """Request model for creating a comment."""
+    content: str
+    parent_id: Optional[str] = None  # For threaded replies
+    position_x: Optional[float] = None  # For canvas comments
+    position_y: Optional[float] = None
+    element_id: Optional[str] = None  # TLDraw element ID
+
+class UpdateCommentRequest(BaseModel):
+    """Request model for updating a comment."""
+    content: str
+
+class CommentResponse(BaseModel):
+    """Response model for a comment."""
+    id: str
+    file_id: str
+    user_id: str
+    parent_id: Optional[str] = None
+    content: str
+    position_x: Optional[float] = None
+    position_y: Optional[float] = None
+    element_id: Optional[str] = None
+    is_resolved: bool
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    user: Optional[Dict[str, Any]] = None  # User info
+    replies_count: int = 0
+    reactions: Optional[Dict[str, int]] = None  # Emoji -> count
+    mentions: Optional[list[str]] = None  # User IDs mentioned
+
+    class Config:
+        from_attributes = True
+
+
+@app.get("/{diagram_id}/comments")
+async def get_comments(
     diagram_id: str,
     request: Request,
-    content: str = None,
+    is_resolved: Optional[bool] = None,
+    parent_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Add a comment to a diagram and increment comment count."""
+    """Get all comments for a diagram with filters."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -2568,75 +2609,288 @@ async def add_comment(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     logger.info(
-        "Adding comment to diagram",
+        "Getting comments for diagram",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
         user_id=user_id
     )
     
-    # Get the diagram
+    # Verify diagram exists and user has access
     diagram = db.query(File).filter(File.id == diagram_id).first()
-    
     if not diagram:
-        logger.error(
-            "Diagram not found for comment",
-            correlation_id=correlation_id,
-            diagram_id=diagram_id
-        )
         raise HTTPException(status_code=404, detail="Diagram not found")
     
-    # Check if user has access (owner or shared with)
-    has_access = (
-        diagram.owner_id == user_id or
-        db.query(Share).filter(
-            Share.file_id == diagram_id,
-            Share.shared_with_user_id == user_id
-        ).first() is not None
-    )
+    # Build query
+    query = db.query(Comment).filter(Comment.file_id == diagram_id)
     
-    if not has_access:
-        logger.error(
-            "User does not have access to add comment",
-            correlation_id=correlation_id,
-            diagram_id=diagram_id,
-            user_id=user_id
-        )
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Apply filters
+    if is_resolved is not None:
+        query = query.filter(Comment.is_resolved == is_resolved)
     
-    # Increment comment count
-    old_count = diagram.comment_count if hasattr(diagram, 'comment_count') else 0
-    diagram.comment_count = old_count + 1
-    diagram.updated_at = datetime.utcnow()
-    diagram.last_activity = datetime.utcnow()  # Update last activity on comment
+    if parent_id is not None:
+        query = query.filter(Comment.parent_id == parent_id)
     
-    db.commit()
-    db.refresh(diagram)
+    # Order by creation time (oldest first for threads)
+    comments = query.order_by(Comment.created_at.asc()).all()
+    
+    # Enrich comments with user info and reactions
+    enriched_comments = []
+    for comment in comments:
+        # Get user info
+        user = db.query(User).filter(User.id == comment.user_id).first()
+        
+        # Count replies
+        replies_count = db.query(Comment).filter(Comment.parent_id == comment.id).count()
+        
+        # Get reactions grouped by emoji
+        reactions_query = db.query(
+            CommentReaction.emoji,
+            func.count(CommentReaction.id).label('count')
+        ).filter(
+            CommentReaction.comment_id == comment.id
+        ).group_by(CommentReaction.emoji).all()
+        
+        reactions = {emoji: count for emoji, count in reactions_query}
+        
+        # Get mentions
+        mentions = db.query(Mention).filter(Mention.comment_id == comment.id).all()
+        mentioned_user_ids = [m.user_id for m in mentions]
+        
+        comment_dict = {
+            "id": comment.id,
+            "file_id": comment.file_id,
+            "user_id": comment.user_id,
+            "parent_id": comment.parent_id,
+            "content": comment.content,
+            "position_x": comment.position_x,
+            "position_y": comment.position_y,
+            "element_id": comment.element_id,
+            "is_resolved": comment.is_resolved,
+            "resolved_at": comment.resolved_at,
+            "resolved_by": comment.resolved_by,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
+            "user": {
+                "id": user.id if user else None,
+                "full_name": user.full_name if user else "Unknown",
+                "email": user.email if user else None,
+                "avatar_url": user.avatar_url if user else None
+            },
+            "replies_count": replies_count,
+            "reactions": reactions,
+            "mentions": mentioned_user_ids
+        }
+        
+        enriched_comments.append(comment_dict)
     
     logger.info(
-        "Comment added successfully",
+        "Comments retrieved successfully",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
-        old_count=old_count,
-        new_count=diagram.comment_count,
-        user_id=user_id
+        count=len(enriched_comments)
     )
     
     return {
-        "message": "Comment added successfully",
-        "id": diagram_id,
-        "comment_count": diagram.comment_count,
-        "updated_at": diagram.updated_at.isoformat()
+        "comments": enriched_comments,
+        "total": len(enriched_comments)
     }
 
 
-@app.delete("/{diagram_id}/comments/{comment_id}")
-async def delete_comment(
+@app.post("/{diagram_id}/comments", status_code=201)
+async def create_comment(
+    diagram_id: str,
+    request: Request,
+    comment_data: CreateCommentRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new comment on a diagram."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Creating comment on diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Verify diagram exists
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Create comment
+    new_comment = Comment(
+        id=str(uuid.uuid4()),
+        file_id=diagram_id,
+        user_id=user_id,
+        parent_id=comment_data.parent_id,
+        content=comment_data.content,
+        position_x=comment_data.position_x,
+        position_y=comment_data.position_y,
+        element_id=comment_data.element_id
+    )
+    
+    db.add(new_comment)
+    
+    # Increment comment count on diagram
+    diagram.comment_count = (diagram.comment_count or 0) + 1
+    diagram.last_activity = datetime.utcnow()
+    diagram.updated_at = datetime.utcnow()
+    
+    # Extract and create mentions
+    import re
+    mention_pattern = r'@(\w+)'
+    mentioned_usernames = re.findall(mention_pattern, comment_data.content)
+    
+    for username in mentioned_usernames:
+        # Find user by email (assuming username is email prefix)
+        mentioned_user = db.query(User).filter(
+            User.email.like(f"{username}%")
+        ).first()
+        
+        if mentioned_user:
+            mention = Mention(
+                id=str(uuid.uuid4()),
+                comment_id=new_comment.id,
+                user_id=mentioned_user.id
+            )
+            db.add(mention)
+    
+    db.commit()
+    db.refresh(new_comment)
+    
+    # Get user info for response
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    logger.info(
+        "Comment created successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        comment_id=new_comment.id,
+        mentions_count=len(mentioned_usernames)
+    )
+    
+    # Send WebSocket notification
+    collaboration_service_url = os.getenv("COLLABORATION_SERVICE_URL", "http://localhost:8083")
+    room_id = f"file:{diagram_id}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(
+                f"{collaboration_service_url}/broadcast/{room_id}",
+                json={
+                    "type": "comment_added",
+                    "comment_id": new_comment.id,
+                    "diagram_id": diagram_id,
+                    "user_id": user_id,
+                    "content": comment_data.content[:100],  # Truncate for notification
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+    except Exception as e:
+        logger.warning(
+            "Failed to send WebSocket notification for comment",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+    
+    return {
+        "id": new_comment.id,
+        "file_id": new_comment.file_id,
+        "user_id": new_comment.user_id,
+        "parent_id": new_comment.parent_id,
+        "content": new_comment.content,
+        "position_x": new_comment.position_x,
+        "position_y": new_comment.position_y,
+        "element_id": new_comment.element_id,
+        "is_resolved": new_comment.is_resolved,
+        "created_at": new_comment.created_at.isoformat(),
+        "updated_at": new_comment.updated_at.isoformat(),
+        "user": {
+            "id": user.id if user else None,
+            "full_name": user.full_name if user else "Unknown",
+            "email": user.email if user else None,
+            "avatar_url": user.avatar_url if user else None
+        },
+        "replies_count": 0,
+        "reactions": {},
+        "mentions": mentioned_usernames
+    }
+
+
+@app.put("/{diagram_id}/comments/{comment_id}")
+async def update_comment(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    comment_data: UpdateCommentRequest,
+    db: Session = Depends(get_db)
+):
+    """Update a comment (edit within 5 minutes)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Updating comment",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        user_id=user_id
+    )
+    
+    # Get comment
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Check ownership
+    if comment.user_id != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own comments")
+    
+    # Check if within 5 minutes
+    time_since_creation = (datetime.utcnow() - comment.created_at.replace(tzinfo=None)).total_seconds()
+    if time_since_creation > 300:  # 5 minutes
+        raise HTTPException(status_code=403, detail="Comments can only be edited within 5 minutes of creation")
+    
+    # Update comment
+    comment.content = comment_data.content
+    comment.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(comment)
+    
+    logger.info(
+        "Comment updated successfully",
+        correlation_id=correlation_id,
+        comment_id=comment_id
+    )
+    
+    return {
+        "id": comment.id,
+        "content": comment.content,
+        "updated_at": comment.updated_at.isoformat(),
+        "message": "Comment updated successfully"
+    }
+
+
+@app.delete("/{diagram_id}/comments/{comment_id}/delete")
+async def delete_comment_permanently(
     diagram_id: str,
     comment_id: str,
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Delete a comment from a diagram and decrement comment count."""
+    """Delete a comment permanently."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -2644,67 +2898,227 @@ async def delete_comment(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     logger.info(
-        "Deleting comment from diagram",
+        "Deleting comment permanently",
         correlation_id=correlation_id,
-        diagram_id=diagram_id,
         comment_id=comment_id,
         user_id=user_id
     )
     
-    # Get the diagram
+    # Get comment
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Check ownership or admin
     diagram = db.query(File).filter(File.id == diagram_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
     
-    if not diagram:
-        logger.error(
-            "Diagram not found for comment deletion",
-            correlation_id=correlation_id,
-            diagram_id=diagram_id
-        )
-        raise HTTPException(status_code=404, detail="Diagram not found")
+    is_owner = comment.user_id == user_id
+    is_diagram_owner = diagram and diagram.owner_id == user_id
+    is_admin = user and user.role == "admin"
     
-    # Check if user has access (owner or shared with)
-    has_access = (
-        diagram.owner_id == user_id or
-        db.query(Share).filter(
-            Share.file_id == diagram_id,
-            Share.shared_with_user_id == user_id
-        ).first() is not None
-    )
+    if not (is_owner or is_diagram_owner or is_admin):
+        raise HTTPException(status_code=403, detail="You can only delete your own comments")
     
-    if not has_access:
-        logger.error(
-            "User does not have access to delete comment",
-            correlation_id=correlation_id,
-            diagram_id=diagram_id,
-            user_id=user_id
-        )
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Delete comment (cascades to mentions and reactions)
+    db.delete(comment)
     
-    # Decrement comment count (but not below 0)
-    old_count = diagram.comment_count if hasattr(diagram, 'comment_count') else 0
-    diagram.comment_count = max(0, old_count - 1)
-    diagram.updated_at = datetime.utcnow()
+    # Decrement comment count
+    if diagram:
+        diagram.comment_count = max(0, (diagram.comment_count or 1) - 1)
+        diagram.updated_at = datetime.utcnow()
     
     db.commit()
-    db.refresh(diagram)
     
     logger.info(
-        "Comment deleted successfully",
+        "Comment deleted permanently",
         correlation_id=correlation_id,
-        diagram_id=diagram_id,
-        comment_id=comment_id,
-        old_count=old_count,
-        new_count=diagram.comment_count,
-        user_id=user_id
+        comment_id=comment_id
     )
     
     return {
         "message": "Comment deleted successfully",
-        "id": diagram_id,
-        "comment_id": comment_id,
-        "comment_count": diagram.comment_count,
-        "updated_at": diagram.updated_at.isoformat()
+        "comment_id": comment_id
     }
+
+
+@app.post("/{diagram_id}/comments/{comment_id}/resolve")
+async def resolve_comment(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Mark a comment as resolved."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Get comment
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Mark as resolved
+    comment.is_resolved = True
+    comment.resolved_at = datetime.utcnow()
+    comment.resolved_by = user_id
+    comment.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(comment)
+    
+    logger.info(
+        "Comment resolved",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        resolved_by=user_id
+    )
+    
+    return {
+        "message": "Comment resolved",
+        "comment_id": comment_id,
+        "is_resolved": True,
+        "resolved_at": comment.resolved_at.isoformat()
+    }
+
+
+@app.post("/{diagram_id}/comments/{comment_id}/reopen")
+async def reopen_comment(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Reopen a resolved comment."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Get comment
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Reopen comment
+    comment.is_resolved = False
+    comment.resolved_at = None
+    comment.resolved_by = None
+    comment.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(comment)
+    
+    logger.info(
+        "Comment reopened",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        reopened_by=user_id
+    )
+    
+    return {
+        "message": "Comment reopened",
+        "comment_id": comment_id,
+        "is_resolved": False
+    }
+
+
+@app.post("/{diagram_id}/comments/{comment_id}/reactions")
+async def add_reaction(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Add an emoji reaction to a comment."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Parse request body for emoji
+    body = await request.json()
+    emoji = body.get("emoji")
+    
+    if not emoji:
+        raise HTTPException(status_code=400, detail="Emoji is required")
+    
+    # Verify comment exists
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+    
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    
+    # Check if reaction already exists (unique constraint)
+    existing_reaction = db.query(CommentReaction).filter(
+        CommentReaction.comment_id == comment_id,
+        CommentReaction.user_id == user_id,
+        CommentReaction.emoji == emoji
+    ).first()
+    
+    if existing_reaction:
+        # Remove reaction (toggle)
+        db.delete(existing_reaction)
+        db.commit()
+        
+        logger.info(
+            "Reaction removed",
+            correlation_id=correlation_id,
+            comment_id=comment_id,
+            emoji=emoji,
+            user_id=user_id
+        )
+        
+        return {
+            "message": "Reaction removed",
+            "emoji": emoji,
+            "action": "removed"
+        }
+    else:
+        # Add reaction
+        reaction = CommentReaction(
+            id=str(uuid.uuid4()),
+            comment_id=comment_id,
+            user_id=user_id,
+            emoji=emoji
+        )
+        
+        db.add(reaction)
+        db.commit()
+        
+        logger.info(
+            "Reaction added",
+            correlation_id=correlation_id,
+            comment_id=comment_id,
+            emoji=emoji,
+            user_id=user_id
+        )
+        
+        return {
+            "message": "Reaction added",
+            "emoji": emoji,
+            "action": "added"
+        }
 
 
 if __name__ == "__main__":

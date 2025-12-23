@@ -265,6 +265,32 @@ class Mention(Base):
     )
 
 
+class CommentReaction(Base):
+    """Comment reactions table (emoji reactions)."""
+    __tablename__ = "comment_reactions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    comment_id = Column(String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Reaction emoji (Unicode emoji or shortcode)
+    emoji = Column(String(10), nullable=False)  # e.g., "👍", "❤️", "😄"
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    comment = relationship("Comment", backref="reactions")
+
+    __table_args__ = (
+        Index('idx_comment_reactions_comment', 'comment_id'),
+        Index('idx_comment_reactions_user', 'user_id'),
+        Index('idx_comment_reactions_emoji', 'comment_id', 'emoji'),
+        # Ensure one user can only have one reaction of each type per comment
+        Index('idx_comment_reactions_unique', 'comment_id', 'user_id', 'emoji', unique=True),
+    )
+
+
 class Share(Base):
     """Share links table."""
     __tablename__ = "shares"
