@@ -320,22 +320,76 @@ async def metrics():
 
 
 @app.get("/")
-async def list_diagrams(request: Request):
-    """List diagrams endpoint (protected)."""
+async def list_diagrams(
+    request: Request,
+    page: int = 1,
+    page_size: int = 20,
+    file_type: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List diagrams endpoint with pagination, filtering, and search."""
     correlation_id = getattr(request.state, "correlation_id", "unknown")
-    user_id = request.headers.get("X-User-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
     
     logger.info(
         "Listing diagrams",
         correlation_id=correlation_id,
-        user_id=user_id
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+        file_type=file_type,
+        search=search
     )
     
-    # This endpoint requires authentication from API Gateway
+    # Build query
+    query = db.query(File).filter(
+        File.owner_id == user_id,
+        File.is_deleted == False
+    )
+    
+    # Apply filters
+    if file_type:
+        if file_type not in ['canvas', 'note', 'mixed']:
+            raise HTTPException(status_code=400, detail="Invalid file_type. Must be: canvas, note, or mixed")
+        query = query.filter(File.file_type == file_type)
+    
+    # Apply search
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(File.title.ilike(search_pattern))
+    
+    # Get total count
+    total = query.count()
+    
+    # Apply pagination
+    offset = (page - 1) * page_size
+    diagrams = query.order_by(File.updated_at.desc()).offset(offset).limit(page_size).all()
+    
+    # Calculate pagination info
+    total_pages = (total + page_size - 1) // page_size  # Ceiling division
+    
+    logger.info(
+        "Diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        total=total,
+        page=page,
+        total_pages=total_pages,
+        returned=len(diagrams)
+    )
+    
     return {
-        "diagrams": [],
-        "total": 0,
-        "message": "Diagram list endpoint - authentication verified"
+        "diagrams": [DiagramResponse.model_validate(d) for d in diagrams],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1
     }
 
 

@@ -3,6 +3,25 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+interface Diagram {
+  id: string;
+  title: string;
+  file_type: 'canvas' | 'note' | 'mixed';
+  created_at: string;
+  updated_at: string;
+  current_version: number;
+}
+
+interface DiagramsResponse {
+  diagrams: Diagram[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ email?: string; sub?: string } | null>(null);
@@ -12,6 +31,18 @@ export default function DashboardPage() {
   const [diagramType, setDiagramType] = useState<'canvas' | 'note' | 'mixed'>('canvas');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  
+  // Diagram list state
+  const [diagrams, setDiagrams] = useState<Diagram[]>([]);
+  const [loadingDiagrams, setLoadingDiagrams] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrev, setHasPrev] = useState(false);
+  const [filterType, setFilterType] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
 
   useEffect(() => {
     // Check if user is authenticated
@@ -33,6 +64,73 @@ export default function DashboardPage() {
 
     setLoading(false);
   }, [router]);
+
+  // Fetch diagrams when user, page, filterType, or searchQuery changes
+  useEffect(() => {
+    if (user?.sub) {
+      fetchDiagrams();
+    }
+  }, [user, page, filterType, searchQuery]);
+
+  const fetchDiagrams = async () => {
+    if (!user?.sub) return;
+
+    setLoadingDiagrams(true);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        page_size: '20',
+      });
+
+      if (filterType) {
+        params.append('file_type', filterType);
+      }
+
+      if (searchQuery) {
+        params.append('search', searchQuery);
+      }
+
+      const response = await fetch(`http://localhost:8082/?${params.toString()}`, {
+        headers: {
+          'X-User-ID': user.sub,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch diagrams');
+      }
+
+      const data: DiagramsResponse = await response.json();
+      setDiagrams(data.diagrams);
+      setTotal(data.total);
+      setTotalPages(data.total_pages);
+      setHasNext(data.has_next);
+      setHasPrev(data.has_prev);
+    } catch (err) {
+      console.error('Failed to fetch diagrams:', err);
+    } finally {
+      setLoadingDiagrams(false);
+    }
+  };
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearchQuery(searchInput);
+    setPage(1); // Reset to first page on new search
+  };
+
+  const handleFilterChange = (type: string) => {
+    setFilterType(type);
+    setPage(1); // Reset to first page on filter change
+  };
+
+  const handleDiagramClick = (diagram: Diagram) => {
+    if (diagram.file_type === 'note') {
+      router.push(`/note/${diagram.id}`);
+    } else {
+      router.push(`/canvas/${diagram.id}`);
+    }
+  };
 
   const handleCreateDiagram = async () => {
     if (!diagramTitle.trim()) {
@@ -65,6 +163,12 @@ export default function DashboardPage() {
       }
 
       const diagram = await response.json();
+      
+      // Close modal and refresh list
+      setShowCreateModal(false);
+      setDiagramTitle('');
+      setDiagramType('canvas');
+      fetchDiagrams();
       
       // Redirect to the appropriate editor
       if (diagramType === 'canvas') {
@@ -120,119 +224,171 @@ export default function DashboardPage() {
       </nav>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">
-            Welcome to AutoGraph v3
-          </h2>
-          <p className="text-gray-600">
-            Start creating professional diagrams with AI assistance
-          </p>
+        <div className="mb-8 flex justify-between items-center">
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">
+              My Diagrams
+            </h2>
+            <p className="text-gray-600">
+              {total} diagram{total !== 1 ? 's' : ''} total
+            </p>
+          </div>
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+          >
+            + Create Diagram
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                My Diagrams
-              </h3>
-              <span className="text-2xl">📊</span>
+        {/* Search and Filter */}
+        <div className="mb-6 bg-white rounded-lg shadow-sm p-4 border border-gray-200">
+          <div className="flex flex-col md:flex-row gap-4">
+            <form onSubmit={handleSearch} className="flex-1">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Search diagrams by title..."
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+                >
+                  Search
+                </button>
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchInput('');
+                      setSearchQuery('');
+                      setPage(1);
+                    }}
+                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md font-medium hover:bg-gray-300 transition"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </form>
+            
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleFilterChange('')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  filterType === '' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => handleFilterChange('canvas')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  filterType === 'canvas' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Canvas
+              </button>
+              <button
+                onClick={() => handleFilterChange('note')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  filterType === 'note' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Note
+              </button>
+              <button
+                onClick={() => handleFilterChange('mixed')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  filterType === 'mixed' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                Mixed
+              </button>
             </div>
-            <p className="text-gray-600 mb-4">
-              View and manage your diagrams
-            </p>
-            <button className="w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition">
-              View Diagrams
-            </button>
           </div>
+        </div>
 
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                New Diagram
-              </h3>
-              <span className="text-2xl">✨</span>
-            </div>
-            <p className="text-gray-600 mb-4">
-              Create a new diagram from scratch
+        {/* Diagrams List */}
+        {loadingDiagrams ? (
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <p className="mt-4 text-gray-600">Loading diagrams...</p>
+          </div>
+        ) : diagrams.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
+            <p className="text-gray-600 text-lg mb-4">
+              {searchQuery || filterType 
+                ? 'No diagrams found matching your criteria' 
+                : 'No diagrams yet'}
             </p>
             <button 
               onClick={() => setShowCreateModal(true)}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+              className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
             >
-              Create Diagram
+              Create Your First Diagram
             </button>
           </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                AI Generation
-              </h3>
-              <span className="text-2xl">🤖</span>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {diagrams.map((diagram) => (
+                <div
+                  key={diagram.id}
+                  onClick={() => handleDiagramClick(diagram)}
+                  className="bg-white rounded-lg shadow-sm p-4 border border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 transition"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
+                      {diagram.title}
+                    </h3>
+                    <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                      {diagram.file_type}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>Version: {diagram.current_version}</p>
+                    <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="text-gray-600 mb-4">
-              Generate diagrams with AI
-            </p>
-            <button className="w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition">
-              Generate with AI
-            </button>
-          </div>
 
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Templates
-              </h3>
-              <span className="text-2xl">📋</span>
-            </div>
-            <p className="text-gray-600 mb-4">
-              Start from a template
-            </p>
-            <button className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition">
-              Browse Templates
-            </button>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Shared with Me
-              </h3>
-              <span className="text-2xl">👥</span>
-            </div>
-            <p className="text-gray-600 mb-4">
-              Diagrams shared by others
-            </p>
-            <button className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition">
-              View Shared
-            </button>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Settings
-              </h3>
-              <span className="text-2xl">⚙️</span>
-            </div>
-            <p className="text-gray-600 mb-4">
-              Manage your account
-            </p>
-            <a href="/settings/security" className="block w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition text-center">
-              Open Settings
-            </a>
-          </div>
-        </div>
-
-        <div className="mt-12 bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-blue-900 mb-2">
-            🎉 Welcome to AutoGraph v3!
-          </h3>
-          <p className="text-blue-800">
-            You've successfully registered and logged in. The dashboard is currently under development.
-            More features coming soon!
-          </p>
-        </div>
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="mt-8 flex justify-center items-center gap-4">
+                <button
+                  onClick={() => setPage(page - 1)}
+                  disabled={!hasPrev}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="text-gray-700">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(page + 1)}
+                  disabled={!hasNext}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Create Diagram Modal */}
