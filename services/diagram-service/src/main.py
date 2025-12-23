@@ -20,7 +20,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version
+from .models import File, User, Version, Folder
 
 load_dotenv()
 
@@ -1081,6 +1081,111 @@ async def duplicate_diagram(
         "version": duplicate.current_version,
         "created_at": duplicate.created_at.isoformat(),
         "updated_at": duplicate.updated_at.isoformat()
+    }
+
+
+@app.put("/{diagram_id}/move")
+async def move_diagram(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Move diagram to a folder (or root if folder_id is null)."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        logger.warning(
+            "Unauthorized move attempt - no user ID",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Parse request body
+    try:
+        body = await request.json()
+        folder_id = body.get("folder_id")  # Can be null to move to root
+    except Exception as e:
+        logger.error(
+            "Invalid request body",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    
+    logger.info(
+        "Moving diagram to folder",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    # Get diagram (only active diagrams)
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found or deleted",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization - only owner can move
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized move attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to move this diagram")
+    
+    # If folder_id is provided, verify folder exists and user owns it
+    if folder_id:
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == user_id
+        ).first()
+        
+        if not folder:
+            logger.warning(
+                "Folder not found or not owned by user",
+                correlation_id=correlation_id,
+                folder_id=folder_id,
+                user_id=user_id
+            )
+            raise HTTPException(status_code=404, detail="Folder not found")
+    
+    # Move diagram to folder (or root if folder_id is None)
+    old_folder_id = diagram.folder_id
+    diagram.folder_id = folder_id
+    diagram.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Diagram moved successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        old_folder_id=old_folder_id,
+        new_folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    return {
+        "message": "Diagram moved successfully",
+        "id": diagram_id,
+        "title": diagram.title,
+        "folder_id": diagram.folder_id,
+        "updated_at": diagram.updated_at.isoformat()
     }
 
 
