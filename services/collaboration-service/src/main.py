@@ -36,6 +36,19 @@ class PresenceStatus(str, Enum):
     OFFLINE = "offline"
 
 
+class UserRole(str, Enum):
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    ADMIN = "admin"
+
+
+class ConnectionQuality(str, Enum):
+    EXCELLENT = "excellent"  # < 50ms latency
+    GOOD = "good"           # 50-150ms
+    FAIR = "fair"           # 150-300ms
+    POOR = "poor"           # > 300ms
+
+
 @dataclass
 class UserPresence:
     """Track user presence information."""
@@ -44,16 +57,22 @@ class UserPresence:
     email: str
     color: str
     status: PresenceStatus
+    role: UserRole = UserRole.EDITOR
     cursor_x: float = 0
     cursor_y: float = 0
     last_active: datetime = None
+    last_heartbeat: datetime = None
     selected_elements: List[str] = None
     active_element: Optional[str] = None
     is_typing: bool = False
+    connection_quality: ConnectionQuality = ConnectionQuality.GOOD
+    latency_ms: float = 0
     
     def __post_init__(self):
         if self.last_active is None:
             self.last_active = datetime.utcnow()
+        if self.last_heartbeat is None:
+            self.last_heartbeat = datetime.utcnow()
         if self.selected_elements is None:
             self.selected_elements = []
 
@@ -453,7 +472,7 @@ async def disconnect(sid):
 async def join_room(sid, data):
     """
     Handle client joining a room.
-    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "username": "User Name"}
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "username": "User Name", "role": "viewer|editor|admin"}
     """
     try:
         # Get session data
@@ -461,6 +480,13 @@ async def join_room(sid, data):
         user_id = data.get('user_id') or session.get('user_id')
         username = data.get('username') or session.get('username', 'Anonymous')
         email = session.get('email', '')
+        role_str = data.get('role', 'editor')
+        
+        # Validate and set role
+        try:
+            user_role = UserRole(role_str)
+        except ValueError:
+            user_role = UserRole.EDITOR
         
         room_id = data.get('room')
         
@@ -492,7 +518,8 @@ async def join_room(sid, data):
                 username=username,
                 email=email,
                 color=color,
-                status=PresenceStatus.ONLINE
+                status=PresenceStatus.ONLINE,
+                role=user_role
             )
             room_users[room_id][user_id] = presence
         else:
@@ -500,8 +527,9 @@ async def join_room(sid, data):
             presence = room_users[room_id][user_id]
             presence.status = PresenceStatus.ONLINE
             presence.last_active = datetime.utcnow()
+            presence.role = user_role  # Update role
         
-        logger.info(f"Client {sid} ({username}) joined room {room_id}")
+        logger.info(f"Client {sid} ({username}) joined room {room_id} as {user_role.value}")
         
         # Get all current users in the room
         current_users = []
@@ -512,10 +540,12 @@ async def join_room(sid, data):
                 "email": pres.email,
                 "color": pres.color,
                 "status": pres.status.value,
+                "role": pres.role.value,
                 "cursor": {"x": pres.cursor_x, "y": pres.cursor_y},
                 "selected_elements": pres.selected_elements,
                 "active_element": pres.active_element,
-                "is_typing": pres.is_typing
+                "is_typing": pres.is_typing,
+                "connection_quality": pres.connection_quality.value
             })
         
         # Notify other users in the room
@@ -523,6 +553,7 @@ async def join_room(sid, data):
             'user_id': user_id,
             'username': username,
             'color': presence.color,
+            'role': user_role.value,
             'timestamp': datetime.utcnow().isoformat()
         }, room=room_id, skip_sid=sid)
         
@@ -535,6 +566,7 @@ async def join_room(sid, data):
             "room": room_id,
             "user_id": user_id,
             "color": presence.color,
+            "role": user_role.value,
             "members": len(active_rooms[room_id]),
             "users": current_users
         }
@@ -844,6 +876,283 @@ async def shape_deleted(sid, data):
     except Exception as e:
         logger.error(f"Failed to handle shape deleted: {e}")
         return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def heartbeat(sid, data):
+    """
+    Handle presence heartbeat to maintain connection and detect quality.
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "timestamp": ms}
+    Feature #416: Presence heartbeat
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        client_timestamp = data.get('timestamp', 0)
+        
+        if not room_id or not user_id:
+            return {"success": False, "error": "Room ID and User ID required"}
+        
+        # Calculate latency
+        server_time = datetime.utcnow().timestamp() * 1000
+        latency = server_time - client_timestamp if client_timestamp > 0 else 0
+        
+        # Determine connection quality
+        if latency < 50:
+            quality = ConnectionQuality.EXCELLENT
+        elif latency < 150:
+            quality = ConnectionQuality.GOOD
+        elif latency < 300:
+            quality = ConnectionQuality.FAIR
+        else:
+            quality = ConnectionQuality.POOR
+        
+        # Update presence
+        presence = await update_user_presence(
+            room_id, user_id,
+            last_heartbeat=datetime.utcnow(),
+            latency_ms=latency,
+            connection_quality=quality
+        )
+        
+        return {
+            "success": True,
+            "latency": latency,
+            "quality": quality,
+            "server_time": server_time
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle heartbeat: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def set_role(sid, data):
+    """
+    Set user role in room (viewer, editor, admin).
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "role": "viewer|editor|admin"}
+    Features #417-418: Collaborative permissions
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        role = data.get('role', 'editor')
+        
+        if not room_id or not user_id:
+            return {"success": False, "error": "Room ID and User ID required"}
+        
+        # Validate role
+        try:
+            user_role = UserRole(role)
+        except ValueError:
+            return {"success": False, "error": f"Invalid role: {role}"}
+        
+        # Update presence
+        presence = await update_user_presence(
+            room_id, user_id,
+            role=user_role
+        )
+        
+        if presence:
+            # Notify others of role change
+            await sio.emit('role_update', {
+                'user_id': user_id,
+                'username': presence.username,
+                'role': role,
+                'timestamp': datetime.utcnow().isoformat()
+            }, room=room_id)
+        
+        return {"success": True, "role": role}
+    except Exception as e:
+        logger.error(f"Failed to set role: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def delta_update(sid, data):
+    """
+    Handle delta updates (only changed properties) for bandwidth optimization.
+    Expected data: {"room": "file:<file_id>", "delta": {"element_id": {...changes...}}}
+    Feature #419: Bandwidth optimization - delta updates
+    """
+    try:
+        room_id = data.get('room')
+        delta = data.get('delta', {})
+        
+        if not room_id:
+            return {"success": False, "error": "Room ID required"}
+        
+        logger.info(f"Delta update in room {room_id}: {len(delta)} elements changed")
+        
+        # Broadcast delta to all other clients in the room
+        await sio.emit('delta_update', delta, room=room_id, skip_sid=sid)
+        
+        return {"success": True, "elements_updated": len(delta)}
+    except Exception as e:
+        logger.error(f"Failed to handle delta update: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# Track cursor update timestamps for throttling
+cursor_update_throttle: Dict[str, float] = {}  # sid -> last_update_time
+CURSOR_THROTTLE_MS = 50  # 50ms throttle (20 updates/sec max)
+
+
+@sio.event
+async def cursor_move_throttled(sid, data):
+    """
+    Handle cursor movement with throttling to reduce bandwidth.
+    Expected data: {"room": "file:<file_id>", "x": 100, "y": 200, "user_id": "user-id"}
+    Feature #420: Bandwidth optimization - throttle cursor updates
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        
+        if not room_id:
+            return {"success": False, "error": "Room ID required"}
+        
+        # Check throttle
+        current_time = datetime.utcnow().timestamp() * 1000
+        last_update = cursor_update_throttle.get(sid, 0)
+        
+        if current_time - last_update < CURSOR_THROTTLE_MS:
+            # Too soon, skip this update
+            return {"success": True, "throttled": True}
+        
+        # Update throttle timestamp
+        cursor_update_throttle[sid] = current_time
+        
+        # Update presence
+        presence = await update_user_presence(
+            room_id, user_id,
+            cursor_x=data.get('x', 0),
+            cursor_y=data.get('y', 0)
+        )
+        
+        if presence:
+            # Broadcast cursor position with color to all other clients
+            await sio.emit('cursor_update', {
+                'user_id': user_id,
+                'username': presence.username,
+                'color': presence.color,
+                'x': data.get('x'),
+                'y': data.get('y'),
+                'timestamp': datetime.utcnow().isoformat()
+            }, room=room_id, skip_sid=sid)
+        
+        return {"success": True, "throttled": False}
+    except Exception as e:
+        logger.error(f"Failed to handle throttled cursor move: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/rooms/{room_id}/connection-quality")
+async def get_room_connection_quality(room_id: str):
+    """
+    Get connection quality for all users in a room.
+    Feature #423: Connection quality indicator
+    """
+    try:
+        if room_id not in room_users:
+            return {
+                "room": room_id,
+                "users": [],
+                "count": 0
+            }
+        
+        quality_info = []
+        for user_id, presence in room_users[room_id].items():
+            quality_info.append({
+                "user_id": presence.user_id,
+                "username": presence.username,
+                "quality": presence.connection_quality.value,
+                "latency_ms": presence.latency_ms,
+                "last_heartbeat": presence.last_heartbeat.isoformat()
+            })
+        
+        return {
+            "room": room_id,
+            "users": quality_info,
+            "count": len(quality_info)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get connection quality: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Offline queue storage (in-memory for now, could be Redis)
+offline_queues: Dict[str, List[dict]] = {}  # user_id -> list of queued operations
+
+
+@app.post("/offline/queue")
+async def queue_offline_operation(operation: dict):
+    """
+    Queue an operation for a user who is offline.
+    Feature #424: Offline mode - queue edits when disconnected
+    """
+    try:
+        user_id = operation.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id required")
+        
+        if user_id not in offline_queues:
+            offline_queues[user_id] = []
+        
+        operation['queued_at'] = datetime.utcnow().isoformat()
+        offline_queues[user_id].append(operation)
+        
+        return {
+            "success": True,
+            "queued": len(offline_queues[user_id]),
+            "message": "Operation queued for sync when online"
+        }
+    except Exception as e:
+        logger.error(f"Failed to queue operation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/offline/queue/{user_id}")
+async def get_offline_queue(user_id: str):
+    """
+    Get queued operations for a user to sync when they come online.
+    Feature #424: Offline mode - retrieve queued edits
+    """
+    try:
+        queue = offline_queues.get(user_id, [])
+        return {
+            "user_id": user_id,
+            "operations": queue,
+            "count": len(queue)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get offline queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/offline/queue/{user_id}")
+async def clear_offline_queue(user_id: str):
+    """
+    Clear queued operations after successful sync.
+    Feature #424: Offline mode - clear queue after sync
+    """
+    try:
+        if user_id in offline_queues:
+            count = len(offline_queues[user_id])
+            del offline_queues[user_id]
+            return {
+                "success": True,
+                "cleared": count,
+                "message": "Queue cleared"
+            }
+        return {
+            "success": True,
+            "cleared": 0,
+            "message": "No queue found"
+        }
+    except Exception as e:
+        logger.error(f"Failed to clear offline queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
