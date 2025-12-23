@@ -551,6 +551,7 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
+        </div>
         )}
 
         {/* Batch Actions Toolbar */}
