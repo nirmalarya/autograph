@@ -458,6 +458,56 @@ async def test_slow(delay: int = 35):
     }
 
 
+# In-memory counter for idempotency testing
+idempotency_test_counter = {"count": 0}
+
+
+@app.post("/test/create")
+async def test_create(request: Request):
+    """Test endpoint for idempotency testing - creates a resource with unique ID."""
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    
+    # Increment counter to track actual executions
+    idempotency_test_counter["count"] += 1
+    execution_count = idempotency_test_counter["count"]
+    
+    # Simulate resource creation
+    resource_id = f"resource_{execution_count}_{datetime.utcnow().timestamp()}"
+    
+    logger.info(
+        "Test resource created",
+        correlation_id=correlation_id,
+        resource_id=resource_id,
+        execution_count=execution_count
+    )
+    
+    return {
+        "resource_id": resource_id,
+        "execution_count": execution_count,
+        "created_at": datetime.utcnow().isoformat(),
+        "message": "Resource created successfully"
+    }
+
+
+@app.get("/test/counter")
+async def test_counter():
+    """Get the current idempotency test counter value."""
+    return {
+        "count": idempotency_test_counter["count"],
+        "message": "Total number of executions of /test/create endpoint"
+    }
+
+
+@app.post("/test/counter/reset")
+async def test_counter_reset():
+    """Reset the idempotency test counter."""
+    idempotency_test_counter["count"] = 0
+    return {
+        "count": 0,
+        "message": "Counter reset successfully"
+    }
+
+
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint."""

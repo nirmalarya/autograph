@@ -47,7 +47,8 @@ def create_database_engine():
     
     # Test connection to trigger retry if database is unavailable
     with engine.connect() as conn:
-        conn.execute("SELECT 1")
+        from sqlalchemy import text
+        conn.execute(text("SELECT 1"))
     
     return engine
 

@@ -252,6 +252,8 @@ PUBLIC_ROUTES = [
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
+    "/api/auth/health",
+    "/api/auth/test/",  # All test endpoints
 ]
 
 # CORS configuration
@@ -318,14 +320,24 @@ circuit_breakers = {
 }
 
 # Service endpoints
+# In Docker: use service hostnames. Locally: use localhost
+# SERVICE_HOST env var allows override (e.g., "localhost" for local dev, service name for docker)
+SERVICE_HOST_AUTH = os.getenv("AUTH_SERVICE_HOST", "auth-service")
+SERVICE_HOST_DIAGRAM = os.getenv("DIAGRAM_SERVICE_HOST", "diagram-service")
+SERVICE_HOST_AI = os.getenv("AI_SERVICE_HOST", "ai-service")
+SERVICE_HOST_COLLABORATION = os.getenv("COLLABORATION_SERVICE_HOST", "collaboration-service")
+SERVICE_HOST_GIT = os.getenv("GIT_SERVICE_HOST", "git-service")
+SERVICE_HOST_EXPORT = os.getenv("EXPORT_SERVICE_HOST", "export-service")
+SERVICE_HOST_INTEGRATION = os.getenv("INTEGRATION_HUB_HOST", "integration-hub")
+
 SERVICES = {
-    "auth": f"http://localhost:{os.getenv('AUTH_SERVICE_PORT', '8085')}",
-    "diagram": f"http://localhost:{os.getenv('DIAGRAM_SERVICE_PORT', '8082')}",
-    "ai": f"http://localhost:{os.getenv('AI_SERVICE_PORT', '8084')}",
-    "collaboration": f"http://localhost:{os.getenv('COLLABORATION_SERVICE_PORT', '8083')}",
-    "git": f"http://localhost:{os.getenv('GIT_SERVICE_PORT', '8087')}",
-    "export": f"http://localhost:{os.getenv('EXPORT_SERVICE_PORT', '8097')}",
-    "integration": f"http://localhost:{os.getenv('INTEGRATION_HUB_PORT', '8099')}",
+    "auth": f"http://{SERVICE_HOST_AUTH}:{os.getenv('AUTH_SERVICE_PORT', '8085')}",
+    "diagram": f"http://{SERVICE_HOST_DIAGRAM}:{os.getenv('DIAGRAM_SERVICE_PORT', '8082')}",
+    "ai": f"http://{SERVICE_HOST_AI}:{os.getenv('AI_SERVICE_PORT', '8084')}",
+    "collaboration": f"http://{SERVICE_HOST_COLLABORATION}:{os.getenv('COLLABORATION_SERVICE_PORT', '8083')}",
+    "git": f"http://{SERVICE_HOST_GIT}:{os.getenv('GIT_SERVICE_PORT', '8087')}",
+    "export": f"http://{SERVICE_HOST_EXPORT}:{os.getenv('EXPORT_SERVICE_PORT', '8097')}",
+    "integration": f"http://{SERVICE_HOST_INTEGRATION}:{os.getenv('INTEGRATION_HUB_PORT', '8099')}",
 }
 
 
@@ -510,6 +522,126 @@ async def authenticate_request(request: Request, call_next):
         )
     
     return await call_next(request)
+
+
+@app.middleware("http")
+async def idempotency_middleware(request: Request, call_next):
+    """Middleware to handle idempotency keys for duplicate prevention."""
+    # Only apply to POST, PUT, PATCH (mutating operations)
+    if request.method not in ["POST", "PUT", "PATCH"]:
+        return await call_next(request)
+    
+    # Get idempotency key from header
+    idempotency_key = request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+    
+    if not idempotency_key:
+        # No idempotency key provided, process normally
+        return await call_next(request)
+    
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = getattr(request.state, "user_id", "anonymous")
+    
+    # Create Redis key: idempotency:{user_id}:{idempotency_key}:{path}
+    # Include path to allow same key for different endpoints
+    redis_key = f"idempotency:{user_id}:{idempotency_key}:{request.url.path}"
+    
+    try:
+        redis_client = get_redis()
+        
+        # Check if we've seen this idempotency key before
+        cached_response = redis_client.get(redis_key)
+        
+        if cached_response:
+            # Return cached response
+            cached_data = json.loads(cached_response)
+            
+            logger.info(
+                "Idempotency key found - returning cached response",
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+                path=request.url.path,
+                cached_status=cached_data.get("status_code")
+            )
+            
+            return JSONResponse(
+                content=cached_data.get("body"),
+                status_code=cached_data.get("status_code", 200),
+                headers={
+                    **cached_data.get("headers", {}),
+                    "X-Idempotency-Hit": "true",
+                    "X-Correlation-ID": correlation_id
+                }
+            )
+        
+        # Process request normally
+        logger.info(
+            "Idempotency key not found - processing request",
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            path=request.url.path
+        )
+        
+        response = await call_next(request)
+        
+        # Cache successful responses (2xx status codes)
+        if 200 <= response.status_code < 300:
+            # Read response body
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+            
+            # Parse JSON body
+            try:
+                body_json = json.loads(body.decode())
+            except:
+                body_json = {"data": body.decode()}
+            
+            # Cache response for 24 hours
+            cache_data = {
+                "status_code": response.status_code,
+                "body": body_json,
+                "headers": {
+                    k: v for k, v in response.headers.items()
+                    if k.lower() not in ["content-length", "transfer-encoding", "content-encoding"]
+                }
+            }
+            
+            redis_client.setex(
+                redis_key,
+                86400,  # 24 hours TTL
+                json.dumps(cache_data)
+            )
+            
+            logger.info(
+                "Idempotency response cached",
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+                path=request.url.path,
+                ttl=86400
+            )
+            
+            # Return new response with body
+            return JSONResponse(
+                content=body_json,
+                status_code=response.status_code,
+                headers={
+                    **dict(response.headers),
+                    "X-Idempotency-Hit": "false"
+                }
+            )
+        
+        # Don't cache error responses, just return them
+        return response
+        
+    except Exception as e:
+        logger.error(
+            "Idempotency middleware error",
+            correlation_id=correlation_id,
+            error=str(e),
+            idempotency_key=idempotency_key
+        )
+        # On error, process request normally
+        return await call_next(request)
 
 
 @app.middleware("http")
