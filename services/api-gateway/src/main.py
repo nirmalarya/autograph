@@ -716,6 +716,7 @@ async def lifespan(app: FastAPI):
     memory_monitor_task = asyncio.create_task(monitor_memory_usage())
     cpu_monitor_task = asyncio.create_task(monitor_cpu_usage())
     disk_monitor_task = asyncio.create_task(monitor_disk_usage())
+    alert_monitor_task = asyncio.create_task(monitor_services_for_alerts())
     
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
@@ -731,6 +732,7 @@ async def lifespan(app: FastAPI):
         memory_monitor_task.cancel()
         cpu_monitor_task.cancel()
         disk_monitor_task.cancel()
+        alert_monitor_task.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -750,6 +752,7 @@ async def lifespan(app: FastAPI):
     memory_monitor_task.cancel()
     cpu_monitor_task.cancel()
     disk_monitor_task.cancel()
+    alert_monitor_task.cancel()
     try:
         await memory_monitor_task
     except asyncio.CancelledError:
@@ -760,6 +763,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await disk_monitor_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await alert_monitor_task
     except asyncio.CancelledError:
         pass
     
@@ -810,6 +817,7 @@ PUBLIC_ROUTES = [
     "/health/circuit-breakers",
     "/metrics",
     "/dependencies",  # Service dependency mapping
+    "/alerts",  # Alerting system
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -2584,6 +2592,407 @@ async def proxy_request(service_name: str, path: str, request: Request):
                 circuit_state=circuit_breaker.state.value if circuit_breaker else "none"
             )
             raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
+
+
+# ===============================================================================
+# ALERTING SYSTEM - Feature #47
+# ===============================================================================
+
+# Alert storage (in-memory for now, could be Redis/PostgreSQL in production)
+ALERTS = {}  # alert_id -> alert_data
+ALERT_CONFIG = {
+    "service_down_threshold_seconds": 300,  # 5 minutes
+    "email_enabled": os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true",
+    "slack_enabled": os.getenv("ALERT_SLACK_ENABLED", "false").lower() == "true",
+    "email_to": os.getenv("ALERT_EMAIL_TO", "admin@autograph.com"),
+    "email_from": os.getenv("ALERT_EMAIL_FROM", "alerts@autograph.com"),
+    "slack_webhook_url": os.getenv("ALERT_SLACK_WEBHOOK_URL", ""),
+    "escalation_interval_seconds": 900,  # 15 minutes
+    "smtp_host": os.getenv("SMTP_HOST", "localhost"),
+    "smtp_port": int(os.getenv("SMTP_PORT", "25")),
+}
+
+# Service health tracking
+SERVICE_HEALTH_HISTORY = {}  # service_id -> {"last_check": timestamp, "failures": [timestamps], "status": "healthy/unhealthy"}
+
+
+async def check_service_health_for_alerts(service_id: str, service_info: dict) -> dict:
+    """Check service health for alerting purposes."""
+    health_status = await check_service_health(service_id, service_info)
+    
+    # Update health history
+    current_time = time.time()
+    if service_id not in SERVICE_HEALTH_HISTORY:
+        SERVICE_HEALTH_HISTORY[service_id] = {
+            "last_check": current_time,
+            "failures": [],
+            "status": "healthy",
+            "first_failure": None
+        }
+    
+    history = SERVICE_HEALTH_HISTORY[service_id]
+    history["last_check"] = current_time
+    
+    if health_status["status"] == "unhealthy":
+        # Add failure timestamp
+        history["failures"].append(current_time)
+        if history["first_failure"] is None:
+            history["first_failure"] = current_time
+        
+        # Remove old failures (older than threshold + 1 hour)
+        cutoff = current_time - (ALERT_CONFIG["service_down_threshold_seconds"] + 3600)
+        history["failures"] = [f for f in history["failures"] if f > cutoff]
+        
+        # Check if we should trigger alert
+        down_duration = current_time - history["first_failure"]
+        if down_duration >= ALERT_CONFIG["service_down_threshold_seconds"]:
+            await trigger_alert(service_id, service_info, down_duration)
+    else:
+        # Service is healthy - check if we need to auto-resolve
+        if history["status"] == "unhealthy":
+            await resolve_alert(service_id, service_info)
+        
+        # Reset failure tracking
+        history["failures"] = []
+        history["first_failure"] = None
+    
+    history["status"] = health_status["status"]
+    return health_status
+
+
+async def trigger_alert(service_id: str, service_info: dict, down_duration: float):
+    """Trigger an alert for a service failure."""
+    alert_key = f"service_down_{service_id}"
+    
+    # Check if alert already exists
+    if alert_key in ALERTS and ALERTS[alert_key]["status"] == "active":
+        # Alert already exists - check if we should escalate
+        alert = ALERTS[alert_key]
+        time_since_last_notification = time.time() - alert["last_notification"]
+        
+        if time_since_last_notification >= ALERT_CONFIG["escalation_interval_seconds"]:
+            # Escalate alert
+            alert["escalation_count"] += 1
+            alert["last_notification"] = time.time()
+            
+            logger.warning(
+                f"Escalating alert for {service_id}",
+                alert_id=alert_key,
+                escalation_count=alert["escalation_count"],
+                down_duration_seconds=int(down_duration)
+            )
+            
+            # Send escalation notification
+            await send_alert_notification(alert, escalated=True)
+        return
+    
+    # Create new alert
+    alert = {
+        "alert_id": alert_key,
+        "type": "service_down",
+        "service_id": service_id,
+        "service_name": service_info["name"],
+        "severity": "critical",
+        "status": "active",
+        "triggered_at": datetime.utcnow().isoformat(),
+        "triggered_timestamp": time.time(),
+        "last_notification": time.time(),
+        "resolved_at": None,
+        "escalation_count": 0,
+        "down_duration_seconds": int(down_duration),
+        "message": f"{service_info['name']} has been down for {int(down_duration / 60)} minutes"
+    }
+    
+    ALERTS[alert_key] = alert
+    
+    logger.error(
+        f"Alert triggered: {alert['message']}",
+        alert_id=alert_key,
+        service_id=service_id,
+        severity="critical"
+    )
+    
+    # Send notification
+    await send_alert_notification(alert, escalated=False)
+
+
+async def resolve_alert(service_id: str, service_info: dict):
+    """Auto-resolve an alert when service recovers."""
+    alert_key = f"service_down_{service_id}"
+    
+    if alert_key in ALERTS and ALERTS[alert_key]["status"] == "active":
+        alert = ALERTS[alert_key]
+        alert["status"] = "resolved"
+        alert["resolved_at"] = datetime.utcnow().isoformat()
+        alert["resolved_timestamp"] = time.time()
+        
+        down_duration = alert["resolved_timestamp"] - alert["triggered_timestamp"]
+        
+        logger.info(
+            f"Alert auto-resolved: {service_info['name']} is back online",
+            alert_id=alert_key,
+            service_id=service_id,
+            down_duration_seconds=int(down_duration)
+        )
+        
+        # Send resolution notification
+        await send_resolution_notification(alert)
+
+
+async def send_alert_notification(alert: dict, escalated: bool):
+    """Send alert notification via configured channels."""
+    # Send email notification
+    if ALERT_CONFIG["email_enabled"]:
+        await send_email_notification(alert, escalated)
+    
+    # Send Slack notification
+    if ALERT_CONFIG["slack_enabled"] and ALERT_CONFIG["slack_webhook_url"]:
+        await send_slack_notification(alert, escalated)
+
+
+async def send_email_notification(alert: dict, escalated: bool):
+    """Send email notification for alert."""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        subject = f"{'[ESCALATION] ' if escalated else ''}CRITICAL ALERT: {alert['service_name']} Down"
+        
+        body = f"""
+AutoGraph v3 Alert
+==================
+
+Service: {alert['service_name']}
+Status: DOWN
+Duration: {alert['down_duration_seconds'] // 60} minutes
+Triggered: {alert['triggered_at']}
+Escalation Count: {alert['escalation_count']}
+
+Message: {alert['message']}
+
+Please investigate immediately.
+
+Alert ID: {alert['alert_id']}
+        """
+        
+        msg = MIMEMultipart()
+        msg["From"] = ALERT_CONFIG["email_from"]
+        msg["To"] = ALERT_CONFIG["email_to"]
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+        
+        # Send email
+        with smtplib.SMTP(ALERT_CONFIG["smtp_host"], ALERT_CONFIG["smtp_port"]) as server:
+            server.send_message(msg)
+        
+        logger.info(
+            f"Email alert sent for {alert['service_name']}",
+            alert_id=alert["alert_id"],
+            escalated=escalated
+        )
+    except Exception as e:
+        logger.error(
+            "Failed to send email alert",
+            alert_id=alert["alert_id"],
+            exc=e
+        )
+
+
+async def send_slack_notification(alert: dict, escalated: bool):
+    """Send Slack notification for alert."""
+    try:
+        escalation_prefix = "🚨 *ESCALATION* " if escalated else ""
+        emoji = "🔴"
+        
+        payload = {
+            "text": f"{emoji} {escalation_prefix}*CRITICAL ALERT*",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{emoji} {escalation_prefix}Service Down Alert",
+                        "emoji": True
+                    }
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Service:*\n{alert['service_name']}"},
+                        {"type": "mrkdwn", "text": f"*Status:*\nDOWN"},
+                        {"type": "mrkdwn", "text": f"*Duration:*\n{alert['down_duration_seconds'] // 60} minutes"},
+                        {"type": "mrkdwn", "text": f"*Escalations:*\n{alert['escalation_count']}"}
+                    ]
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Message:* {alert['message']}"
+                    }
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn", "text": f"Alert ID: `{alert['alert_id']}` | Triggered: {alert['triggered_at']}"}
+                    ]
+                }
+            ]
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                ALERT_CONFIG["slack_webhook_url"],
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    f"Slack alert sent for {alert['service_name']}",
+                    alert_id=alert["alert_id"],
+                    escalated=escalated
+                )
+            else:
+                logger.error(
+                    f"Failed to send Slack alert (HTTP {response.status_code})",
+                    alert_id=alert["alert_id"]
+                )
+    except Exception as e:
+        logger.error(
+            "Failed to send Slack alert",
+            alert_id=alert["alert_id"],
+            exc=e
+        )
+
+
+async def send_resolution_notification(alert: dict):
+    """Send notification when alert is resolved."""
+    # Send email
+    if ALERT_CONFIG["email_enabled"]:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            down_duration = alert["resolved_timestamp"] - alert["triggered_timestamp"]
+            
+            subject = f"✅ RESOLVED: {alert['service_name']} Back Online"
+            body = f"""
+AutoGraph v3 Alert Resolution
+==============================
+
+Service: {alert['service_name']}
+Status: RECOVERED
+Downtime: {int(down_duration // 60)} minutes
+Triggered: {alert['triggered_at']}
+Resolved: {alert['resolved_at']}
+
+The service is now healthy and operational.
+
+Alert ID: {alert['alert_id']}
+            """
+            
+            msg = MIMEMultipart()
+            msg["From"] = ALERT_CONFIG["email_from"]
+            msg["To"] = ALERT_CONFIG["email_to"]
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "plain"))
+            
+            with smtplib.SMTP(ALERT_CONFIG["smtp_host"], ALERT_CONFIG["smtp_port"]) as server:
+                server.send_message(msg)
+        except Exception as e:
+            logger.error("Failed to send resolution email", alert_id=alert["alert_id"], exc=e)
+    
+    # Send Slack
+    if ALERT_CONFIG["slack_enabled"] and ALERT_CONFIG["slack_webhook_url"]:
+        try:
+            down_duration = alert["resolved_timestamp"] - alert["triggered_timestamp"]
+            
+            payload = {
+                "text": f"✅ *RESOLVED* - {alert['service_name']} is back online",
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": f"✅ Alert Resolved",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Service:*\n{alert['service_name']}"},
+                            {"type": "mrkdwn", "text": f"*Status:*\nRECOVERED"},
+                            {"type": "mrkdwn", "text": f"*Downtime:*\n{int(down_duration // 60)} minutes"},
+                            {"type": "mrkdwn", "text": f"*Resolved:*\n{alert['resolved_at']}"}
+                        ]
+                    }
+                ]
+            }
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(ALERT_CONFIG["slack_webhook_url"], json=payload)
+        except Exception as e:
+            logger.error("Failed to send Slack resolution", alert_id=alert["alert_id"], exc=e)
+
+
+# Background task to monitor service health
+async def monitor_services_for_alerts():
+    """Background task to continuously monitor services and trigger alerts."""
+    while True:
+        try:
+            # Check all services
+            for service_id, service_info in SERVICE_DEPENDENCIES.items():
+                await check_service_health_for_alerts(service_id, service_info)
+            
+            # Wait 60 seconds before next check
+            await asyncio.sleep(60)
+        except Exception as e:
+            logger.error("Error in service monitoring task", exc=e)
+            await asyncio.sleep(60)
+
+
+@app.get("/alerts")
+@limiter.limit("100/minute")
+async def get_alerts(request: Request, status: str = None):
+    """
+    Get all alerts with optional status filter.
+    
+    Query Parameters:
+    - status: Filter by status (active, resolved, all). Default: all
+    
+    Returns:
+    - List of alerts with their details
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    # Filter alerts
+    if status == "active":
+        filtered_alerts = [a for a in ALERTS.values() if a["status"] == "active"]
+    elif status == "resolved":
+        filtered_alerts = [a for a in ALERTS.values() if a["status"] == "resolved"]
+    else:
+        filtered_alerts = list(ALERTS.values())
+    
+    # Sort by triggered timestamp (newest first)
+    filtered_alerts.sort(key=lambda x: x["triggered_timestamp"], reverse=True)
+    
+    return {
+        "correlation_id": correlation_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "total_alerts": len(ALERTS),
+        "active_alerts": sum(1 for a in ALERTS.values() if a["status"] == "active"),
+        "resolved_alerts": sum(1 for a in ALERTS.values() if a["status"] == "resolved"),
+        "alerts": filtered_alerts,
+        "config": {
+            "service_down_threshold_minutes": ALERT_CONFIG["service_down_threshold_seconds"] // 60,
+            "escalation_interval_minutes": ALERT_CONFIG["escalation_interval_seconds"] // 60,
+            "email_enabled": ALERT_CONFIG["email_enabled"],
+            "slack_enabled": ALERT_CONFIG["slack_enabled"]
+        }
+    }
 
 
 if __name__ == "__main__":
