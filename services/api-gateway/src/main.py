@@ -240,6 +240,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 
+# Timeout configuration (in seconds)
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30"))
+
 # Public routes that don't require authentication
 PUBLIC_ROUTES = [
     "/health",
@@ -349,6 +352,36 @@ def verify_jwt_token(token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
+        )
+
+
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    """Middleware to enforce request timeout."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    
+    try:
+        # Apply timeout to request processing
+        response = await asyncio.wait_for(
+            call_next(request),
+            timeout=REQUEST_TIMEOUT
+        )
+        return response
+    except asyncio.TimeoutError:
+        logger.error(
+            "Request timeout exceeded",
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path,
+            timeout=REQUEST_TIMEOUT
+        )
+        return JSONResponse(
+            status_code=504,
+            content={
+                "detail": f"Request timeout exceeded ({REQUEST_TIMEOUT}s)",
+                "timeout": REQUEST_TIMEOUT
+            },
+            headers={"X-Correlation-ID": correlation_id}
         )
 
 
@@ -720,7 +753,7 @@ async def proxy_request(service_name: str, path: str, request: Request):
             logger.info(f"Circuit breaker '{circuit_breaker.name}' moved to HALF_OPEN state")
     
     # Forward request
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         try:
             response = await client.request(
                 method=request.method,

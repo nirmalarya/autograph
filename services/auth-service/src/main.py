@@ -447,6 +447,17 @@ async def health_check():
     }
 
 
+@app.get("/test/slow")
+async def test_slow(delay: int = 35):
+    """Test endpoint that simulates slow response for timeout testing."""
+    logger.info(f"Slow endpoint called with delay={delay}s")
+    await asyncio.sleep(delay)
+    return {
+        "message": f"Response after {delay} seconds",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint."""
