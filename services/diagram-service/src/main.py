@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
 from sqlalchemy.orm import Session
+import httpx
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -710,6 +711,61 @@ async def update_diagram(
     
     # Update metrics
     diagrams_updated.inc()
+    
+    print(f"DEBUG: About to send WebSocket notification for diagram {diagram_id}")
+    
+    # Send WebSocket notification to collaborators
+    collaboration_service_url = os.getenv("COLLABORATION_SERVICE_URL", "http://localhost:8083")
+    room_id = f"file:{diagram_id}"
+    
+    logger.info(
+        "Attempting to send WebSocket notification",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        room_id=room_id,
+        collaboration_service_url=collaboration_service_url
+    )
+    
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.post(
+                f"{collaboration_service_url}/broadcast/{room_id}",
+                json={
+                    "type": "diagram_updated",
+                    "diagram_id": diagram_id,
+                    "user_id": user_id,
+                    "version": diagram.current_version,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "changes": {
+                        "title": update_data.title is not None,
+                        "canvas_data": update_data.canvas_data is not None,
+                        "note_content": update_data.note_content is not None
+                    }
+                }
+            )
+            
+            logger.info(
+                "WebSocket notification sent",
+                correlation_id=correlation_id,
+                diagram_id=diagram_id,
+                room_id=room_id,
+                status_code=response.status_code
+            )
+    except Exception as e:
+        # Don't fail the update if WebSocket notification fails
+        logger.warning(
+            "Failed to send WebSocket notification",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            error=str(e),
+            error_type=type(e).__name__
+        )
+        import traceback
+        logger.warning(
+            "WebSocket notification traceback",
+            correlation_id=correlation_id,
+            traceback=traceback.format_exc()
+        )
     
     logger.info(
         "Diagram updated successfully",
