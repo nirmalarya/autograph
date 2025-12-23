@@ -775,7 +775,7 @@ class TemplateResponse(BaseModel):
         from_attributes = True
 
 
-def create_version(db: Session, file: File, description: Optional[str] = None, created_by: Optional[str] = None) -> Version:
+def create_version_snapshot(db: Session, file: File, description: Optional[str] = None, created_by: Optional[str] = None) -> Version:
     """Create a new version for a file with auto-incremented version number."""
     # Get the highest version number for this file
     max_version = db.query(Version).filter(Version.file_id == file.id).count()
@@ -933,7 +933,7 @@ async def create_diagram(
             )
     
     # Create initial version (version 1)
-    create_version(db, new_diagram, description="Initial version", created_by=user_id)
+    create_version_snapshot(db, new_diagram, description="Initial version", created_by=user_id)
     
     db.commit()
     db.refresh(new_diagram)
@@ -1493,7 +1493,7 @@ async def update_diagram(
             )
     
     # Create new version with auto-incremented version number
-    create_version(db, diagram, description=update_data.description, created_by=user_id)
+    create_version_snapshot(db, diagram, description=update_data.description, created_by=user_id)
     
     db.commit()
     db.refresh(diagram)
@@ -3148,6 +3148,440 @@ async def add_reaction(
             "emoji": emoji,
             "action": "added"
         }
+
+
+# ==========================================
+# VERSION HISTORY API ENDPOINTS
+# ==========================================
+
+class CreateVersionRequest(BaseModel):
+    """Request model for creating a version snapshot."""
+    description: Optional[str] = None
+    label: Optional[str] = None
+
+class VersionResponse(BaseModel):
+    """Response model for a version."""
+    id: str
+    file_id: str
+    version_number: int
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    description: Optional[str] = None
+    label: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    user: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        from_attributes = True
+
+
+@app.post("/{diagram_id}/versions", status_code=201)
+async def create_version(
+    diagram_id: str,
+    request: Request,
+    version_data: CreateVersionRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a manual version snapshot."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Creating version snapshot",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Verify diagram exists
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Get next version number
+    latest_version = db.query(Version).filter(
+        Version.file_id == diagram_id
+    ).order_by(Version.version_number.desc()).first()
+    
+    next_version_number = (latest_version.version_number + 1) if latest_version else 1
+    
+    # Create version snapshot
+    new_version = Version(
+        id=str(uuid.uuid4()),
+        file_id=diagram_id,
+        version_number=next_version_number,
+        canvas_data=diagram.canvas_data,
+        note_content=diagram.note_content,
+        description=version_data.description,
+        label=version_data.label,
+        created_by=user_id
+    )
+    
+    db.add(new_version)
+    db.commit()
+    db.refresh(new_version)
+    
+    # Get user info
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    logger.info(
+        "Version snapshot created",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=new_version.id,
+        version_number=next_version_number
+    )
+    
+    return {
+        "id": new_version.id,
+        "file_id": new_version.file_id,
+        "version_number": new_version.version_number,
+        "description": new_version.description,
+        "label": new_version.label,
+        "thumbnail_url": new_version.thumbnail_url,
+        "created_by": new_version.created_by,
+        "created_at": new_version.created_at.isoformat(),
+        "user": {
+            "id": user.id if user else None,
+            "full_name": user.full_name if user else "Unknown",
+            "email": user.email if user else None
+        }
+    }
+
+
+@app.get("/{diagram_id}/versions")
+async def get_versions(
+    diagram_id: str,
+    request: Request,
+    limit: Optional[int] = 50,
+    offset: Optional[int] = 0,
+    db: Session = Depends(get_db)
+):
+    """Get all versions for a diagram."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Getting versions for diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Verify diagram exists
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Get versions ordered by version_number descending (newest first)
+    query = db.query(Version).filter(Version.file_id == diagram_id)
+    total = query.count()
+    
+    versions = query.order_by(
+        Version.version_number.desc()
+    ).offset(offset).limit(limit).all()
+    
+    # Enrich versions with user info
+    enriched_versions = []
+    for version in versions:
+        user = db.query(User).filter(User.id == version.created_by).first()
+        
+        version_dict = {
+            "id": version.id,
+            "file_id": version.file_id,
+            "version_number": version.version_number,
+            "description": version.description,
+            "label": version.label,
+            "thumbnail_url": version.thumbnail_url,
+            "created_by": version.created_by,
+            "created_at": version.created_at.isoformat(),
+            "user": {
+                "id": user.id if user else None,
+                "full_name": user.full_name if user else "Unknown",
+                "email": user.email if user else None
+            }
+        }
+        
+        enriched_versions.append(version_dict)
+    
+    logger.info(
+        "Versions retrieved successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        count=len(enriched_versions),
+        total=total
+    )
+    
+    return {
+        "versions": enriched_versions,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/{diagram_id}/versions/{version_id}")
+async def get_version(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    include_content: bool = True,
+    db: Session = Depends(get_db)
+):
+    """Get a specific version by ID."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Getting specific version",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get user info
+    user = db.query(User).filter(User.id == version.created_by).first()
+    
+    response_data = {
+        "id": version.id,
+        "file_id": version.file_id,
+        "version_number": version.version_number,
+        "description": version.description,
+        "label": version.label,
+        "thumbnail_url": version.thumbnail_url,
+        "created_by": version.created_by,
+        "created_at": version.created_at.isoformat(),
+        "user": {
+            "id": user.id if user else None,
+            "full_name": user.full_name if user else "Unknown",
+            "email": user.email if user else None
+        }
+    }
+    
+    # Include full content if requested
+    if include_content:
+        response_data["canvas_data"] = version.canvas_data
+        response_data["note_content"] = version.note_content
+    
+    logger.info(
+        "Version retrieved successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        version_number=version.version_number
+    )
+    
+    return response_data
+
+
+@app.post("/{diagram_id}/versions/{version_id}/restore")
+async def restore_version(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Restore diagram to a previous version."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Restoring version",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Create a version of current state before restoring
+    latest_version = db.query(Version).filter(
+        Version.file_id == diagram_id
+    ).order_by(Version.version_number.desc()).first()
+    
+    next_version_number = (latest_version.version_number + 1) if latest_version else 1
+    
+    backup_version = Version(
+        id=str(uuid.uuid4()),
+        file_id=diagram_id,
+        version_number=next_version_number,
+        canvas_data=diagram.canvas_data,
+        note_content=diagram.note_content,
+        description=f"Auto-backup before restore to v{version.version_number}",
+        created_by=user_id
+    )
+    
+    db.add(backup_version)
+    
+    # Restore the version content to diagram
+    diagram.canvas_data = version.canvas_data
+    diagram.note_content = version.note_content
+    diagram.updated_at = datetime.utcnow()
+    diagram.last_activity = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Version restored successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        restored_version_number=version.version_number,
+        backup_version_number=next_version_number
+    )
+    
+    # Send WebSocket notification
+    collaboration_service_url = os.getenv("COLLABORATION_SERVICE_URL", "http://localhost:8083")
+    room_id = f"file:{diagram_id}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(
+                f"{collaboration_service_url}/broadcast/{room_id}",
+                json={
+                    "type": "version_restored",
+                    "diagram_id": diagram_id,
+                    "version_id": version_id,
+                    "version_number": version.version_number,
+                    "user_id": user_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+    except Exception as e:
+        logger.warning(
+            "Failed to send WebSocket notification for version restore",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+    
+    return {
+        "message": "Version restored successfully",
+        "diagram_id": diagram_id,
+        "restored_version": version.version_number,
+        "backup_version": next_version_number,
+        "updated_at": diagram.updated_at.isoformat()
+    }
+
+
+@app.post("/{diagram_id}/versions/{version_id}/fork")
+async def fork_version(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Create a new diagram from a specific version."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Forking version to new diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get original diagram for metadata
+    original_diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not original_diagram:
+        raise HTTPException(status_code=404, detail="Original diagram not found")
+    
+    # Create new diagram from version
+    new_diagram = File(
+        id=str(uuid.uuid4()),
+        title=f"{original_diagram.title} (Fork from v{version.version_number})",
+        file_type=original_diagram.file_type,
+        canvas_data=version.canvas_data,
+        note_content=version.note_content,
+        user_id=user_id,
+        team_id=original_diagram.team_id,
+        folder_id=original_diagram.folder_id
+    )
+    
+    db.add(new_diagram)
+    db.commit()
+    db.refresh(new_diagram)
+    
+    # Create initial version for the forked diagram
+    initial_version = Version(
+        id=str(uuid.uuid4()),
+        file_id=new_diagram.id,
+        version_number=1,
+        canvas_data=version.canvas_data,
+        note_content=version.note_content,
+        description=f"Forked from {original_diagram.title} v{version.version_number}",
+        created_by=user_id
+    )
+    
+    db.add(initial_version)
+    db.commit()
+    
+    logger.info(
+        "Version forked to new diagram",
+        correlation_id=correlation_id,
+        original_diagram_id=diagram_id,
+        new_diagram_id=new_diagram.id,
+        version_number=version.version_number
+    )
+    
+    return {
+        "message": "Version forked successfully",
+        "original_diagram_id": diagram_id,
+        "new_diagram_id": new_diagram.id,
+        "new_diagram_title": new_diagram.title,
+        "forked_from_version": version.version_number
+    }
 
 
 if __name__ == "__main__":
