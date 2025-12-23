@@ -16,6 +16,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
+import time
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -32,7 +33,11 @@ class StructuredLogger:
     def __init__(self, service_name: str):
         self.service_name = service_name
         self.logger = logging.getLogger(service_name)
-        self.logger.setLevel(logging.INFO)
+        
+        # Set log level from environment variable (default: INFO)
+        log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        self.logger.setLevel(log_level)
         
         # JSON formatter
         handler = logging.StreamHandler()
@@ -49,7 +54,20 @@ class StructuredLogger:
             "correlation_id": correlation_id,
             **kwargs
         }
-        self.logger.info(json.dumps(log_data))
+        
+        # Use appropriate logging method based on level
+        level_upper = level.upper()
+        if level_upper == "DEBUG":
+            self.logger.debug(json.dumps(log_data))
+        elif level_upper == "WARNING":
+            self.logger.warning(json.dumps(log_data))
+        elif level_upper == "ERROR":
+            self.logger.error(json.dumps(log_data))
+        else:  # INFO or any other level
+            self.logger.info(json.dumps(log_data))
+    
+    def debug(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("debug", message, correlation_id, **kwargs)
     
     def info(self, message: str, correlation_id: str = None, **kwargs):
         self.log("info", message, correlation_id, **kwargs)
@@ -505,6 +523,25 @@ async def test_counter_reset():
     return {
         "count": 0,
         "message": "Counter reset successfully"
+    }
+
+
+@app.get("/test/logging")
+async def test_logging():
+    """Test endpoint to verify different log levels."""
+    correlation_id = "test-logging-" + str(int(time.time()))
+    
+    # Test all log levels
+    logger.debug("This is a DEBUG message", correlation_id=correlation_id)
+    logger.info("This is an INFO message", correlation_id=correlation_id)
+    logger.warning("This is a WARNING message", correlation_id=correlation_id)
+    logger.error("This is an ERROR message", correlation_id=correlation_id)
+    
+    return {
+        "message": "Logged messages at all levels",
+        "levels": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        "correlation_id": correlation_id,
+        "current_log_level": os.getenv("LOG_LEVEL", "INFO")
     }
 
 
