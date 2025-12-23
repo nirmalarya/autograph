@@ -22,8 +22,9 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User, RefreshToken
+from .models import User, RefreshToken, PasswordResetToken
 import redis
+import secrets
 
 load_dotenv()
 
@@ -1151,6 +1152,231 @@ async def logout_all(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to logout from all sessions"
+        )
+
+
+class PasswordResetRequest(BaseModel):
+    """Request model for password reset."""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Request model for confirming password reset."""
+    token: str
+    new_password: str
+    
+    @validator('new_password')
+    def validate_password(cls, v):
+        """Validate password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.islower() for c in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one digit')
+        if not any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v):
+            raise ValueError('Password must contain at least one special character')
+        return v
+
+
+@app.post("/password-reset/request")
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: Session = Depends(get_db)
+):
+    """Request a password reset email.
+    
+    This endpoint will:
+    1. Check if user exists (but don't reveal if they don't for security)
+    2. Generate a secure reset token
+    3. Store token in database with 1-hour expiry
+    4. Send reset email (mocked for now)
+    
+    Always returns success to prevent user enumeration.
+    """
+    try:
+        # Find user by email
+        user = db.query(User).filter(User.email == request.email).first()
+        
+        if user:
+            # Generate secure random token (32 bytes = 64 hex characters)
+            reset_token = secrets.token_urlsafe(32)
+            
+            # Calculate expiry (1 hour from now)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            
+            # Invalidate any existing unused tokens for this user
+            db.query(PasswordResetToken).filter(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.is_used == False
+            ).update({
+                "is_used": True,
+                "used_at": datetime.now(timezone.utc)
+            })
+            
+            # Create new reset token
+            password_reset_token = PasswordResetToken(
+                user_id=user.id,
+                token=reset_token,
+                expires_at=expires_at
+            )
+            db.add(password_reset_token)
+            db.commit()
+            
+            logger.info(
+                "Password reset requested",
+                user_id=user.id,
+                email=user.email,
+                expires_at=expires_at.isoformat()
+            )
+            
+            # TODO: Send email with reset link
+            # For now, we'll log the token (in production, this would be sent via email)
+            logger.info(
+                "Password reset token generated (would be sent via email)",
+                user_id=user.id,
+                email=user.email,
+                token=reset_token,
+                reset_link=f"http://localhost:3000/reset-password?token={reset_token}"
+            )
+        else:
+            # User not found, but don't reveal this for security
+            logger.info(
+                "Password reset requested for non-existent email",
+                email=request.email
+            )
+        
+        # Always return success to prevent user enumeration
+        return {
+            "message": "If an account exists with this email, a password reset link has been sent",
+            "detail": "Please check your email for reset instructions"
+        }
+        
+    except Exception as e:
+        logger.error(
+            "Error during password reset request",
+            email=request.email,
+            error=str(e)
+        )
+        db.rollback()
+        # Still return success to prevent information leakage
+        return {
+            "message": "If an account exists with this email, a password reset link has been sent",
+            "detail": "Please check your email for reset instructions"
+        }
+
+
+@app.post("/password-reset/confirm")
+async def confirm_password_reset(
+    request: PasswordResetConfirm,
+    db: Session = Depends(get_db)
+):
+    """Reset password using a valid reset token.
+    
+    This endpoint will:
+    1. Validate the reset token
+    2. Check if token is expired or already used
+    3. Update user's password
+    4. Mark token as used
+    5. Invalidate all user sessions
+    """
+    try:
+        # Find reset token
+        reset_token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.token == request.token
+        ).first()
+        
+        if not reset_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+        
+        # Check if token is already used
+        if reset_token.is_used:
+            logger.warning(
+                "Attempt to use already-used password reset token",
+                token_id=reset_token.id,
+                user_id=reset_token.user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This reset token has already been used"
+            )
+        
+        # Check if token is expired
+        now = datetime.now(timezone.utc)
+        if now > reset_token.expires_at:
+            logger.warning(
+                "Attempt to use expired password reset token",
+                token_id=reset_token.id,
+                user_id=reset_token.user_id,
+                expired_at=reset_token.expires_at.isoformat()
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This reset token has expired. Please request a new one."
+            )
+        
+        # Get user
+        user = db.query(User).filter(User.id == reset_token.user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User not found"
+            )
+        
+        # Hash new password
+        hashed_password = pwd_context.hash(request.new_password)
+        
+        # Update user's password
+        user.password_hash = hashed_password
+        user.updated_at = now
+        
+        # Mark token as used
+        reset_token.is_used = True
+        reset_token.used_at = now
+        
+        # Invalidate all user sessions (logout from all devices)
+        blacklist_all_user_tokens(user.id, ttl_seconds=86400)
+        
+        # Revoke all refresh tokens
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == user.id,
+            RefreshToken.is_used == False,
+            RefreshToken.is_revoked == False
+        ).update({
+            "is_revoked": True,
+            "revoked_at": now
+        })
+        
+        db.commit()
+        
+        logger.info(
+            "Password reset successful",
+            user_id=user.id,
+            email=user.email,
+            token_id=reset_token.id
+        )
+        
+        return {
+            "message": "Password has been reset successfully",
+            "detail": "You can now login with your new password. All existing sessions have been logged out."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error during password reset confirmation",
+            error=str(e)
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password"
         )
 
 
