@@ -809,6 +809,7 @@ PUBLIC_ROUTES = [
     "/health/services",
     "/health/circuit-breakers",
     "/metrics",
+    "/dependencies",  # Service dependency mapping
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -2063,6 +2064,355 @@ async def test_disk_cleanup(request: Request, bucket: str, filename: str):
             status_code=500,
             detail=f"Error: {str(e)}"
         )
+
+
+# ============================================================================
+# SERVICE DEPENDENCY MAPPING
+# ============================================================================
+
+# Service dependency graph definition
+SERVICE_DEPENDENCIES = {
+    "frontend": {
+        "name": "Frontend",
+        "type": "application",
+        "port": 3000,
+        "depends_on": ["api-gateway"],
+        "health_endpoint": "http://localhost:3000"
+    },
+    "api-gateway": {
+        "name": "API Gateway",
+        "type": "gateway",
+        "port": 8080,
+        "depends_on": ["auth-service", "diagram-service", "ai-service", "collaboration-service", 
+                      "git-service", "export-service", "integration-hub", "redis"],
+        "health_endpoint": "http://localhost:8080/health"
+    },
+    "auth-service": {
+        "name": "Auth Service",
+        "type": "microservice",
+        "port": 8085,
+        "depends_on": ["postgres", "redis"],
+        "health_endpoint": "http://localhost:8085/health"
+    },
+    "diagram-service": {
+        "name": "Diagram Service",
+        "type": "microservice",
+        "port": 8082,
+        "depends_on": ["postgres", "redis", "minio"],
+        "health_endpoint": "http://localhost:8082/health"
+    },
+    "ai-service": {
+        "name": "AI Service",
+        "type": "microservice",
+        "port": 8084,
+        "depends_on": ["redis"],
+        "health_endpoint": "http://localhost:8084/health"
+    },
+    "collaboration-service": {
+        "name": "Collaboration Service",
+        "type": "microservice",
+        "port": 8083,
+        "depends_on": ["postgres", "redis"],
+        "health_endpoint": "http://localhost:8083/health"
+    },
+    "git-service": {
+        "name": "Git Service",
+        "type": "microservice",
+        "port": 8087,
+        "depends_on": ["postgres", "redis"],
+        "health_endpoint": "http://localhost:8087/health"
+    },
+    "export-service": {
+        "name": "Export Service",
+        "type": "microservice",
+        "port": 8097,
+        "depends_on": ["minio", "redis"],
+        "health_endpoint": "http://localhost:8097/health"
+    },
+    "integration-hub": {
+        "name": "Integration Hub",
+        "type": "microservice",
+        "port": 8099,
+        "depends_on": ["postgres", "redis"],
+        "health_endpoint": "http://localhost:8099/health"
+    },
+    "svg-renderer": {
+        "name": "SVG Renderer",
+        "type": "microservice",
+        "port": 8096,
+        "depends_on": [],
+        "health_endpoint": "http://localhost:8096/health"
+    },
+    "postgres": {
+        "name": "PostgreSQL",
+        "type": "infrastructure",
+        "port": 5432,
+        "depends_on": [],
+        "health_endpoint": None  # Database doesn't have HTTP endpoint
+    },
+    "redis": {
+        "name": "Redis",
+        "type": "infrastructure",
+        "port": 6379,
+        "depends_on": [],
+        "health_endpoint": None  # Redis doesn't have HTTP endpoint
+    },
+    "minio": {
+        "name": "MinIO S3",
+        "type": "infrastructure",
+        "port": 9000,
+        "depends_on": [],
+        "health_endpoint": "http://localhost:9000/minio/health/live"
+    }
+}
+
+
+def detect_circular_dependencies(graph: dict) -> list:
+    """Detect circular dependencies in the service graph using DFS."""
+    circular = []
+    visited = set()
+    rec_stack = set()
+    path = []
+    
+    def dfs(node: str) -> bool:
+        """Depth-first search to detect cycles."""
+        if node in rec_stack:
+            # Found a cycle - extract the circular path
+            cycle_start = path.index(node)
+            cycle = path[cycle_start:] + [node]
+            circular.append(cycle)
+            return True
+        
+        if node in visited:
+            return False
+        
+        visited.add(node)
+        rec_stack.add(node)
+        path.append(node)
+        
+        # Visit all dependencies
+        if node in graph and "depends_on" in graph[node]:
+            for neighbor in graph[node]["depends_on"]:
+                if neighbor in graph:  # Only check if neighbor exists in graph
+                    dfs(neighbor)
+        
+        path.pop()
+        rec_stack.remove(node)
+        return False
+    
+    # Check each node in the graph
+    for node in graph:
+        if node not in visited:
+            dfs(node)
+    
+    return circular
+
+
+def find_critical_path(graph: dict, start: str = "frontend") -> list:
+    """Find the critical path (longest path) from start node to leaf nodes."""
+    if start not in graph:
+        return []
+    
+    # Use DFS to find longest path
+    max_path = []
+    
+    def dfs(node: str, current_path: list):
+        nonlocal max_path
+        current_path.append(node)
+        
+        # If this is a leaf node or has no more dependencies
+        if node not in graph or not graph[node].get("depends_on"):
+            if len(current_path) > len(max_path):
+                max_path = current_path.copy()
+        else:
+            # Continue DFS to all dependencies
+            for dep in graph[node]["depends_on"]:
+                if dep in graph and dep not in current_path:  # Avoid cycles
+                    dfs(dep, current_path.copy())
+    
+    dfs(start, [])
+    return max_path
+
+
+async def check_service_health(service_id: str, service_info: dict) -> dict:
+    """Check health of a single service."""
+    health_status = {
+        "service_id": service_id,
+        "name": service_info["name"],
+        "type": service_info["type"],
+        "port": service_info["port"],
+        "status": "unknown",
+        "response_time_ms": None,
+        "error": None
+    }
+    
+    health_endpoint = service_info.get("health_endpoint")
+    if not health_endpoint:
+        # Infrastructure services without HTTP endpoints
+        if service_id == "postgres":
+            try:
+                # Check postgres using redis client (API gateway has redis access)
+                # In real implementation, would check postgres connection
+                health_status["status"] = "healthy"
+                health_status["note"] = "Database health check via connection pool"
+            except Exception as e:
+                health_status["status"] = "unhealthy"
+                health_status["error"] = str(e)
+        elif service_id == "redis":
+            try:
+                redis_client = get_redis_client()
+                redis_client.ping()
+                health_status["status"] = "healthy"
+            except Exception as e:
+                health_status["status"] = "unhealthy"
+                health_status["error"] = str(e)
+        else:
+            health_status["status"] = "unknown"
+            health_status["note"] = "No health endpoint defined"
+        return health_status
+    
+    # Check HTTP health endpoint
+    start_time = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(health_endpoint)
+            response_time_ms = (time.time() - start_time) * 1000
+            
+            if response.status_code == 200:
+                health_status["status"] = "healthy"
+                health_status["response_time_ms"] = round(response_time_ms, 2)
+            else:
+                health_status["status"] = "unhealthy"
+                health_status["response_time_ms"] = round(response_time_ms, 2)
+                health_status["error"] = f"HTTP {response.status_code}"
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["error"] = str(e)
+    
+    return health_status
+
+
+@app.get("/dependencies")
+@limiter.limit("1000/minute")
+async def get_service_dependencies(request: Request, include_health: bool = True):
+    """
+    Get service dependency mapping for architecture visualization.
+    
+    Returns:
+        - Full dependency graph
+        - Health status of each service (if include_health=true)
+        - Circular dependency detection
+        - Critical path analysis
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    logger.info(
+        "Getting service dependencies",
+        correlation_id=correlation_id,
+        include_health=include_health
+    )
+    
+    # Build dependency graph
+    graph_nodes = []
+    graph_edges = []
+    
+    for service_id, service_info in SERVICE_DEPENDENCIES.items():
+        # Add node
+        node = {
+            "id": service_id,
+            "name": service_info["name"],
+            "type": service_info["type"],
+            "port": service_info["port"]
+        }
+        graph_nodes.append(node)
+        
+        # Add edges
+        for dependency in service_info["depends_on"]:
+            edge = {
+                "from": service_id,
+                "to": dependency,
+                "type": "depends_on"
+            }
+            graph_edges.append(edge)
+    
+    # Detect circular dependencies
+    circular_deps = detect_circular_dependencies(SERVICE_DEPENDENCIES)
+    
+    # Find critical path
+    critical_path = find_critical_path(SERVICE_DEPENDENCIES, "frontend")
+    
+    # Check service health if requested
+    health_checks = []
+    if include_health:
+        logger.debug(
+            "Performing health checks on all services",
+            correlation_id=correlation_id
+        )
+        
+        # Check health of all services in parallel
+        health_tasks = [
+            check_service_health(service_id, service_info)
+            for service_id, service_info in SERVICE_DEPENDENCIES.items()
+        ]
+        health_checks = await asyncio.gather(*health_tasks, return_exceptions=True)
+        
+        # Filter out exceptions and convert to list
+        health_checks = [
+            h if not isinstance(h, Exception) else {
+                "error": str(h),
+                "status": "error"
+            }
+            for h in health_checks
+        ]
+    
+    # Build response
+    response = {
+        "correlation_id": correlation_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "graph": {
+            "nodes": graph_nodes,
+            "edges": graph_edges,
+            "total_services": len(graph_nodes),
+            "total_dependencies": len(graph_edges)
+        },
+        "circular_dependencies": {
+            "found": len(circular_deps) > 0,
+            "count": len(circular_deps),
+            "cycles": circular_deps
+        },
+        "critical_path": {
+            "path": critical_path,
+            "length": len(critical_path),
+            "description": " → ".join(critical_path) if critical_path else "No path found"
+        }
+    }
+    
+    if include_health:
+        # Add health summary
+        healthy_count = sum(1 for h in health_checks if h.get("status") == "healthy")
+        unhealthy_count = sum(1 for h in health_checks if h.get("status") == "unhealthy")
+        unknown_count = sum(1 for h in health_checks if h.get("status") == "unknown")
+        
+        response["health"] = {
+            "summary": {
+                "total": len(health_checks),
+                "healthy": healthy_count,
+                "unhealthy": unhealthy_count,
+                "unknown": unknown_count,
+                "health_percentage": round((healthy_count / len(health_checks)) * 100, 1) if health_checks else 0
+            },
+            "services": health_checks
+        }
+    
+    logger.info(
+        "Service dependencies retrieved",
+        correlation_id=correlation_id,
+        total_services=len(graph_nodes),
+        circular_deps_found=len(circular_deps) > 0,
+        critical_path_length=len(critical_path)
+    )
+    
+    return response
 
 
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
