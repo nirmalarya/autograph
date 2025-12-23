@@ -195,6 +195,35 @@ cpu_load_average_15m = Gauge(
     registry=registry
 )
 
+# Network monitoring metrics
+network_request_bytes = Counter(
+    'api_gateway_network_request_bytes_total',
+    'Total bytes received in requests',
+    ['method', 'path'],
+    registry=registry
+)
+
+network_response_bytes = Counter(
+    'api_gateway_network_response_bytes_total',
+    'Total bytes sent in responses',
+    ['method', 'path', 'status_code'],
+    registry=registry
+)
+
+network_bandwidth_saved_bytes = Counter(
+    'api_gateway_network_bandwidth_saved_bytes_total',
+    'Total bytes saved through compression',
+    ['method', 'path'],
+    registry=registry
+)
+
+network_large_payload_count = Counter(
+    'api_gateway_network_large_payload_count_total',
+    'Count of large payloads (>1MB)',
+    ['payload_type'],  # 'request' or 'response'
+    registry=registry
+)
+
 # Get process for memory and CPU monitoring
 process = psutil.Process()
 baseline_memory_mb = None  # Will be set at startup
@@ -260,6 +289,11 @@ MEMORY_CRITICAL_THRESHOLD_MB = 1024  # Critical if memory exceeds 1GB
 CPU_CHECK_INTERVAL_SECONDS = 60  # Check every minute
 CPU_WARNING_THRESHOLD_PERCENT = 70.0  # Warn if CPU exceeds 70%
 CPU_CRITICAL_THRESHOLD_PERCENT = 90.0  # Critical if CPU exceeds 90%
+
+# Network monitoring configuration
+NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES = 1024 * 1024  # 1 MB
+NETWORK_COMPRESSION_MIN_SIZE_BYTES = 1024  # Compress responses > 1 KB
+NETWORK_COMPRESSION_ENABLED = os.getenv("COMPRESSION_ENABLED", "true").lower() == "true"
 
 async def monitor_memory_usage():
     """Background task to monitor memory usage periodically."""
@@ -749,6 +783,140 @@ async def metrics_middleware(request: Request, call_next):
     finally:
         # Always decrement active connections
         active_connections.dec()
+
+
+@app.middleware("http")
+async def network_monitoring_middleware(request: Request, call_next):
+    """Middleware to monitor network traffic (request/response sizes)."""
+    import gzip
+    from io import BytesIO
+    
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    
+    # Measure request size
+    request_body = b""
+    if request.method in ["POST", "PUT", "PATCH"]:
+        # Read body for size measurement (will be re-read by endpoint)
+        request_body = await request.body()
+        request_size = len(request_body)
+        
+        # Track request bytes
+        network_request_bytes.labels(
+            method=request.method,
+            path=request.url.path
+        ).inc(request_size)
+        
+        # Check for large payloads
+        if request_size > NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES:
+            network_large_payload_count.labels(payload_type="request").inc()
+            logger.warning(
+                "Large request payload detected",
+                correlation_id=correlation_id,
+                method=request.method,
+                path=request.url.path,
+                request_size_bytes=request_size,
+                request_size_mb=round(request_size / 1024 / 1024, 2),
+                threshold_mb=round(NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES / 1024 / 1024, 2)
+            )
+    else:
+        request_size = 0
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Measure response size
+    response_body = b""
+    async for chunk in response.body_iterator:
+        response_body += chunk
+    
+    response_size = len(response_body)
+    
+    # Track response bytes (before compression)
+    network_response_bytes.labels(
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code
+    ).inc(response_size)
+    
+    # Check for large response payloads
+    if response_size > NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES:
+        network_large_payload_count.labels(payload_type="response").inc()
+        logger.warning(
+            "Large response payload detected",
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path,
+            response_size_bytes=response_size,
+            response_size_mb=round(response_size / 1024 / 1024, 2),
+            threshold_mb=round(NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES / 1024 / 1024, 2)
+        )
+    
+    # Apply compression if enabled and response is large enough
+    compressed = False
+    if (NETWORK_COMPRESSION_ENABLED and 
+        response_size >= NETWORK_COMPRESSION_MIN_SIZE_BYTES and
+        "gzip" in request.headers.get("accept-encoding", "").lower()):
+        
+        try:
+            # Compress response body
+            compressed_body = gzip.compress(response_body, compresslevel=6)
+            compressed_size = len(compressed_body)
+            bandwidth_saved = response_size - compressed_size
+            
+            # Track bandwidth savings
+            network_bandwidth_saved_bytes.labels(
+                method=request.method,
+                path=request.url.path
+            ).inc(bandwidth_saved)
+            
+            logger.info(
+                "Response compressed",
+                correlation_id=correlation_id,
+                method=request.method,
+                path=request.url.path,
+                original_size_bytes=response_size,
+                compressed_size_bytes=compressed_size,
+                bandwidth_saved_bytes=bandwidth_saved,
+                compression_ratio=round((1 - compressed_size / response_size) * 100, 2) if response_size > 0 else 0
+            )
+            
+            # Replace body with compressed version
+            response_body = compressed_body
+            compressed = True
+        except Exception as e:
+            logger.error(
+                "Compression failed",
+                correlation_id=correlation_id,
+                error=str(e),
+                exc=e
+            )
+    
+    # Log network traffic
+    logger.debug(
+        "Network traffic",
+        correlation_id=correlation_id,
+        method=request.method,
+        path=request.url.path,
+        request_size_bytes=request_size,
+        response_size_bytes=response_size,
+        compressed=compressed
+    )
+    
+    # Create new response with (possibly compressed) body
+    headers = dict(response.headers)
+    if compressed:
+        headers["content-encoding"] = "gzip"
+        headers["vary"] = "Accept-Encoding"
+    
+    # Remove content-length as it may have changed
+    headers.pop("content-length", None)
+    
+    return Response(
+        content=response_body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.headers.get("content-type")
+    )
 
 
 @app.middleware("http")
@@ -1351,6 +1519,103 @@ async def test_cpu_stress(request: Request, duration_seconds: int = 5, intensity
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error: {str(e)}"
         )
+
+
+@app.get("/test/network")
+async def test_network_stats(request: Request):
+    """Test endpoint to get current network statistics."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    return {
+        "message": "Network monitoring is active",
+        "correlation_id": correlation_id,
+        "configuration": {
+            "compression_enabled": NETWORK_COMPRESSION_ENABLED,
+            "compression_min_size_bytes": NETWORK_COMPRESSION_MIN_SIZE_BYTES,
+            "compression_min_size_kb": round(NETWORK_COMPRESSION_MIN_SIZE_BYTES / 1024, 2),
+            "large_payload_threshold_bytes": NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES,
+            "large_payload_threshold_mb": round(NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES / 1024 / 1024, 2)
+        },
+        "note": "Network metrics available at /metrics endpoint",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/test/network/large-request")
+async def test_network_large_request(request: Request):
+    """Test endpoint to send large request payload."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    # Read request body
+    body = await request.body()
+    body_size = len(body)
+    
+    logger.info(
+        "Large request received",
+        correlation_id=correlation_id,
+        body_size_bytes=body_size,
+        body_size_mb=round(body_size / 1024 / 1024, 2),
+        is_large=body_size > NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES
+    )
+    
+    return {
+        "message": "Large request processed",
+        "correlation_id": correlation_id,
+        "request_size_bytes": body_size,
+        "request_size_kb": round(body_size / 1024, 2),
+        "request_size_mb": round(body_size / 1024 / 1024, 2),
+        "is_large_payload": body_size > NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES,
+        "threshold_mb": round(NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES / 1024 / 1024, 2),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/test/network/large-response")
+async def test_network_large_response(request: Request, size_mb: float = 1.0):
+    """Test endpoint to return large response payload.
+    
+    Args:
+        size_mb: Size of response in MB (default: 1.0, max: 10.0)
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    # Limit size for safety
+    size_mb = min(size_mb, 10.0)
+    size_bytes = int(size_mb * 1024 * 1024)
+    
+    logger.info(
+        "Generating large response",
+        correlation_id=correlation_id,
+        size_mb=size_mb,
+        size_bytes=size_bytes
+    )
+    
+    # Generate large payload (repeating pattern for good compression)
+    # Using JSON array of objects
+    pattern = {"id": 1, "name": "test", "description": "This is a test object for network monitoring", "timestamp": datetime.utcnow().isoformat()}
+    pattern_json = json.dumps(pattern)
+    pattern_size = len(pattern_json)
+    
+    # Calculate how many patterns needed
+    num_patterns = size_bytes // pattern_size
+    
+    # Generate large array
+    data = [pattern for _ in range(num_patterns)]
+    
+    response_data = {
+        "message": "Large response generated",
+        "correlation_id": correlation_id,
+        "requested_size_mb": size_mb,
+        "actual_size_mb": round(len(json.dumps(data)) / 1024 / 1024, 2),
+        "num_items": len(data),
+        "is_large_payload": size_bytes > NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES,
+        "compression_enabled": NETWORK_COMPRESSION_ENABLED,
+        "note": "Check response headers for Content-Encoding: gzip if compression applied",
+        "data": data,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    return response_data
 
 
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
