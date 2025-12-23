@@ -547,6 +547,16 @@ export default function DashboardPage() {
                 >
                   Updated {sortBy === 'updated_at' && (sortOrder === 'asc' ? '↑' : '↓')}
                 </button>
+                <button
+                  onClick={() => handleSortChange('last_viewed')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    sortBy === 'last_viewed'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Last Viewed {sortBy === 'last_viewed' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
               </div>
 
               {/* View Mode Toggle */}
