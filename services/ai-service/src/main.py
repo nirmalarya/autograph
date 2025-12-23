@@ -7,11 +7,18 @@ from typing import Optional, List, Dict
 import os
 import logging
 from dotenv import load_dotenv
+import uuid
 
 from .providers import AIProviderFactory, DiagramType
 from .layout_algorithms import LayoutAlgorithm
 from .icon_intelligence import IconIntelligence
 from .quality_validation import QualityValidator, QualityReport
+from .refinement import (
+    IterativeRefinement, 
+    SessionContextManager, 
+    RefinementHistory
+)
+from .templates import DiagramTemplateLibrary, DiagramDomain
 
 load_dotenv()
 
@@ -370,6 +377,193 @@ async def get_layout_algorithms():
         ],
         "default": "hierarchical"
     }
+
+
+@app.post("/api/ai/refine-diagram")
+async def refine_diagram_endpoint(
+    current_code: str,
+    refinement_prompt: str,
+    session_id: Optional[str] = None,
+    model: Optional[str] = None
+):
+    """
+    Iteratively refine an existing diagram.
+    
+    Features #332-335:
+    - #332: 'Add caching layer'
+    - #333: 'Make database bigger'
+    - #334: 'Change colors to blue'
+    - #335: Context awareness (remembers session)
+    """
+    try:
+        # Get or create session context (Feature #335)
+        context = None
+        if session_id:
+            context_mgr = SessionContextManager()
+            context = context_mgr.get_session(session_id)
+        
+        # Build refinement prompt (Features #332-334)
+        enhanced_prompt = IterativeRefinement.build_refinement_prompt(
+            current_code, 
+            refinement_prompt,
+            context
+        )
+        
+        # Generate refined diagram
+        result = await AIProviderFactory.generate_with_fallback(
+            prompt=enhanced_prompt,
+            diagram_type=None,
+            model=model
+        )
+        
+        # Apply heuristics to validate refinement
+        refined_code = IterativeRefinement.apply_refinement_heuristics(
+            current_code,
+            result["mermaid_code"],
+            refinement_prompt
+        )
+        
+        result["mermaid_code"] = refined_code
+        result["timestamp"] = datetime.utcnow().isoformat()
+        result["refinement_applied"] = True
+        
+        # Detect refinement type
+        refinement_info = IterativeRefinement.detect_refinement_type(refinement_prompt)
+        result["refinement_type"] = refinement_info["type"]
+        
+        logger.info(
+            f"✓ Successfully refined diagram: {refinement_info['type']}"
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Diagram refinement failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to refine diagram: {str(e)}"
+        )
+
+
+@app.get("/api/ai/templates")
+async def get_templates(domain: Optional[str] = None):
+    """
+    Get diagram templates.
+    
+    Feature #336: Template-based generation
+    Features #337-340: Domain-specific templates
+    """
+    try:
+        # Parse domain if provided
+        domain_enum = None
+        if domain:
+            try:
+                domain_enum = DiagramDomain(domain.lower())
+            except ValueError:
+                pass
+        
+        templates = DiagramTemplateLibrary.list_templates_by_domain(domain_enum)
+        
+        return {
+            "templates": templates,
+            "domains": [d.value for d in DiagramDomain],
+            "count": len(templates)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get templates: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get templates: {str(e)}"
+        )
+
+
+@app.post("/api/ai/generate-from-template")
+async def generate_from_template(
+    prompt: str,
+    template_id: Optional[str] = None,
+    domain: Optional[str] = None,
+    model: Optional[str] = None
+):
+    """
+    Generate diagram using template.
+    
+    Feature #336: Template-based generation
+    Features #337-340: Domain-specific generation
+    """
+    try:
+        # Find matching template
+        template = None
+        
+        if template_id:
+            # Use specified template
+            template_data = DiagramTemplateLibrary.TEMPLATES.get(template_id)
+            if template_data:
+                template = {"id": template_id, **template_data}
+        else:
+            # Auto-detect template from prompt
+            template = DiagramTemplateLibrary.find_matching_template(prompt)
+        
+        if template:
+            logger.info(f"Using template: {template['id']}")
+            enhanced_prompt = DiagramTemplateLibrary.enhance_prompt_with_template(
+                prompt, template
+            )
+        else:
+            # No template found, use domain-specific guidance
+            domain_enum = DiagramDomain(domain.lower()) if domain else None
+            if not domain_enum:
+                domain_enum = DiagramTemplateLibrary.detect_domain(prompt)
+            
+            guidance = DiagramTemplateLibrary.get_domain_specific_guidance(domain_enum)
+            enhanced_prompt = f"{prompt}\n\n{guidance}" if guidance else prompt
+            
+            logger.info(f"Using domain guidance: {domain_enum}")
+        
+        # Generate diagram
+        result = await AIProviderFactory.generate_with_fallback(
+            prompt=enhanced_prompt,
+            diagram_type=None,
+            model=model
+        )
+        
+        result["timestamp"] = datetime.utcnow().isoformat()
+        result["template_used"] = template["id"] if template else None
+        result["domain_detected"] = DiagramTemplateLibrary.detect_domain(prompt).value
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Template-based generation failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate from template: {str(e)}"
+        )
+
+
+@app.get("/api/ai/detect-domain")
+async def detect_domain(prompt: str):
+    """
+    Detect domain from prompt.
+    
+    Features #337-340: Domain detection
+    """
+    try:
+        domain = DiagramTemplateLibrary.detect_domain(prompt)
+        matching_template = DiagramTemplateLibrary.find_matching_template(prompt)
+        
+        return {
+            "domain": domain.value,
+            "matching_template": matching_template["id"] if matching_template else None,
+            "available_templates": [
+                t["id"] for t in DiagramTemplateLibrary.list_templates_by_domain(domain)
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Domain detection failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to detect domain: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
