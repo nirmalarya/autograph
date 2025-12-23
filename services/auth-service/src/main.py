@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, validator
 import os
 import traceback
 import json
@@ -363,11 +363,34 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 
-# Pydantic models
+# Pydantic models with enhanced validation
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
     full_name: str | None = None
+    
+    @validator('password')
+    def validate_password_strength(cls, v):
+        """Validate password meets minimum security requirements."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if len(v) > 128:
+            raise ValueError('Password must not exceed 128 characters')
+        # Note: Additional password requirements (uppercase, numbers, symbols)
+        # can be enforced here if needed
+        return v
+    
+    @validator('full_name')
+    def validate_full_name(cls, v):
+        """Validate full name has reasonable length."""
+        if v is not None:
+            if len(v) > 255:
+                raise ValueError('Full name must not exceed 255 characters')
+            # Remove leading/trailing whitespace
+            v = v.strip()
+            if len(v) == 0:
+                return None
+        return v
 
 
 class UserLogin(BaseModel):

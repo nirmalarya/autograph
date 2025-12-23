@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional, Dict, Any
 import os
 import json
@@ -339,7 +339,7 @@ async def list_diagrams(request: Request):
     }
 
 
-# Pydantic models for request/response
+# Pydantic models for request/response with validation
 class CreateDiagramRequest(BaseModel):
     """Request model for creating a diagram."""
     title: str
@@ -347,6 +347,31 @@ class CreateDiagramRequest(BaseModel):
     canvas_data: Optional[Dict[str, Any]] = None
     note_content: Optional[str] = None
     folder_id: Optional[str] = None
+    
+    @validator('title')
+    def validate_title(cls, v):
+        """Validate diagram title has reasonable length and content."""
+        if not v or len(v.strip()) == 0:
+            raise ValueError('Title cannot be empty')
+        if len(v) > 255:
+            raise ValueError('Title must not exceed 255 characters')
+        # Remove leading/trailing whitespace
+        return v.strip()
+    
+    @validator('file_type')
+    def validate_file_type(cls, v):
+        """Validate file type is one of the allowed values."""
+        allowed_types = ['canvas', 'note', 'mixed']
+        if v not in allowed_types:
+            raise ValueError(f'File type must be one of: {", ".join(allowed_types)}')
+        return v
+    
+    @validator('note_content')
+    def validate_note_content(cls, v):
+        """Validate note content has reasonable length."""
+        if v is not None and len(v) > 1000000:  # 1MB limit
+            raise ValueError('Note content must not exceed 1MB')
+        return v
 
 
 class DiagramResponse(BaseModel):
@@ -375,6 +400,32 @@ class UpdateDiagramRequest(BaseModel):
     canvas_data: Optional[Dict[str, Any]] = None
     note_content: Optional[str] = None
     description: Optional[str] = None  # Version description
+    
+    @validator('title')
+    def validate_title(cls, v):
+        """Validate diagram title has reasonable length and content."""
+        if v is not None:
+            if len(v.strip()) == 0:
+                raise ValueError('Title cannot be empty')
+            if len(v) > 255:
+                raise ValueError('Title must not exceed 255 characters')
+            # Remove leading/trailing whitespace
+            return v.strip()
+        return v
+    
+    @validator('note_content')
+    def validate_note_content(cls, v):
+        """Validate note content has reasonable length."""
+        if v is not None and len(v) > 1000000:  # 1MB limit
+            raise ValueError('Note content must not exceed 1MB')
+        return v
+    
+    @validator('description')
+    def validate_description(cls, v):
+        """Validate version description has reasonable length."""
+        if v is not None and len(v) > 1000:
+            raise ValueError('Description must not exceed 1000 characters')
+        return v
 
 
 class VersionResponse(BaseModel):
