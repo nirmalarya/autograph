@@ -897,6 +897,79 @@ async def delete_diagram(
         }
 
 
+@app.post("/{diagram_id}/restore")
+async def restore_diagram(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Restore a diagram from trash.
+    
+    Args:
+        diagram_id: ID of the diagram to restore
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Restoring diagram from trash",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get diagram from trash (is_deleted=True)
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == True
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found in trash",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found in trash")
+    
+    # Check authorization
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized restore attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to restore this diagram")
+    
+    # Restore: clear is_deleted flag and deleted_at timestamp
+    diagram.is_deleted = False
+    diagram.deleted_at = None
+    
+    db.commit()
+    
+    logger.info(
+        "Diagram restored successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Update metrics
+    diagrams_updated.inc()
+    
+    return {
+        "message": "Diagram restored from trash",
+        "id": diagram_id,
+        "title": diagram.title,
+        "restored_at": datetime.utcnow().isoformat()
+    }
+
+
 @app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
 async def get_versions(
     diagram_id: str,
