@@ -305,6 +305,7 @@ async def health_check(request: Request):
     return {
         "status": "healthy",
         "service": "diagram-service",
+        "instance_id": os.getenv("INSTANCE_ID", "default"),
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0"
     }
