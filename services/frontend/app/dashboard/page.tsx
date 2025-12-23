@@ -9,6 +9,7 @@ interface Diagram {
   file_type: 'canvas' | 'note' | 'mixed';
   created_at: string;
   updated_at: string;
+  last_activity?: string;
   current_version: number;
   version_count?: number;
   thumbnail_url?: string;
@@ -559,6 +560,16 @@ export default function DashboardPage() {
                 >
                   Last Viewed {sortBy === 'last_viewed' && (sortOrder === 'asc' ? '↑' : '↓')}
                 </button>
+                <button
+                  onClick={() => handleSortChange('last_activity')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    sortBy === 'last_activity'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Last Activity {sortBy === 'last_activity' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
               </div>
 
               {/* View Mode Toggle */}
@@ -730,6 +741,9 @@ export default function DashboardPage() {
                         <div className="text-sm text-gray-600 space-y-1">
                           <p>Version: {diagram.current_version} ({diagram.version_count || 1} total)</p>
                           <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                          {diagram.last_activity && (
+                            <p>Last Activity: {new Date(diagram.last_activity).toLocaleDateString()}</p>
+                          )}
                           <p>Size: {formatBytes(diagram.size_bytes)}</p>
                           <p>Exports: {diagram.export_count || 0}</p>
                           <p>Collaborators: {diagram.collaborator_count || 1}</p>
@@ -770,6 +784,9 @@ export default function DashboardPage() {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Last Updated
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Last Activity
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Version
@@ -854,6 +871,14 @@ export default function DashboardPage() {
                         >
                           <div className="text-sm text-gray-600">
                             {new Date(diagram.updated_at).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
+                          <div className="text-sm text-gray-600">
+                            {diagram.last_activity ? new Date(diagram.last_activity).toLocaleDateString() : '-'}
                           </div>
                         </td>
                         <td 

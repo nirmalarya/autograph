@@ -445,7 +445,9 @@ async def list_diagrams(
                 'updated': File.updated_at,  # Alias
                 'last_viewed': File.last_accessed_at,
                 'last_viewed_at': File.last_accessed_at,
-                'last_accessed_at': File.last_accessed_at
+                'last_accessed_at': File.last_accessed_at,
+                'last_activity': File.last_activity,
+                'last_activity_at': File.last_activity  # Alias
             }
             
             if sort_by.lower() not in valid_sort_fields:
@@ -674,6 +676,7 @@ class DiagramResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_accessed_at: Optional[datetime] = None
+    last_activity: Optional[datetime] = None  # Last activity (view, edit, comment)
     size_bytes: Optional[int] = None  # Total size in bytes (canvas_data + note_content)
     
     class Config:
@@ -880,7 +883,7 @@ async def generate_thumbnail(diagram_id: str, canvas_data: dict) -> Optional[str
         return None
 
 
-@app.post("/")
+@app.post("/", response_model=DiagramResponse)
 async def create_diagram(
     request: Request,
     diagram: CreateDiagramRequest,
@@ -908,7 +911,8 @@ async def create_diagram(
         file_type=diagram.file_type,
         canvas_data=diagram.canvas_data,
         note_content=diagram.note_content,
-        folder_id=diagram.folder_id
+        folder_id=diagram.folder_id,
+        last_activity=datetime.utcnow()  # Set initial last_activity
     )
     
     db.add(new_diagram)
@@ -1176,7 +1180,8 @@ async def create_diagram_from_template(
             file_type=template.file_type,
             canvas_data=template.canvas_data,
             note_content=template.note_content,
-            current_version=1
+            current_version=1,
+            last_activity=datetime.utcnow()  # Set initial last_activity
         )
         
         db.add(new_diagram)
@@ -1336,6 +1341,7 @@ async def get_diagram(
         diagram.view_count = 0
     diagram.view_count += 1
     diagram.last_accessed_at = datetime.utcnow()
+    diagram.last_activity = datetime.utcnow()  # Update last activity on view
     
     db.commit()
     db.refresh(diagram)
@@ -1468,6 +1474,9 @@ async def update_diagram(
     
     # Track who last edited the diagram
     diagram.last_edited_by = user_id
+    
+    # Update last activity timestamp
+    diagram.last_activity = datetime.utcnow()
     
     # Regenerate thumbnail if canvas_data was updated
     if update_data.canvas_data is not None:
@@ -2598,6 +2607,7 @@ async def add_comment(
     old_count = diagram.comment_count if hasattr(diagram, 'comment_count') else 0
     diagram.comment_count = old_count + 1
     diagram.updated_at = datetime.utcnow()
+    diagram.last_activity = datetime.utcnow()  # Update last activity on comment
     
     db.commit()
     db.refresh(diagram)

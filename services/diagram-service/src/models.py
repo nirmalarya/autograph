@@ -150,6 +150,7 @@ class File(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_accessed_at = Column(DateTime(timezone=True))
+    last_activity = Column(DateTime(timezone=True))  # Last activity (view, edit, comment)
     
     # Relationships
     owner = relationship("User", back_populates="files", foreign_keys=[owner_id])
@@ -165,6 +166,7 @@ class File(Base):
         Index('idx_files_folder', 'folder_id'),
         Index('idx_files_deleted', 'is_deleted'),
         Index('idx_files_title', 'title'),
+        Index('idx_files_last_activity', 'last_activity'),
     )
 
 
