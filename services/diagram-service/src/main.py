@@ -587,6 +587,9 @@ async def get_diagram(
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
     
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
     logger.info(
         "Fetching diagram",
         correlation_id=correlation_id,
@@ -604,6 +607,17 @@ async def get_diagram(
             diagram_id=diagram_id
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization - user must own the diagram
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized access attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="You do not have permission to access this diagram")
     
     logger.info(
         "Diagram fetched successfully",
