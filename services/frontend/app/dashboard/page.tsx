@@ -48,6 +48,13 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState<string>('updated_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  
+  // Batch operations state
+  const [selectedDiagrams, setSelectedDiagrams] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [deletingBatch, setDeletingBatch] = useState(false);
+  const [movingBatch, setMovingBatch] = useState(false);
 
   useEffect(() => {
     // Check if user is authenticated
@@ -215,6 +222,85 @@ export default function DashboardPage() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     router.push('/');
+  };
+
+  // Batch operations handlers
+  const toggleSelectDiagram = (diagramId: string) => {
+    const newSelected = new Set(selectedDiagrams);
+    if (newSelected.has(diagramId)) {
+      newSelected.delete(diagramId);
+    } else {
+      newSelected.add(diagramId);
+    }
+    setSelectedDiagrams(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedDiagrams.size === diagrams.length) {
+      setSelectedDiagrams(new Set());
+    } else {
+      setSelectedDiagrams(new Set(diagrams.map(d => d.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedDiagrams.size === 0) return;
+
+    setDeletingBatch(true);
+    try {
+      // Delete each selected diagram
+      const deletePromises = Array.from(selectedDiagrams).map(diagramId =>
+        fetch(`http://localhost:8082/${diagramId}`, {
+          method: 'DELETE',
+          headers: {
+            'X-User-ID': user?.sub || '',
+          },
+        })
+      );
+
+      await Promise.all(deletePromises);
+
+      // Clear selection and refresh list
+      setSelectedDiagrams(new Set());
+      setShowDeleteConfirm(false);
+      fetchDiagrams();
+    } catch (err) {
+      console.error('Failed to delete diagrams:', err);
+      alert('Failed to delete some diagrams. Please try again.');
+    } finally {
+      setDeletingBatch(false);
+    }
+  };
+
+  const handleBulkMove = async (folderId: string | null) => {
+    if (selectedDiagrams.size === 0) return;
+
+    setMovingBatch(true);
+    try {
+      // Move each selected diagram
+      const movePromises = Array.from(selectedDiagrams).map(diagramId =>
+        fetch(`http://localhost:8082/${diagramId}/move`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-ID': user?.sub || '',
+          },
+          body: JSON.stringify({ folder_id: folderId }),
+        })
+      );
+
+      await Promise.all(movePromises);
+
+      // Clear selection and refresh list
+      setSelectedDiagrams(new Set());
+      setShowMoveDialog(false);
+      fetchDiagrams();
+    } catch (err) {
+      console.error('Failed to move diagrams:', err);
+      alert('Failed to move some diagrams. Please try again.');
+    } finally {
+      setMovingBatch(false);
+    }
   };
 
   if (loading) {
@@ -417,6 +503,39 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Batch Actions Toolbar */}
+        {selectedDiagrams.size > 0 && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-medium text-blue-900">
+                  {selectedDiagrams.size} diagram{selectedDiagrams.size !== 1 ? 's' : ''} selected
+                </span>
+                <button
+                  onClick={() => setSelectedDiagrams(new Set())}
+                  className="text-sm text-blue-700 hover:text-blue-900 font-medium"
+                >
+                  Clear Selection
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowMoveDialog(true)}
+                  className="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded-md font-medium hover:bg-blue-50 transition"
+                >
+                  Move Selected
+                </button>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 transition"
+                >
+                  Delete Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Diagrams List */}
         {loadingDiagrams ? (
           <div className="text-center py-12">
@@ -441,15 +560,50 @@ export default function DashboardPage() {
           <>
             {/* Grid View */}
             {viewMode === 'grid' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {diagrams.map((diagram) => (
-                  <div
-                    key={diagram.id}
-                    onClick={() => handleDiagramClick(diagram)}
-                    className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 transition"
-                  >
-                    {/* Thumbnail */}
-                    <div className="w-full h-48 bg-gray-100 flex items-center justify-center overflow-hidden">
+              <>
+                {/* Select All Checkbox */}
+                <div className="mb-4 flex items-center gap-2 px-2">
+                  <input
+                    type="checkbox"
+                    checked={diagrams.length > 0 && selectedDiagrams.size === diagrams.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label className="text-sm text-gray-700 font-medium">
+                    Select All
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {diagrams.map((diagram) => (
+                    <div
+                      key={diagram.id}
+                      className={`bg-white rounded-lg shadow-sm overflow-hidden border-2 transition ${
+                        selectedDiagrams.has(diagram.id)
+                          ? 'border-blue-500 shadow-md'
+                          : 'border-gray-200 hover:shadow-md hover:border-blue-300'
+                      }`}
+                    >
+                      {/* Checkbox Overlay */}
+                      <div className="relative">
+                        <div className="absolute top-2 left-2 z-10">
+                          <input
+                            type="checkbox"
+                            checked={selectedDiagrams.has(diagram.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              toggleSelectDiagram(diagram.id);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 bg-white shadow-sm"
+                          />
+                        </div>
+                        
+                        {/* Thumbnail */}
+                        <div 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="w-full h-48 bg-gray-100 flex items-center justify-center overflow-hidden cursor-pointer"
+                        >
                       {diagram.thumbnail_url ? (
                         <img 
                           src={diagram.thumbnail_url} 
@@ -464,26 +618,31 @@ export default function DashboardPage() {
                           <p className="text-sm">No preview</p>
                         </div>
                       )}
-                    </div>
+                        </div>
+                      </div>
                     
-                    {/* Card Content */}
-                    <div className="p-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
-                          {diagram.title}
-                        </h3>
-                        <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                          {diagram.file_type}
-                        </span>
-                      </div>
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <p>Version: {diagram.current_version}</p>
-                        <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                      {/* Card Content */}
+                      <div 
+                        onClick={() => handleDiagramClick(diagram)}
+                        className="p-4 cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
+                            {diagram.title}
+                          </h3>
+                          <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                            {diagram.file_type}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-600 space-y-1">
+                          <p>Version: {diagram.current_version}</p>
+                          <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             )}
 
             {/* List View */}
@@ -492,6 +651,14 @@ export default function DashboardPage() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <input
+                          type="checkbox"
+                          checked={diagrams.length > 0 && selectedDiagrams.size === diagrams.length}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Preview
                       </th>
@@ -516,10 +683,25 @@ export default function DashboardPage() {
                     {diagrams.map((diagram) => (
                       <tr
                         key={diagram.id}
-                        onClick={() => handleDiagramClick(diagram)}
-                        className="cursor-pointer hover:bg-gray-50 transition"
+                        className={`transition ${
+                          selectedDiagrams.has(diagram.id)
+                            ? 'bg-blue-50'
+                            : 'hover:bg-gray-50'
+                        }`}
                       >
                         <td className="px-6 py-4 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedDiagrams.has(diagram.id)}
+                            onChange={() => toggleSelectDiagram(diagram.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                        </td>
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center overflow-hidden">
                             {diagram.thumbnail_url ? (
                               <img 
@@ -534,23 +716,38 @@ export default function DashboardPage() {
                             )}
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <div className="text-sm font-medium text-gray-900">{diagram.title}</div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
                             {diagram.file_type}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <div className="text-sm text-gray-600">{diagram.owner_email || user?.email || 'Unknown'}</div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <div className="text-sm text-gray-600">
                             {new Date(diagram.updated_at).toLocaleDateString()}
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
                           <div className="text-sm text-gray-600">v{diagram.current_version}</div>
                         </td>
                       </tr>
@@ -689,6 +886,69 @@ export default function DashboardPage() {
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
               >
                 {creating ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Delete Diagrams?</h2>
+            <p className="text-gray-700 mb-6">
+              Are you sure you want to delete {selectedDiagrams.size} diagram{selectedDiagrams.size !== 1 ? 's' : ''}? 
+              They will be moved to trash and can be restored within 30 days.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition"
+                disabled={deletingBatch}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={deletingBatch}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {deletingBatch ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move Dialog */}
+      {showMoveDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Move Diagrams</h2>
+            <p className="text-gray-700 mb-4">
+              Move {selectedDiagrams.size} diagram{selectedDiagrams.size !== 1 ? 's' : ''} to:
+            </p>
+            <div className="space-y-2 mb-6">
+              <button
+                onClick={() => handleBulkMove(null)}
+                disabled={movingBatch}
+                className="w-full px-4 py-3 text-left border border-gray-300 rounded-md hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                <div className="font-medium text-gray-900">Root Folder</div>
+                <div className="text-sm text-gray-600">Move to main workspace</div>
+              </button>
+              <div className="text-sm text-gray-500 italic p-2">
+                Note: Folder management will be implemented in a future update. For now, diagrams can only be moved to the root folder.
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowMoveDialog(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition"
+                disabled={movingBatch}
+              >
+                Cancel
               </button>
             </div>
           </div>
