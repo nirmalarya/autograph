@@ -43,6 +43,8 @@ export default function DashboardPage() {
   const [filterType, setFilterType] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [sortBy, setSortBy] = useState<string>('updated_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     // Check if user is authenticated
@@ -65,12 +67,12 @@ export default function DashboardPage() {
     setLoading(false);
   }, [router]);
 
-  // Fetch diagrams when user, page, filterType, or searchQuery changes
+  // Fetch diagrams when user, page, filterType, searchQuery, sortBy, or sortOrder changes
   useEffect(() => {
     if (user?.sub) {
       fetchDiagrams();
     }
-  }, [user, page, filterType, searchQuery]);
+  }, [user, page, filterType, searchQuery, sortBy, sortOrder]);
 
   const fetchDiagrams = async () => {
     if (!user?.sub) return;
@@ -88,6 +90,14 @@ export default function DashboardPage() {
 
       if (searchQuery) {
         params.append('search', searchQuery);
+      }
+
+      if (sortBy) {
+        params.append('sort_by', sortBy);
+      }
+
+      if (sortOrder) {
+        params.append('sort_order', sortOrder);
       }
 
       const response = await fetch(`http://localhost:8082/?${params.toString()}`, {
@@ -122,6 +132,18 @@ export default function DashboardPage() {
   const handleFilterChange = (type: string) => {
     setFilterType(type);
     setPage(1); // Reset to first page on filter change
+  };
+
+  const handleSortChange = (field: string) => {
+    if (sortBy === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New field, default to desc for dates, asc for name
+      setSortBy(field);
+      setSortOrder(field === 'title' ? 'asc' : 'desc');
+    }
+    setPage(1); // Reset to first page on sort change
   };
 
   const handleDiagramClick = (diagram: Diagram) => {
@@ -243,7 +265,8 @@ export default function DashboardPage() {
 
         {/* Search and Filter */}
         <div className="mb-6 bg-white rounded-lg shadow-sm p-4 border border-gray-200">
-          <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex flex-col gap-4">
+            {/* Search Bar */}
             <form onSubmit={handleSearch} className="flex-1">
               <div className="flex gap-2">
                 <input
@@ -275,47 +298,87 @@ export default function DashboardPage() {
               </div>
             </form>
             
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleFilterChange('')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  filterType === '' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => handleFilterChange('canvas')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  filterType === 'canvas' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Canvas
-              </button>
-              <button
-                onClick={() => handleFilterChange('note')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  filterType === 'note' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Note
-              </button>
-              <button
-                onClick={() => handleFilterChange('mixed')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  filterType === 'mixed' 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Mixed
-              </button>
+            {/* Filter and Sort Controls */}
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
+              {/* Type Filter */}
+              <div className="flex gap-2 items-center">
+                <span className="text-sm font-medium text-gray-700 mr-2">Filter:</span>
+                <button
+                  onClick={() => handleFilterChange('')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    filterType === '' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => handleFilterChange('canvas')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    filterType === 'canvas' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Canvas
+                </button>
+                <button
+                  onClick={() => handleFilterChange('note')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    filterType === 'note' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Note
+                </button>
+                <button
+                  onClick={() => handleFilterChange('mixed')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    filterType === 'mixed' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Mixed
+                </button>
+              </div>
+
+              {/* Sort Controls */}
+              <div className="flex gap-2 items-center">
+                <span className="text-sm font-medium text-gray-700 mr-2">Sort by:</span>
+                <button
+                  onClick={() => handleSortChange('title')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    sortBy === 'title'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Name {sortBy === 'title' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
+                <button
+                  onClick={() => handleSortChange('created_at')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    sortBy === 'created_at'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Created {sortBy === 'created_at' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
+                <button
+                  onClick={() => handleSortChange('updated_at')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    sortBy === 'updated_at'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Updated {sortBy === 'updated_at' && (sortOrder === 'asc' ? '↑' : '↓')}
+                </button>
+              </div>
             </div>
           </div>
         </div>

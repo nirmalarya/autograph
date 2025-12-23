@@ -329,9 +329,11 @@ async def list_diagrams(
     page_size: int = 20,
     file_type: Optional[str] = None,
     search: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """List diagrams endpoint with pagination, filtering, and search."""
+    """List diagrams endpoint with pagination, filtering, search, and sorting."""
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
     
@@ -345,7 +347,9 @@ async def list_diagrams(
         page=page,
         page_size=page_size,
         file_type=file_type,
-        search=search
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order
     )
     
     # Build query
@@ -376,9 +380,48 @@ async def list_diagrams(
     # Get total count
     total = query.count()
     
+    # Apply sorting
+    # Default: sort by updated_at desc (most recently updated first)
+    sort_field = File.updated_at
+    sort_direction = 'desc'
+    
+    if sort_by:
+        # Validate sort_by parameter
+        valid_sort_fields = {
+            'title': File.title,
+            'name': File.title,  # Alias for title
+            'created_at': File.created_at,
+            'created': File.created_at,  # Alias
+            'updated_at': File.updated_at,
+            'updated': File.updated_at,  # Alias
+            'last_viewed': File.last_accessed_at,
+            'last_viewed_at': File.last_accessed_at,
+            'last_accessed_at': File.last_accessed_at
+        }
+        
+        if sort_by.lower() not in valid_sort_fields:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid sort_by. Must be one of: {', '.join(set(valid_sort_fields.keys()))}"
+            )
+        
+        sort_field = valid_sort_fields[sort_by.lower()]
+    
+    if sort_order:
+        # Validate sort_order parameter
+        if sort_order.lower() not in ['asc', 'desc']:
+            raise HTTPException(status_code=400, detail="Invalid sort_order. Must be: asc or desc")
+        sort_direction = sort_order.lower()
+    
+    # Apply the sort
+    if sort_direction == 'desc':
+        query = query.order_by(sort_field.desc())
+    else:
+        query = query.order_by(sort_field.asc())
+    
     # Apply pagination
     offset = (page - 1) * page_size
-    diagrams = query.order_by(File.updated_at.desc()).offset(offset).limit(page_size).all()
+    diagrams = query.offset(offset).limit(page_size).all()
     
     # Calculate pagination info
     total_pages = (total + page_size - 1) // page_size  # Ceiling division
