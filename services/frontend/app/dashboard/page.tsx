@@ -48,6 +48,7 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState<string>('updated_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [activeTab, setActiveTab] = useState<'all' | 'recent'>('all');
   
   // Batch operations state
   const [selectedDiagrams, setSelectedDiagrams] = useState<Set<string>>(new Set());
@@ -77,40 +78,48 @@ export default function DashboardPage() {
     setLoading(false);
   }, [router]);
 
-  // Fetch diagrams when user, page, filterType, searchQuery, sortBy, or sortOrder changes
+  // Fetch diagrams when user, page, filterType, searchQuery, sortBy, sortOrder, or activeTab changes
   useEffect(() => {
     if (user?.sub) {
       fetchDiagrams();
     }
-  }, [user, page, filterType, searchQuery, sortBy, sortOrder]);
+  }, [user, page, filterType, searchQuery, sortBy, sortOrder, activeTab]);
 
   const fetchDiagrams = async () => {
     if (!user?.sub) return;
 
     setLoadingDiagrams(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        page_size: '20',
-      });
+      let url = 'http://localhost:8082/';
+      let params = new URLSearchParams();
 
-      if (filterType) {
-        params.append('file_type', filterType);
+      // If Recent tab is active, use the /recent endpoint
+      if (activeTab === 'recent') {
+        url = 'http://localhost:8082/recent';
+        params.append('limit', '10');
+      } else {
+        // For "All" tab, use regular list endpoint with pagination
+        params.append('page', page.toString());
+        params.append('page_size', '20');
+
+        if (filterType) {
+          params.append('file_type', filterType);
+        }
+
+        if (searchQuery) {
+          params.append('search', searchQuery);
+        }
+
+        if (sortBy) {
+          params.append('sort_by', sortBy);
+        }
+
+        if (sortOrder) {
+          params.append('sort_order', sortOrder);
+        }
       }
 
-      if (searchQuery) {
-        params.append('search', searchQuery);
-      }
-
-      if (sortBy) {
-        params.append('sort_by', sortBy);
-      }
-
-      if (sortOrder) {
-        params.append('sort_order', sortOrder);
-      }
-
-      const response = await fetch(`http://localhost:8082/?${params.toString()}`, {
+      const response = await fetch(`${url}?${params.toString()}`, {
         headers: {
           'X-User-ID': user.sub,
         },
@@ -120,12 +129,20 @@ export default function DashboardPage() {
         throw new Error('Failed to fetch diagrams');
       }
 
-      const data: DiagramsResponse = await response.json();
+      const data = await response.json();
       setDiagrams(data.diagrams);
       setTotal(data.total);
-      setTotalPages(data.total_pages);
-      setHasNext(data.has_next);
-      setHasPrev(data.has_prev);
+      
+      // Recent endpoint doesn't have pagination
+      if (activeTab === 'recent') {
+        setTotalPages(1);
+        setHasNext(false);
+        setHasPrev(false);
+      } else {
+        setTotalPages(data.total_pages);
+        setHasNext(data.has_next);
+        setHasPrev(data.has_prev);
+      }
     } catch (err) {
       console.error('Failed to fetch diagrams:', err);
     } finally {
@@ -352,11 +369,44 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Search and Filter */}
-        <div className="mb-6 bg-white rounded-lg shadow-sm p-4 border border-gray-200">
-          <div className="flex flex-col gap-4">
-            {/* Search Bar */}
-            <form onSubmit={handleSearch} className="flex-1">
+        {/* Tabs */}
+        <div className="mb-6 border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            <button
+              onClick={() => {
+                setActiveTab('all');
+                setPage(1);
+              }}
+              className={`${
+                activeTab === 'all'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
+            >
+              All Diagrams
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('recent');
+                setPage(1);
+              }}
+              className={`${
+                activeTab === 'recent'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
+            >
+              Recent
+            </button>
+          </nav>
+        </div>
+
+        {/* Search and Filter - Only show for "All" tab */}
+        {activeTab === 'all' && (
+          <div className="mb-6 bg-white rounded-lg shadow-sm p-4 border border-gray-200">
+            <div className="flex flex-col gap-4">
+              {/* Search Bar */}
+              <form onSubmit={handleSearch} className="flex-1">
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -501,7 +551,7 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Batch Actions Toolbar */}
         {selectedDiagrams.size > 0 && (
@@ -757,8 +807,8 @@ export default function DashboardPage() {
               </div>
             )}
 
-            {/* Pagination */}
-            {totalPages > 1 && (
+            {/* Pagination - Only show for "All" tab */}
+            {activeTab === 'all' && totalPages > 1 && (
               <div className="mt-8 flex justify-center items-center gap-4">
                 <button
                   onClick={() => setPage(page - 1)}

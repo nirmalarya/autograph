@@ -472,6 +472,60 @@ async def list_diagrams(
     }
 
 
+@app.get("/recent")
+async def list_recent_diagrams(
+    request: Request,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """List recently accessed diagrams (last 10 by default).
+    
+    This endpoint returns diagrams sorted by last_accessed_at timestamp,
+    showing the most recently viewed diagrams first.
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    # Validate limit parameter
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+    
+    logger.info(
+        "Listing recent diagrams",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        limit=limit
+    )
+    
+    # Query recent diagrams
+    # Filter by owner and not deleted
+    # Only include diagrams that have been accessed (last_accessed_at is not null)
+    # Sort by last_accessed_at descending (most recent first)
+    diagrams = db.query(File).filter(
+        File.owner_id == user_id,
+        File.is_deleted == False,
+        File.last_accessed_at.isnot(None)
+    ).order_by(
+        File.last_accessed_at.desc()
+    ).limit(limit).all()
+    
+    logger.info(
+        "Recent diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        returned=len(diagrams)
+    )
+    
+    return {
+        "diagrams": [DiagramResponse.model_validate(d) for d in diagrams],
+        "total": len(diagrams),
+        "limit": limit
+    }
+
+
 # Pydantic models for request/response with validation
 class CreateDiagramRequest(BaseModel):
     """Request model for creating a diagram."""
