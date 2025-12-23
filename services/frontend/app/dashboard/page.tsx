@@ -12,6 +12,7 @@ interface Diagram {
   current_version: number;
   thumbnail_url?: string;
   owner_email?: string;
+  size_bytes?: number;
 }
 
 interface DiagramsResponse {
@@ -22,6 +23,17 @@ interface DiagramsResponse {
   total_pages: number;
   has_next: boolean;
   has_prev: boolean;
+}
+
+// Helper function to format bytes into human-readable size
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes === 0) return '0 B';
+  
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
 export default function DashboardPage() {
@@ -704,6 +716,7 @@ export default function DashboardPage() {
                         <div className="text-sm text-gray-600 space-y-1">
                           <p>Version: {diagram.current_version}</p>
                           <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                          <p>Size: {formatBytes(diagram.size_bytes)}</p>
                         </div>
                       </div>
                     </div>
@@ -743,6 +756,9 @@ export default function DashboardPage() {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Version
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Size
                       </th>
                     </tr>
                   </thead>
@@ -816,6 +832,12 @@ export default function DashboardPage() {
                           className="px-6 py-4 whitespace-nowrap cursor-pointer"
                         >
                           <div className="text-sm text-gray-600">v{diagram.current_version}</div>
+                        </td>
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
+                          <div className="text-sm text-gray-600">{formatBytes(diagram.size_bytes)}</div>
                         </td>
                       </tr>
                     ))}

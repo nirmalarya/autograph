@@ -322,6 +322,30 @@ async def metrics():
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
+def calculate_diagram_size(diagram: File) -> int:
+    """Calculate total size of diagram in bytes (canvas_data + note_content)."""
+    size = 0
+    
+    # Calculate canvas_data size
+    if diagram.canvas_data:
+        # Convert JSONB to JSON string and get byte size
+        canvas_json = json.dumps(diagram.canvas_data)
+        size += len(canvas_json.encode('utf-8'))
+    
+    # Calculate note_content size
+    if diagram.note_content:
+        size += len(diagram.note_content.encode('utf-8'))
+    
+    return size
+
+
+def enrich_diagram_response(diagram: File) -> Dict[str, Any]:
+    """Enrich diagram with calculated fields like size."""
+    diagram_dict = DiagramResponse.model_validate(diagram).model_dump()
+    diagram_dict['size_bytes'] = calculate_diagram_size(diagram)
+    return diagram_dict
+
+
 @app.get("/")
 async def list_diagrams(
     request: Request,
@@ -462,7 +486,7 @@ async def list_diagrams(
     )
     
     return {
-        "diagrams": [DiagramResponse.model_validate(d) for d in diagrams],
+        "diagrams": [enrich_diagram_response(d) for d in diagrams],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -520,7 +544,7 @@ async def list_recent_diagrams(
     )
     
     return {
-        "diagrams": [DiagramResponse.model_validate(d) for d in diagrams],
+        "diagrams": [enrich_diagram_response(d) for d in diagrams],
         "total": len(diagrams),
         "limit": limit
     }
@@ -573,7 +597,7 @@ async def list_shared_with_me(
         # Get owner info
         owner = db.query(User).filter(User.id == diagram.owner_id).first()
         
-        diagram_data = DiagramResponse.model_validate(diagram).model_dump()
+        diagram_data = enrich_diagram_response(diagram)
         diagram_data['permission'] = share.permission if share else 'view'
         diagram_data['owner_email'] = owner.email if owner else 'Unknown'
         diagram_data['shared_at'] = share.created_at.isoformat() if share else None
@@ -646,6 +670,7 @@ class DiagramResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_accessed_at: Optional[datetime] = None
+    size_bytes: Optional[int] = None  # Total size in bytes (canvas_data + note_content)
     
     class Config:
         from_attributes = True
@@ -850,7 +875,7 @@ async def generate_thumbnail(diagram_id: str, canvas_data: dict) -> Optional[str
         return None
 
 
-@app.post("/", response_model=DiagramResponse)
+@app.post("/")
 async def create_diagram(
     request: Request,
     diagram: CreateDiagramRequest,
@@ -916,7 +941,7 @@ async def create_diagram(
         has_thumbnail=new_diagram.thumbnail_url is not None
     )
     
-    return new_diagram
+    return enrich_diagram_response(new_diagram)
 
 
 # ============================================================================
@@ -1256,7 +1281,7 @@ async def delete_template(
         raise HTTPException(status_code=500, detail=f"Failed to delete template: {str(e)}")
 
 
-@app.get("/{diagram_id}", response_model=DiagramResponse)
+@app.get("/{diagram_id}")
 async def get_diagram(
     diagram_id: str,
     request: Request,
@@ -1317,7 +1342,7 @@ async def get_diagram(
         view_count=diagram.view_count
     )
     
-    return diagram
+    return enrich_diagram_response(diagram)
 
 
 @app.put("/{diagram_id}", response_model=DiagramResponse)
