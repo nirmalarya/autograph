@@ -10,6 +10,8 @@ interface Diagram {
   created_at: string;
   updated_at: string;
   current_version: number;
+  thumbnail_url?: string;
+  owner_email?: string;
 }
 
 interface DiagramsResponse {
@@ -45,6 +47,7 @@ export default function DashboardPage() {
   const [searchInput, setSearchInput] = useState('');
   const [sortBy, setSortBy] = useState<string>('updated_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   useEffect(() => {
     // Check if user is authenticated
@@ -379,6 +382,37 @@ export default function DashboardPage() {
                   Updated {sortBy === 'updated_at' && (sortOrder === 'asc' ? '↑' : '↓')}
                 </button>
               </div>
+
+              {/* View Mode Toggle */}
+              <div className="flex gap-2 items-center ml-auto">
+                <span className="text-sm font-medium text-gray-700 mr-2">View:</span>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    viewMode === 'grid'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                  title="Grid view with thumbnails"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
+                    viewMode === 'list'
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                  title="List view with details"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -405,28 +439,126 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {diagrams.map((diagram) => (
-                <div
-                  key={diagram.id}
-                  onClick={() => handleDiagramClick(diagram)}
-                  className="bg-white rounded-lg shadow-sm p-4 border border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 transition"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
-                      {diagram.title}
-                    </h3>
-                    <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                      {diagram.file_type}
-                    </span>
+            {/* Grid View */}
+            {viewMode === 'grid' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {diagrams.map((diagram) => (
+                  <div
+                    key={diagram.id}
+                    onClick={() => handleDiagramClick(diagram)}
+                    className="bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 transition"
+                  >
+                    {/* Thumbnail */}
+                    <div className="w-full h-48 bg-gray-100 flex items-center justify-center overflow-hidden">
+                      {diagram.thumbnail_url ? (
+                        <img 
+                          src={diagram.thumbnail_url} 
+                          alt={diagram.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="text-gray-400 text-center p-4">
+                          <svg className="w-16 h-16 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <p className="text-sm">No preview</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Card Content */}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
+                          {diagram.title}
+                        </h3>
+                        <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                          {diagram.file_type}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <p>Version: {diagram.current_version}</p>
+                        <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-sm text-gray-600 space-y-1">
-                    <p>Version: {diagram.current_version}</p>
-                    <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
+
+            {/* List View */}
+            {viewMode === 'list' && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Preview
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Title
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Owner
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Last Updated
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Version
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {diagrams.map((diagram) => (
+                      <tr
+                        key={diagram.id}
+                        onClick={() => handleDiagramClick(diagram)}
+                        className="cursor-pointer hover:bg-gray-50 transition"
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center overflow-hidden">
+                            {diagram.thumbnail_url ? (
+                              <img 
+                                src={diagram.thumbnail_url} 
+                                alt={diagram.title}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{diagram.title}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                            {diagram.file_type}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-600">{diagram.owner_email || user?.email || 'Unknown'}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-600">
+                            {new Date(diagram.updated_at).toLocaleDateString()}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-600">v{diagram.current_version}</div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Pagination */}
             {totalPages > 1 && (
