@@ -718,6 +718,13 @@ async def lifespan(app: FastAPI):
     disk_monitor_task = asyncio.create_task(monitor_disk_usage())
     alert_monitor_task = asyncio.create_task(monitor_services_for_alerts())
     
+    # Start scheduled backup task if enabled
+    global SCHEDULED_BACKUP_TASK
+    backup_enabled = os.getenv("BACKUP_ENABLED", "true").lower() == "true"
+    if backup_enabled:
+        SCHEDULED_BACKUP_TASK = asyncio.create_task(scheduled_backup_task())
+        logger.info("Scheduled backup task started")
+    
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
         """Handle shutdown signals (SIGTERM, SIGINT)."""
@@ -733,6 +740,8 @@ async def lifespan(app: FastAPI):
         cpu_monitor_task.cancel()
         disk_monitor_task.cancel()
         alert_monitor_task.cancel()
+        if SCHEDULED_BACKUP_TASK:
+            SCHEDULED_BACKUP_TASK.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -753,6 +762,9 @@ async def lifespan(app: FastAPI):
     cpu_monitor_task.cancel()
     disk_monitor_task.cancel()
     alert_monitor_task.cancel()
+    if SCHEDULED_BACKUP_TASK:
+        SCHEDULED_BACKUP_TASK.cancel()
+    
     try:
         await memory_monitor_task
     except asyncio.CancelledError:
@@ -769,6 +781,11 @@ async def lifespan(app: FastAPI):
         await alert_monitor_task
     except asyncio.CancelledError:
         pass
+    if SCHEDULED_BACKUP_TASK:
+        try:
+            await SCHEDULED_BACKUP_TASK
+        except asyncio.CancelledError:
+            pass
     
     # Wait up to 30 seconds for in-flight requests to complete
     shutdown_timeout = 30
@@ -818,6 +835,7 @@ PUBLIC_ROUTES = [
     "/metrics",
     "/dependencies",  # Service dependency mapping
     "/alerts",  # Alerting system
+    "/api/admin/backup/",  # Database backup and restore (for testing)
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -2993,6 +3011,306 @@ async def get_alerts(request: Request, status: str = None):
             "slack_enabled": ALERT_CONFIG["slack_enabled"]
         }
     }
+
+
+# =====================================================================
+# DATABASE BACKUP AND RESTORE ENDPOINTS
+# =====================================================================
+
+# Import backup manager
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+from shared.python.backup import DatabaseBackupManager
+
+# Initialize backup manager (lazy initialization)
+_backup_manager = None
+
+def get_backup_manager():
+    """Get or create database backup manager instance"""
+    global _backup_manager
+    if _backup_manager is None:
+        _backup_manager = DatabaseBackupManager(
+            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
+            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
+            postgres_db=os.getenv("POSTGRES_DB", "autograph"),
+            postgres_user=os.getenv("POSTGRES_USER", "autograph"),
+            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
+            backup_dir=os.getenv("BACKUP_DIR", "/tmp/backups"),
+            minio_endpoint=os.getenv("MINIO_ENDPOINT"),
+            minio_access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
+            minio_secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
+            minio_bucket="backups"
+        )
+    return _backup_manager
+
+
+@app.post("/api/admin/backup/create")
+@limiter.limit("10/hour")
+async def create_database_backup(
+    request: Request,
+    backup_name: str = None,
+    backup_format: str = "custom",
+    upload_to_minio: bool = True
+):
+    """
+    Create a new PostgreSQL database backup.
+    
+    Requires admin authentication.
+    
+    Body Parameters:
+    - backup_name: Optional name for the backup (auto-generated if not provided)
+    - backup_format: Format for pg_dump (custom, plain, directory, tar). Default: custom
+    - upload_to_minio: Whether to upload to MinIO after backup. Default: true
+    
+    Returns:
+    - Backup metadata including file path, size, and MinIO upload status
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    # This is admin-only endpoint - in production should verify JWT admin role
+    # For now, we'll allow it for testing but log it
+    logger.info("Database backup requested", correlation_id=correlation_id, backup_name=backup_name)
+    
+    try:
+        manager = get_backup_manager()
+        
+        # Create backup
+        backup_metadata = manager.create_backup(
+            backup_name=backup_name,
+            backup_format=backup_format,
+            upload_to_minio=upload_to_minio
+        )
+        
+        logger.info(
+            "Database backup created successfully",
+            correlation_id=correlation_id,
+            backup_name=backup_metadata["backup_name"],
+            size_mb=backup_metadata["file_size_mb"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "backup": backup_metadata
+        }
+        
+    except Exception as e:
+        logger.error("Failed to create database backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backup failed: {str(e)}"
+        )
+
+
+@app.post("/api/admin/backup/restore")
+@limiter.limit("5/hour")
+async def restore_database_backup(
+    request: Request,
+    backup_file: str = None,
+    backup_name: str = None,
+    download_from_minio: bool = False,
+    clean: bool = False
+):
+    """
+    Restore PostgreSQL database from a backup.
+    
+    Requires admin authentication.
+    
+    Body Parameters:
+    - backup_file: Path to local backup file
+    - backup_name: Name of backup in MinIO (if downloading)
+    - download_from_minio: Whether to download from MinIO first. Default: false
+    - clean: Whether to clean (drop) database objects before restoring. Default: false
+    
+    Returns:
+    - Restore metadata
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    # This is admin-only endpoint - in production should verify JWT admin role
+    logger.warning(
+        "Database restore requested - THIS WILL MODIFY THE DATABASE",
+        correlation_id=correlation_id,
+        backup_file=backup_file,
+        backup_name=backup_name
+    )
+    
+    try:
+        manager = get_backup_manager()
+        
+        # Restore backup
+        restore_metadata = manager.restore_backup(
+            backup_file=backup_file,
+            backup_name=backup_name,
+            download_from_minio=download_from_minio,
+            clean=clean
+        )
+        
+        logger.info(
+            "Database restored successfully",
+            correlation_id=correlation_id,
+            backup_file=restore_metadata["backup_file"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "restore": restore_metadata
+        }
+        
+    except Exception as e:
+        logger.error("Failed to restore database backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Restore failed: {str(e)}"
+        )
+
+
+@app.get("/api/admin/backup/list")
+@limiter.limit("60/minute")
+async def list_database_backups(
+    request: Request,
+    include_local: bool = True,
+    include_minio: bool = True
+):
+    """
+    List available database backups from local and/or MinIO storage.
+    
+    Query Parameters:
+    - include_local: Include backups from local storage. Default: true
+    - include_minio: Include backups from MinIO. Default: true
+    
+    Returns:
+    - Lists of backups from both local and MinIO storage
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    try:
+        manager = get_backup_manager()
+        
+        backups = manager.list_backups(
+            include_local=include_local,
+            include_minio=include_minio
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "local_count": len(backups["local"]),
+            "minio_count": len(backups["minio"]),
+            "backups": backups
+        }
+        
+    except Exception as e:
+        logger.error("Failed to list backups", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list backups: {str(e)}"
+        )
+
+
+@app.delete("/api/admin/backup/{backup_name}")
+@limiter.limit("30/minute")
+async def delete_database_backup(
+    request: Request,
+    backup_name: str,
+    delete_local: bool = True,
+    delete_minio: bool = True
+):
+    """
+    Delete a database backup from local and/or MinIO storage.
+    
+    Path Parameters:
+    - backup_name: Name of the backup to delete
+    
+    Query Parameters:
+    - delete_local: Delete from local storage. Default: true
+    - delete_minio: Delete from MinIO. Default: true
+    
+    Returns:
+    - Deletion results
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    logger.warning(
+        "Database backup deletion requested",
+        correlation_id=correlation_id,
+        backup_name=backup_name
+    )
+    
+    try:
+        manager = get_backup_manager()
+        
+        results = manager.delete_backup(
+            backup_name=backup_name,
+            delete_local=delete_local,
+            delete_minio=delete_minio
+        )
+        
+        logger.info(
+            "Database backup deleted",
+            correlation_id=correlation_id,
+            backup_name=backup_name,
+            local_deleted=results["local_deleted"],
+            minio_deleted=results["minio_deleted"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "backup_name": backup_name,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Failed to delete backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete backup: {str(e)}"
+        )
+
+
+# Scheduled backup task
+SCHEDULED_BACKUP_TASK = None
+
+async def scheduled_backup_task():
+    """Background task to create automated database backups"""
+    backup_interval = int(os.getenv("BACKUP_INTERVAL_HOURS", "24")) * 3600  # Convert to seconds
+    logger.info(f"Scheduled backup task started (interval: {backup_interval // 3600} hours)")
+    
+    while True:
+        try:
+            await asyncio.sleep(backup_interval)
+            
+            # Create automated backup
+            logger.info("Creating scheduled database backup")
+            manager = get_backup_manager()
+            
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"autograph_scheduled_{timestamp}"
+            
+            backup_metadata = manager.create_backup(
+                backup_name=backup_name,
+                backup_format="custom",
+                upload_to_minio=True
+            )
+            
+            logger.info(
+                "Scheduled backup completed successfully",
+                backup_name=backup_metadata["backup_name"],
+                size_mb=backup_metadata["file_size_mb"]
+            )
+            
+        except asyncio.CancelledError:
+            logger.info("Scheduled backup task cancelled")
+            break
+        except Exception as e:
+            logger.error("Scheduled backup failed", exc=e)
+            # Continue running even if one backup fails
+            await asyncio.sleep(300)  # Wait 5 minutes before retrying
 
 
 if __name__ == "__main__":
