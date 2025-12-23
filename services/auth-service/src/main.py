@@ -11,6 +11,9 @@ import os
 import traceback
 import json
 import logging
+import signal
+import asyncio
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 from .database import get_db
@@ -55,11 +58,123 @@ class StructuredLogger:
 
 logger = StructuredLogger("auth-service")
 
+# Graceful shutdown state
+class ShutdownState:
+    """Track graceful shutdown state."""
+    def __init__(self):
+        self.is_shutting_down = False
+        self.in_flight_requests = 0
+    
+    def increment_request(self):
+        """Track incoming request."""
+        if not self.is_shutting_down:
+            self.in_flight_requests += 1
+            return True
+        return False
+    
+    def decrement_request(self):
+        """Track completed request."""
+        self.in_flight_requests = max(0, self.in_flight_requests - 1)
+    
+    def start_shutdown(self):
+        """Signal shutdown has begun."""
+        self.is_shutting_down = True
+    
+    def can_shutdown(self):
+        """Check if safe to shutdown (no in-flight requests)."""
+        return self.in_flight_requests == 0
+
+shutdown_state = ShutdownState()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown."""
+    # Startup
+    logger.info("Auth Service starting up")
+    
+    # Setup signal handlers for graceful shutdown
+    def handle_shutdown(signum, frame):
+        """Handle shutdown signals (SIGTERM, SIGINT)."""
+        signal_name = signal.Signals(signum).name
+        logger.info(
+            "Shutdown signal received",
+            signal=signal_name,
+            in_flight_requests=shutdown_state.in_flight_requests
+        )
+        shutdown_state.start_shutdown()
+    
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
+    
+    logger.info("Auth Service started successfully")
+    
+    yield
+    
+    # Shutdown - wait for in-flight requests to complete
+    logger.info(
+        "Auth Service shutting down",
+        in_flight_requests=shutdown_state.in_flight_requests
+    )
+    
+    # Wait up to 30 seconds for in-flight requests to complete
+    shutdown_timeout = 30
+    waited = 0
+    while not shutdown_state.can_shutdown() and waited < shutdown_timeout:
+        logger.info(
+            "Waiting for in-flight requests",
+            in_flight_requests=shutdown_state.in_flight_requests,
+            waited=waited
+        )
+        await asyncio.sleep(1)
+        waited += 1
+    
+    if shutdown_state.in_flight_requests > 0:
+        logger.warning(
+            "Shutdown timeout reached with pending requests",
+            in_flight_requests=shutdown_state.in_flight_requests
+        )
+    else:
+        logger.info("All requests completed, shutting down cleanly")
+    
+    logger.info("Auth Service shutdown complete")
+
 app = FastAPI(
     title="AutoGraph v3 Auth Service",
     description="Authentication and authorization service",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
+
+# Middleware to handle graceful shutdown
+@app.middleware("http")
+async def shutdown_middleware(request: Request, call_next):
+    """Middleware to handle graceful shutdown - reject new requests and track in-flight."""
+    # Check if shutting down
+    if shutdown_state.is_shutting_down:
+        logger.warning(
+            "Request rejected - server shutting down",
+            path=request.url.path,
+            method=request.method
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server is shutting down, please retry"}
+        )
+    
+    # Track in-flight request
+    if not shutdown_state.increment_request():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server is shutting down, please retry"}
+        )
+    
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        # Always decrement, even if error
+        shutdown_state.decrement_request()
 
 # Middleware to log correlation ID
 @app.middleware("http")
