@@ -1569,6 +1569,103 @@ async def get_shared_diagram(
     }
 
 
+@app.delete("/{diagram_id}/share/{share_id}")
+async def revoke_share_link(
+    diagram_id: str,
+    share_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Revoke a share link for a diagram.
+    
+    This permanently deletes the share record, making the share link inaccessible.
+    
+    Parameters:
+    - diagram_id: UUID of the diagram
+    - share_id: UUID of the share to revoke
+    
+    Returns:
+    {
+        "message": "Share link revoked successfully",
+        "share_id": "uuid"
+    }
+    
+    Errors:
+    - 404: Share not found
+    - 403: Not authorized to revoke this share
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Revoking share link",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        diagram_id=diagram_id,
+        share_id=share_id
+    )
+    
+    # Get the diagram
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found for share revocation",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check if user owns the diagram
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "User not authorized to revoke share",
+            correlation_id=correlation_id,
+            user_id=user_id,
+            diagram_id=diagram_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to revoke this share")
+    
+    # Get the share
+    share = db.query(Share).filter(
+        Share.id == share_id,
+        Share.file_id == diagram_id
+    ).first()
+    
+    if not share:
+        logger.warning(
+            "Share not found for revocation",
+            correlation_id=correlation_id,
+            share_id=share_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Share link not found")
+    
+    # Delete the share
+    db.delete(share)
+    db.commit()
+    
+    logger.info(
+        "Share link revoked successfully",
+        correlation_id=correlation_id,
+        share_id=share_id,
+        diagram_id=diagram_id
+    )
+    
+    return {
+        "message": "Share link revoked successfully",
+        "share_id": share_id
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("DIAGRAM_SERVICE_PORT", "8082")))
