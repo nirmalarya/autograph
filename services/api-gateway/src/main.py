@@ -20,6 +20,8 @@ import asyncio
 from contextlib import asynccontextmanager
 import time
 import traceback
+import psutil
+import gc
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -149,6 +151,29 @@ rate_limit_exceeded = Counter(
     registry=registry
 )
 
+# Memory monitoring metrics
+memory_usage_bytes = Gauge(
+    'api_gateway_memory_usage_bytes',
+    'Current memory usage in bytes',
+    registry=registry
+)
+
+memory_usage_percent = Gauge(
+    'api_gateway_memory_usage_percent',
+    'Current memory usage percentage',
+    registry=registry
+)
+
+memory_available_bytes = Gauge(
+    'api_gateway_memory_available_bytes',
+    'Available memory in bytes',
+    registry=registry
+)
+
+# Get process for memory monitoring
+process = psutil.Process()
+baseline_memory_mb = None  # Will be set at startup
+
 # Redis connection with connection pooling
 # Using connection pool with max_connections=50 for high concurrency
 # Note: Client is created lazily on first use
@@ -200,11 +225,111 @@ class ShutdownState:
 
 shutdown_state = ShutdownState()
 
+# Memory monitoring configuration
+MEMORY_CHECK_INTERVAL_SECONDS = 60  # Check every minute
+MEMORY_WARNING_THRESHOLD_MB = 512  # Warn if memory exceeds 512MB
+MEMORY_CRITICAL_THRESHOLD_MB = 1024  # Critical if memory exceeds 1GB
+
+async def monitor_memory_usage():
+    """Background task to monitor memory usage periodically."""
+    while True:
+        try:
+            # Get current memory info
+            mem_info = process.memory_info()
+            current_memory_mb = mem_info.rss / 1024 / 1024
+            memory_percent = process.memory_percent()
+            
+            # Update Prometheus metrics
+            memory_usage_bytes.set(mem_info.rss)
+            memory_usage_percent.set(memory_percent)
+            
+            vm = psutil.virtual_memory()
+            memory_available_bytes.set(vm.available)
+            
+            # Calculate memory growth since baseline
+            if baseline_memory_mb:
+                memory_growth_mb = current_memory_mb - baseline_memory_mb
+                memory_growth_percent = (memory_growth_mb / baseline_memory_mb) * 100
+                
+                # Log memory status
+                log_level = "info"
+                if current_memory_mb > MEMORY_CRITICAL_THRESHOLD_MB:
+                    log_level = "error"
+                elif current_memory_mb > MEMORY_WARNING_THRESHOLD_MB:
+                    log_level = "warning"
+                
+                if log_level == "error":
+                    logger.error(
+                        "CRITICAL: Memory usage is very high",
+                        current_memory_mb=round(current_memory_mb, 2),
+                        baseline_memory_mb=round(baseline_memory_mb, 2),
+                        memory_growth_mb=round(memory_growth_mb, 2),
+                        memory_growth_percent=round(memory_growth_percent, 2),
+                        memory_percent=round(memory_percent, 2),
+                        threshold_mb=MEMORY_CRITICAL_THRESHOLD_MB
+                    )
+                elif log_level == "warning":
+                    logger.warning(
+                        "Memory usage is elevated",
+                        current_memory_mb=round(current_memory_mb, 2),
+                        baseline_memory_mb=round(baseline_memory_mb, 2),
+                        memory_growth_mb=round(memory_growth_mb, 2),
+                        memory_growth_percent=round(memory_growth_percent, 2),
+                        memory_percent=round(memory_percent, 2),
+                        threshold_mb=MEMORY_WARNING_THRESHOLD_MB
+                    )
+                else:
+                    # Only log DEBUG level for normal status to avoid spam
+                    logger.debug(
+                        "Memory usage check",
+                        current_memory_mb=round(current_memory_mb, 2),
+                        baseline_memory_mb=round(baseline_memory_mb, 2),
+                        memory_growth_mb=round(memory_growth_mb, 2),
+                        memory_growth_percent=round(memory_growth_percent, 2),
+                        memory_percent=round(memory_percent, 2)
+                    )
+            
+            # Wait before next check
+            await asyncio.sleep(MEMORY_CHECK_INTERVAL_SECONDS)
+            
+        except asyncio.CancelledError:
+            logger.info("Memory monitoring task cancelled")
+            break
+        except Exception as e:
+            logger.error(
+                "Error in memory monitoring task",
+                exc=e,
+                error_type=type(e).__name__,
+                error_message=str(e)
+            )
+            # Continue monitoring despite errors
+            await asyncio.sleep(MEMORY_CHECK_INTERVAL_SECONDS)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
     # Startup
     logger.info("API Gateway starting up")
+    
+    # Record baseline memory usage
+    global baseline_memory_mb
+    mem_info = process.memory_info()
+    baseline_memory_mb = mem_info.rss / 1024 / 1024  # Convert to MB
+    
+    logger.info(
+        "Baseline memory usage recorded",
+        memory_mb=round(baseline_memory_mb, 2),
+        memory_bytes=mem_info.rss
+    )
+    
+    # Update initial memory metrics
+    memory_usage_bytes.set(mem_info.rss)
+    memory_usage_percent.set(process.memory_percent())
+    vm = psutil.virtual_memory()
+    memory_available_bytes.set(vm.available)
+    
+    # Start background memory monitoring task
+    memory_monitor_task = asyncio.create_task(monitor_memory_usage())
     
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
@@ -216,6 +341,8 @@ async def lifespan(app: FastAPI):
             in_flight_requests=shutdown_state.in_flight_requests
         )
         shutdown_state.start_shutdown()
+        # Cancel memory monitoring task
+        memory_monitor_task.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -230,6 +357,13 @@ async def lifespan(app: FastAPI):
         "API Gateway shutting down",
         in_flight_requests=shutdown_state.in_flight_requests
     )
+    
+    # Cancel memory monitoring
+    memory_monitor_task.cancel()
+    try:
+        await memory_monitor_task
+    except asyncio.CancelledError:
+        pass
     
     # Wait up to 30 seconds for in-flight requests to complete
     shutdown_timeout = 30
@@ -282,6 +416,7 @@ PUBLIC_ROUTES = [
     "/api/auth/token",
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints
+    "/test/",  # All test endpoints on gateway
 ]
 
 # CORS configuration
@@ -821,6 +956,140 @@ async def circuit_breakers_status(request: Request):
     
     return {
         "circuit_breakers": breaker_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/test/memory")
+async def test_memory_usage(request: Request):
+    """Test endpoint to check current memory usage."""
+    mem_info = process.memory_info()
+    current_memory_mb = mem_info.rss / 1024 / 1024
+    memory_percent = process.memory_percent()
+    
+    vm = psutil.virtual_memory()
+    
+    memory_data = {
+        "current_memory_mb": round(current_memory_mb, 2),
+        "baseline_memory_mb": round(baseline_memory_mb, 2) if baseline_memory_mb else None,
+        "memory_growth_mb": round(current_memory_mb - baseline_memory_mb, 2) if baseline_memory_mb else None,
+        "memory_percent": round(memory_percent, 2),
+        "system_memory_total_mb": round(vm.total / 1024 / 1024, 2),
+        "system_memory_available_mb": round(vm.available / 1024 / 1024, 2),
+        "system_memory_used_percent": round(vm.percent, 2),
+        "warning_threshold_mb": MEMORY_WARNING_THRESHOLD_MB,
+        "critical_threshold_mb": MEMORY_CRITICAL_THRESHOLD_MB,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    return memory_data
+
+
+@app.get("/test/memory/allocate")
+async def test_memory_allocate(request: Request, size_mb: int = 10):
+    """Test endpoint to allocate memory and verify monitoring."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    try:
+        # Get memory before allocation
+        mem_before = process.memory_info().rss / 1024 / 1024
+        
+        # Allocate memory (create large list)
+        # Each element is about 8 bytes (64-bit pointer/integer)
+        # 1 MB = 1024*1024 bytes = 131072 integers
+        elements_per_mb = 131072
+        data = [0] * (size_mb * elements_per_mb)
+        
+        # Get memory after allocation
+        mem_after = process.memory_info().rss / 1024 / 1024
+        actual_allocated_mb = mem_after - mem_before
+        
+        logger.info(
+            "Memory allocation test",
+            correlation_id=correlation_id,
+            requested_size_mb=size_mb,
+            actual_allocated_mb=round(actual_allocated_mb, 2),
+            memory_before_mb=round(mem_before, 2),
+            memory_after_mb=round(mem_after, 2)
+        )
+        
+        # Clean up
+        del data
+        gc.collect()
+        
+        # Get memory after GC
+        mem_after_gc = process.memory_info().rss / 1024 / 1024
+        
+        return {
+            "message": "Memory allocated and released",
+            "correlation_id": correlation_id,
+            "requested_size_mb": size_mb,
+            "actual_allocated_mb": round(actual_allocated_mb, 2),
+            "memory_before_mb": round(mem_before, 2),
+            "memory_after_allocation_mb": round(mem_after, 2),
+            "memory_after_gc_mb": round(mem_after_gc, 2),
+            "gc_recovered_mb": round(mem_after - mem_after_gc, 2),
+            "note": "Check logs for memory monitoring warnings if size > 500MB"
+        }
+        
+    except Exception as e:
+        logger.exception(
+            "Error in memory allocation test",
+            exc=e,
+            correlation_id=correlation_id,
+            size_mb=size_mb
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error: {str(e)}"
+        )
+
+
+@app.get("/test/memory/gc")
+async def test_memory_garbage_collection(request: Request):
+    """Test endpoint to trigger garbage collection."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    # Get memory before GC
+    mem_before = process.memory_info().rss / 1024 / 1024
+    
+    # Run garbage collection
+    gc_stats = {
+        "collected": [],
+        "uncollectable": [],
+        "total_collected": 0
+    }
+    
+    for generation in range(gc.get_count().__len__()):
+        collected = gc.collect(generation)
+        gc_stats["collected"].append(collected)
+        gc_stats["total_collected"] += collected
+    
+    # Get uncollectable objects
+    uncollectable = len(gc.garbage)
+    gc_stats["uncollectable"].append(uncollectable)
+    
+    # Get memory after GC
+    mem_after = process.memory_info().rss / 1024 / 1024
+    memory_freed_mb = mem_before - mem_after
+    
+    logger.info(
+        "Garbage collection executed",
+        correlation_id=correlation_id,
+        memory_before_mb=round(mem_before, 2),
+        memory_after_mb=round(mem_after, 2),
+        memory_freed_mb=round(memory_freed_mb, 2),
+        objects_collected=gc_stats["total_collected"],
+        uncollectable_objects=uncollectable
+    )
+    
+    return {
+        "message": "Garbage collection completed",
+        "correlation_id": correlation_id,
+        "memory_before_mb": round(mem_before, 2),
+        "memory_after_mb": round(mem_after, 2),
+        "memory_freed_mb": round(memory_freed_mb, 2),
+        "gc_stats": gc_stats,
         "timestamp": datetime.utcnow().isoformat()
     }
 
