@@ -1,0 +1,94 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: autograph-metrics
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: autograph-v3
+  namespaceSelector:
+    matchNames:
+    - autograph
+  endpoints:
+  # API Gateway
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    scheme: http
+    targetPort: 8080
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_label_component]
+      targetLabel: service
+      replacement: api-gateway
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: api_gateway_.*
+      action: keep
+  # Auth Service
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    scheme: http
+    targetPort: 8085
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_label_component]
+      targetLabel: service
+      replacement: auth-service
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: auth_service_.*
+      action: keep
+  # Diagram Service
+  - port: http
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    scheme: http
+    targetPort: 8082
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_label_component]
+      targetLabel: service
+      replacement: diagram-service
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: diagram_service_.*
+      action: keep
+---
+# Alternative: Manual Prometheus scrape config
+# Add to prometheus.yml if not using ServiceMonitor CRD
+#
+# scrape_configs:
+#   - job_name: 'autograph-services'
+#     kubernetes_sd_configs:
+#     - role: pod
+#       namespaces:
+#         names:
+#         - autograph
+#     relabel_configs:
+#     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+#       action: keep
+#       regex: true
+#     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+#       action: replace
+#       target_label: __metrics_path__
+#       regex: (.+)
+#     - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+#       action: replace
+#       regex: ([^:]+)(?::\d+)?;(\d+)
+#       replacement: $1:$2
+#       target_label: __address__
+#     - source_labels: [__meta_kubernetes_namespace]
+#       action: replace
+#       target_label: namespace
+#     - source_labels: [__meta_kubernetes_pod_name]
+#       action: replace
+#       target_label: pod
+#     - source_labels: [__meta_kubernetes_pod_label_component]
+#       action: replace
+#       target_label: service

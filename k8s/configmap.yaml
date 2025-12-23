@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autograph-config
+  namespace: autograph
+  labels:
+    app: autograph-v3
+data:
+  # Environment
+  ENV: "kubernetes"
+  NODE_ENV: "production"
+  PYTHON_ENV: "production"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  
+  # PostgreSQL (non-sensitive)
+  POSTGRES_HOST: "postgres-service.autograph.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "autograph"
+  POSTGRES_USER: "autograph"
+  
+  # Redis (non-sensitive)
+  REDIS_HOST: "redis-service.autograph.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # MinIO (non-sensitive)
+  MINIO_HOST: "minio-service.autograph.svc.cluster.local"
+  MINIO_PORT: "9000"
+  MINIO_CONSOLE_PORT: "9001"
+  MINIO_ENDPOINT: "http://minio-service.autograph.svc.cluster.local:9000"
+  MINIO_BUCKET_DIAGRAMS: "diagrams"
+  MINIO_BUCKET_EXPORTS: "exports"
+  MINIO_BUCKET_UPLOADS: "uploads"
+  
+  # JWT settings (non-sensitive)
+  JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+  JWT_REFRESH_TOKEN_EXPIRE_DAYS: "30"
+  
+  # API Gateway
+  API_GATEWAY_PORT: "8080"
+  API_GATEWAY_HOST: "0.0.0.0"
+  
+  # Microservices (Kubernetes service discovery)
+  FRONTEND_PORT: "3000"
+  AUTH_SERVICE_HOST: "auth-service.autograph.svc.cluster.local"
+  AUTH_SERVICE_PORT: "8085"
+  DIAGRAM_SERVICE_HOST: "diagram-service.autograph.svc.cluster.local"
+  DIAGRAM_SERVICE_PORT: "8082"
+  AI_SERVICE_HOST: "ai-service.autograph.svc.cluster.local"
+  AI_SERVICE_PORT: "8084"
+  COLLABORATION_SERVICE_HOST: "collaboration-service.autograph.svc.cluster.local"
+  COLLABORATION_SERVICE_PORT: "8083"
+  GIT_SERVICE_HOST: "git-service.autograph.svc.cluster.local"
+  GIT_SERVICE_PORT: "8087"
+  EXPORT_SERVICE_HOST: "export-service.autograph.svc.cluster.local"
+  EXPORT_SERVICE_PORT: "8097"
+  INTEGRATION_HUB_HOST: "integration-hub.autograph.svc.cluster.local"
+  INTEGRATION_HUB_PORT: "8099"
+  SVG_RENDERER_HOST: "svg-renderer.autograph.svc.cluster.local"
+  SVG_RENDERER_PORT: "8096"
+  
+  # AI Provider endpoints
+  MGA_ENDPOINT: "https://chat.int.bayer.com/api/v2"
+  MGA_MODEL: "gpt-4.1"
+  
+  # CORS
+  CORS_ORIGINS: "*"
+  
+  # Rate Limiting
+  RATE_LIMIT_PER_USER: "100"
+  RATE_LIMIT_PER_IP: "1000"
+  
+  # Kubernetes specific
+  NAMESPACE: "autograph"

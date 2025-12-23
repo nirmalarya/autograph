@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: postgres
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: autograph-v3
+    component: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: redis
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: autograph-v3
+    component: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: minio
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: minio-api
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+    name: minio-console
+  selector:
+    app: autograph-v3
+    component: minio

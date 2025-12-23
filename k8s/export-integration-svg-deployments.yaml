@@ -1,0 +1,194 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: export-service
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: export-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: autograph-v3
+      component: export-service
+  template:
+    metadata:
+      labels:
+        app: autograph-v3
+        component: export-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8097"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: export-service
+        image: autograph/export-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8097
+          name: http
+        envFrom:
+        - configMapRef:
+            name: autograph-config
+        - secretRef:
+            name: autograph-secrets
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8097
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8097
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integration-hub
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: integration-hub
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: autograph-v3
+      component: integration-hub
+  template:
+    metadata:
+      labels:
+        app: autograph-v3
+        component: integration-hub
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8099"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: integration-hub
+        image: autograph/integration-hub:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8099
+          name: http
+        envFrom:
+        - configMapRef:
+            name: autograph-config
+        - secretRef:
+            name: autograph-secrets
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8099
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8099
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: svg-renderer
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    component: svg-renderer
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: autograph-v3
+      component: svg-renderer
+  template:
+    metadata:
+      labels:
+        app: autograph-v3
+        component: svg-renderer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8096"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: svg-renderer
+        image: autograph/svg-renderer:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8096
+          name: http
+        envFrom:
+        - configMapRef:
+            name: autograph-config
+        - secretRef:
+            name: autograph-secrets
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8096
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8096
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
