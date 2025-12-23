@@ -1189,6 +1189,82 @@ async def move_diagram(
     }
 
 
+@app.put("/{diagram_id}/star")
+async def star_diagram(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Toggle star/favorite status for a diagram."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        logger.warning(
+            "Unauthorized star attempt - no user ID",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    logger.info(
+        "Toggling star status",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get diagram (only active diagrams)
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found or deleted",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization - only owner can star/unstar
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized star attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to star this diagram")
+    
+    # Toggle star status
+    old_status = diagram.is_starred
+    diagram.is_starred = not diagram.is_starred
+    diagram.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Star status toggled successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        old_status=old_status,
+        new_status=diagram.is_starred,
+        user_id=user_id
+    )
+    
+    return {
+        "message": f"Diagram {'starred' if diagram.is_starred else 'unstarred'} successfully",
+        "id": diagram_id,
+        "title": diagram.title,
+        "is_starred": diagram.is_starred,
+        "updated_at": diagram.updated_at.isoformat()
+    }
+
+
 @app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
 async def get_versions(
     diagram_id: str,
