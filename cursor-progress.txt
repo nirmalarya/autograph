@@ -1,207 +1,218 @@
 ================================================================================
-AUTOGRAPH V3 - SESSION 53 PROGRESS SUMMARY
+AUTOGRAPH V3 - SESSION 54 PROGRESS SUMMARY
 ================================================================================
 
 Date: December 23, 2025
-Session: 53 of Many
-Agent Role: Full-Stack Development - Complete Share Features (#137, #138, #139)
+Session: 54 of Many
+Agent Role: Full-Stack Development - Permission Checks for Diagrams (#105, #106, #107)
 Status: ✅ THREE FEATURES COMPLETE
 ================================================================================
 
 ACCOMPLISHMENTS
 ================================================================================
 
-✅ FEATURE #137: SHARE DIAGRAM WITH EXPIRATION DATE - COMPLETE
-   - Fixed timezone comparison issue from Session 52
-   - Changed datetime.utcnow() to datetime.now(timezone.utc)
-   - Fixed undefined 'now' variable by using 'now_utc' consistently
-   - Expiration checking now works correctly
-   - Expired shares return 410 Gone status
-   - Non-expired shares continue working
-   - Shares without expiration never expire
-   - All 9 test cases passing
+✅ FEATURE #105: PERMISSION CHECK - ONLY OWNER CAN DELETE DIAGRAM - COMPLETE
+   - Verified existing authorization logic in delete endpoint
+   - Only diagram owner can delete diagrams (soft or hard delete)
+   - User B attempting to delete User A's diagram: 403 Forbidden
+   - Error message: "Not authorized to delete this diagram"
+   - Diagram remains intact after failed delete attempt
+   - Created comprehensive test with 8 test steps
+   - All test steps passing
    - 100% verified and working
 
-✅ FEATURE #138: REVOKE SHARE LINK - COMPLETE
-   - Added DELETE /{diagram_id}/share/{share_id} endpoint
-   - Permanently deletes share record from database
-   - Authorization check: only diagram owner can revoke
-   - Returns 404 for non-existent shares
-   - Returns 403 for unauthorized revocation attempts
-   - Revoked shares return 404 when accessed
-   - Multiple shares supported - revoke one, others still work
-   - All 9 test cases passing
+✅ FEATURE #106: PERMISSION CHECK - SHARED DIAGRAM VIEW-ONLY ACCESS - COMPLETE
+   - Implemented authorization logic for share permissions
+   - Modified update_diagram endpoint to check X-Share-Token header
+   - Users with view-only share access cannot edit diagrams
+   - Returns 403 with "You have view-only access to this diagram"
+   - Share token passed via X-Share-Token header
+   - Checks if share is expired before allowing access
+   - Logs permission source (owner, share_edit) for audit trail
+   - Created comprehensive test with 9 test steps
+   - All test steps passing
    - 100% verified and working
 
-✅ FEATURE #139: SHARE TRACKING - COMPLETE
-   - View count increments on each access
-   - Last accessed timestamp updates correctly
-   - Multiple shares have independent tracking
-   - Already implemented in previous features
-   - Created comprehensive test to verify
-   - All 10 test cases passing
+✅ FEATURE #107: PERMISSION CHECK - SHARED DIAGRAM EDIT ACCESS - COMPLETE
+   - Users with edit share access can edit diagrams (200 OK)
+   - Users with edit share access CANNOT delete diagrams (403 Forbidden)
+   - Only diagram owner can delete diagrams
+   - Changes saved successfully (title, canvas_data, note_content)
+   - Version incremented after edit
+   - Created comprehensive test with 10 test steps
+   - All test steps passing
    - 100% verified and working
 
 ================================================================================
 SESSION STATISTICS
 ================================================================================
 
-Features Implemented: 3 (Features #137, #138, #139 complete)
+Features Implemented: 3 (Features #105, #106, #107 complete)
 Features Verified: 3 (All 100% passing)
-Files Modified: 3
-  - services/diagram-service/src/main.py (~115 lines added/modified)
+Files Modified: 2
+  - services/diagram-service/src/main.py (~50 lines added for share permissions)
   - feature_list.json (3 features marked passing)
-  - test_share_expiration.py (287 lines, comprehensive test)
-  - test_revoke_share.py (312 lines, comprehensive test)
-  - test_share_tracking.py (282 lines, comprehensive test)
-Total Lines Changed: ~996
-Test Cases: 28 total (9 + 9 + 10)
-Total Commits: 4
-  1. Feature #137 complete
-  2. Progress notes update
-  3. Feature #138 complete
-  4. Feature #139 complete
+Test Files Created: 3
+  - test_diagram_delete_permission.py (272 lines, 8 test steps)
+  - test_share_view_only_permission.py (341 lines, 9 test steps)
+  - test_share_edit_permission.py (298 lines, 10 test steps)
+Total Lines Changed: ~961
+Test Cases: 27 total (8 + 9 + 10)
+Total Commits: 3
+  1. Feature #105 complete (permission check: only owner can delete)
+  2. Feature #106 complete (permission check: view-only share)
+  3. Feature #107 complete (permission check: edit share)
 Session Duration: ~1 hour
 
 Progress:
-- Started: 101/679 features (14.9%)
-- Completed: 104/679 features (15.3%)
+- Started: 104/679 features (15.3%)
+- Completed: 107/679 features (15.8%)
 - Phase 1: 50/50 (100%) ✓ COMPLETE
-- Phase 2: 54/60 (90%) - OVER 90%! 🎉🎉
+- Phase 2: 57/60 (95%) - ALMOST COMPLETE! 🎉
 
 ================================================================================
 TECHNICAL HIGHLIGHTS
 ================================================================================
 
-Feature #137 - Share Expiration (Fixed from Session 52):
+Feature #105 - Permission Check: Only Owner Can Delete
 
-Problem Fixed:
-- Previous session had timezone comparison error
-- "can't compare offset-naive and offset-aware datetimes"
-- Expiration check was disabled with TODO comment
+Already Implemented:
+- Delete endpoint checks if diagram.owner_id != user_id
+- Returns 403 Forbidden for unauthorized delete attempts
+- Works for both soft delete and hard delete
+- Error message: "Not authorized to delete this diagram"
 
-Solution:
-1. Changed datetime.utcnow() to datetime.now(timezone.utc)
-2. Used timezone-aware datetime for all comparisons
-3. Fixed undefined 'now' variable by using 'now_utc' consistently
-4. Moved timezone import to top of expiration check block
+Verification:
+- User B cannot delete User A's diagram (403 Forbidden)
+- User A can delete own diagram (200 OK)
+- Diagram moved to trash after soft delete
+- User B cannot hard delete User A's diagram from trash
+- User A can hard delete own diagram
+- Diagram permanently deleted (404 Not Found)
 
-Code Changes:
-```python
-# Get current time for timezone-aware operations
-from datetime import timezone
-now_utc = datetime.now(timezone.utc)
-
-# Check if expired
-if share.expires_at:
-    if share.expires_at < now_utc:
-        raise HTTPException(status_code=410, detail="Share link has expired")
-
-# Update last accessed
-share.last_accessed_at = now_utc
-```
-
-Feature #138 - Revoke Share Link (New Implementation):
+Feature #106 - Permission Check: View-Only Share Access
 
 Implementation:
 ```python
-@app.delete("/{diagram_id}/share/{share_id}")
-async def revoke_share_link(
-    diagram_id: str,
-    share_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    # 1. Verify user owns the diagram
-    # 2. Find the share
-    # 3. Delete the share record
-    # 4. Return success message
+# Check authorization - user must own the diagram OR have edit permission via share
+has_permission = False
+permission_source = None
+
+if diagram.owner_id == user_id:
+    has_permission = True
+    permission_source = "owner"
+else:
+    # Check if user has edit access via a share token
+    share_token = request.headers.get("X-Share-Token")
+    if share_token:
+        share = db.query(Share).filter(
+            Share.token == share_token,
+            Share.file_id == diagram_id
+        ).first()
+        
+        if share and share.permission == "edit":
+            # Check if share is still valid (not expired)
+            if share.expires_at is None or share.expires_at > datetime.now(timezone.utc):
+                has_permission = True
+                permission_source = "share_edit"
+        elif share and share.permission == "view":
+            raise HTTPException(
+                status_code=403, 
+                detail="You have view-only access to this diagram"
+            )
 ```
 
 Key Features:
-- Authorization: Only diagram owner can revoke
-- Permanent deletion: Share record deleted from database
-- Error handling: 404 for not found, 403 for unauthorized
-- Multiple shares: Revoke one doesn't affect others
-- Comprehensive logging
+- X-Share-Token header for share authentication
+- Checks share permission (view vs edit)
+- Checks share expiration
+- Returns specific error for view-only access
+- Logs permission source for audit trail
 
-Feature #139 - Share Tracking (Already Implemented):
+Verification:
+- User B can access diagram via view-only share
+- User B cannot edit with view-only share (403 Forbidden)
+- Error message: "You have view-only access to this diagram"
+- Diagram not modified after failed edit attempt
+- Owner can still edit
 
-Already Working:
-- View count increments on each access
-- Last accessed timestamp updates
-- Independent tracking per share
-- Timezone-aware timestamps
-- Returned in API response
+Feature #107 - Permission Check: Edit Share Access
 
-Verified Through Testing:
-- View count: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
-- Last accessed updates on each access
-- Multiple shares have independent counters
-- Timestamps are accurate and recent
+Implementation:
+- Uses same authorization logic from Feature #106
+- Allows edit if share permission is "edit" and not expired
+- Delete endpoint only allows owner (no share support)
+
+Verification:
+- User B can access diagram via edit share
+- User B can edit diagram with edit share (200 OK)
+- Changes saved (title, canvas_data, note_content)
+- Version incremented after edit
+- User B cannot delete with edit share (403 Forbidden)
+- Owner can delete
 
 ================================================================================
-COMPLETE DIAGRAM SHARING FEATURES
+COMPLETE DIAGRAM PERMISSION FEATURES
 ================================================================================
 
-All Share Features Complete:
-1. Public share links (Feature #135) ✅
-2. Password protection (Feature #136) ✅
-3. Expiration dates (Feature #137) ✅
-4. Revoke share link (Feature #138) ✅ NEW!
-5. Share tracking (Feature #139) ✅ NEW!
+All Permission Features Complete:
+1. Owner-only delete (Feature #105) ✅
+2. View-only share access (Feature #106) ✅
+3. Edit share access (Feature #107) ✅
 
-Share System Capabilities:
-- Create share with permission (view/edit)
-- Public or private sharing
-- Password-protected shares (bcrypt hashing)
-- Expiration dates (custom days or never expire)
-- Revoke shares (permanent deletion)
-- View count tracking (increments on each access)
-- Last accessed timestamp (updates on each access)
-- Multiple shares per diagram (independent tracking)
-- Authorization checks (only owner can revoke)
-- Comprehensive error handling
+Permission System Capabilities:
+- Owner has full control (view, edit, delete)
+- View-only share: can view, cannot edit or delete
+- Edit share: can view and edit, cannot delete
+- Share token authentication via X-Share-Token header
+- Share expiration checking
+- Audit logging of permission source
+- Comprehensive error messages
 - Production-ready security
 
-API Endpoints:
-- POST /{diagram_id}/share - Create share link
-- GET /shared/{token} - Access shared diagram
-- DELETE /{diagram_id}/share/{share_id} - Revoke share link
+Authorization Matrix:
+```
+Action      | Owner | Edit Share | View Share | No Access
+------------|-------|------------|------------|----------
+View        | ✓     | ✓          | ✓          | ✗
+Edit        | ✓     | ✓          | ✗          | ✗
+Delete      | ✓     | ✗          | ✗          | ✗
+```
 
 ================================================================================
 NEXT SESSION PRIORITIES
 ================================================================================
 
 High Priority (Diagram Features):
-1. Feature #140: Diagram templates
+1. Feature #131: Trash auto-deletes diagrams after 30 days
+   - Implement cleanup job
+   - Check deleted_at timestamp
+   - Permanently delete old diagrams
+   
+2. Feature #140: Diagram templates
    - Save diagram as template
    - List available templates
    - Create diagram from template
    
-2. Feature #141: Batch operations - bulk delete
+3. Feature #141: Batch operations - bulk delete
    - Select multiple diagrams
    - Delete in bulk
    
-3. Feature #142: Batch operations - bulk move to folder
+4. Feature #142: Batch operations - bulk move to folder
    - Select multiple diagrams
    - Move to folder in bulk
    
-4. Feature #143: Diagram metadata
+5. Feature #143: Diagram metadata
    - Creator info
    - Last edited by
    - View count tracking
    
-5. Feature #144: Thumbnail generation
+6. Feature #144: Thumbnail generation
    - 256x256 PNG preview
    - Auto-generate on save
-   
-6. Feature #145: Full-text search
-   - Search across titles and content
-   - PostgreSQL pg_trgm
 
 Technical Debt:
-- None! All share features complete ✓
+- None! All permission features complete ✓
 
 ================================================================================
 ENVIRONMENT STATUS
@@ -210,114 +221,114 @@ ENVIRONMENT STATUS
 Infrastructure:
 ✅ PostgreSQL 16.6 - Running and healthy (Docker)
    - shares table fully functional
-   - Timezone-aware datetime storage
+   - Permission checks working
 ✅ Redis 7.4.1 - Running and healthy
 ✅ MinIO S3 - Running and healthy
 ✅ Diagram Service - Running on port 8082 ✨ FULLY FUNCTIONAL
-   - All share features working ✓
-   - Password protection ✓
-   - Expiration checking ✓
-   - Revoke functionality ✓
-   - View tracking ✓
+   - All permission features working ✓
+   - Share permissions (view/edit) ✓
+   - Owner-only delete ✓
+   - Authorization logging ✓
    - Production-ready ✓
 ✅ Auth Service - Running on port 8085
-✅ Frontend - Running on port 3000
 
 Complete Feature Sets:
 1. Phase 1 Infrastructure (50/50 features) ✓ COMPLETE
 2. Authentication System (Features #64-92) ✓ COMPLETE
 3. Diagram CRUD (Features #116-134) ✓ COMPLETE
-4. Diagram Sharing (Features #135-139) ✓ COMPLETE! 🎉
+4. Diagram Sharing (Features #135-139) ✓ COMPLETE
+5. Diagram Permissions (Features #105-107) ✓ COMPLETE! 🎉
 
 ================================================================================
 LESSONS LEARNED
 ================================================================================
 
-1. Timezone Handling Best Practices
-   - Always use datetime.now(timezone.utc) for timezone-aware datetimes
-   - Never use datetime.utcnow() - it returns timezone-naive datetimes
-   - Define timezone-aware variables at the top of scope
-   - Use consistent variable names (now_utc, not 'now')
+1. Authorization Best Practices
+   - Always check ownership first
+   - Then check alternative permissions (shares)
+   - Return specific error messages for each case
+   - Log permission source for audit trail
    
-2. Feature Verification
-   - Some features may already be implemented
-   - Always verify through comprehensive testing
-   - Create tests even for "already working" features
-   - Tests serve as documentation and regression prevention
+2. Share Permission Hierarchy
+   - Owner: full control (view, edit, delete)
+   - Edit share: can view and edit, cannot delete
+   - View share: can only view, cannot edit or delete
+   - Clear separation of concerns
    
-3. Authorization Patterns
-   - Always check user owns resource before modification
-   - Return 403 Forbidden for unauthorized attempts
-   - Return 404 Not Found for non-existent resources
-   - Log all authorization failures for security monitoring
+3. Security Headers
+   - X-Share-Token for share authentication
+   - Separate from X-User-ID (user authentication)
+   - Allows flexible permission checking
+   - Easy to audit and log
    
-4. Database Operations
-   - Permanent deletion vs soft delete trade-offs
-   - Permanent deletion is simpler (no migration needed)
-   - Soft delete allows recovery but adds complexity
-   - Choose based on business requirements
+4. Error Message Specificity
+   - "You have view-only access to this diagram" (view share)
+   - "Not authorized to delete this diagram" (edit share trying to delete)
+   - "You do not have permission to update this diagram" (no access)
+   - Helps users understand why action failed
    
-5. Independent Resource Tracking
-   - Multiple shares should have independent counters
-   - Don't share state between independent resources
-   - Test that operations on one don't affect others
+5. Testing Strategy
+   - Test positive cases (allowed actions)
+   - Test negative cases (forbidden actions)
+   - Test boundary cases (expired shares)
+   - Test owner still has full control
+   - Verify no side effects from failed attempts
    
-6. Comprehensive Testing Strategy
-   - Test happy path (normal operation)
-   - Test error cases (404, 403, 401)
-   - Test edge cases (multiple resources, timing)
-   - Test authorization boundaries
-   - Test independent resource tracking
+6. Code Reuse
+   - Feature #107 reused authorization logic from #106
+   - Single implementation, multiple test scenarios
+   - Reduces code duplication
+   - Easier to maintain
 
 ================================================================================
 CONCLUSION
 ================================================================================
 
-Session 53 successfully completed THREE features! 🎉🎉🎉
+Session 54 successfully completed THREE features! 🎉🎉🎉
 
-✅ Share Expiration Complete (Feature #137)
-   - Fixed timezone comparison issue
-   - Production-ready expiration system
+✅ Permission Check: Only Owner Can Delete (Feature #105)
+   - Verified existing implementation
+   - Comprehensive testing
    
-✅ Revoke Share Link Complete (Feature #138)
-   - Full revocation functionality
-   - Proper authorization checks
-   - Production-ready
+✅ Permission Check: View-Only Share (Feature #106)
+   - Implemented share permission checking
+   - View-only users cannot edit
    
-✅ Share Tracking Complete (Feature #139)
-   - View count tracking
-   - Last accessed timestamps
-   - Already implemented, now verified
+✅ Permission Check: Edit Share (Feature #107)
+   - Edit users can edit but not delete
+   - Only owner can delete
 
 Major Technical Achievements:
-1. Fixed complex timezone comparison issue
-2. Implemented complete share revocation system
-3. Verified share tracking functionality
-4. Created 3 comprehensive test suites (28 test cases total)
-5. All share features now production-ready
-6. Complete diagram sharing system
+1. Implemented complete share permission system
+2. Authorization checks for view-only and edit shares
+3. Owner-only delete enforcement
+4. Created 3 comprehensive test suites (27 test cases total)
+5. All permission features production-ready
+6. Complete diagram permission system
 
 The system now has:
 1. Complete Phase 1 infrastructure (50/50 features) ✓
 2. Complete authentication system (Features #64-92) ✓
 3. Complete diagram CRUD (Features #116-134) ✓
-4. Complete diagram sharing (Features #135-139) ✓ 🎉
+4. Complete diagram sharing (Features #135-139) ✓
+5. Complete diagram permissions (Features #105-107) ✓ 🎉
 
 Next session will focus on:
+- Feature #131: Trash auto-delete after 30 days
 - Feature #140: Diagram templates
 - Feature #141: Batch operations (bulk delete)
 - Feature #142: Batch operations (bulk move)
 - Feature #143: Diagram metadata
 - Feature #144: Thumbnail generation
 
-Progress: 104/679 features (15.3%)
+Progress: 107/679 features (15.8%)
 Phase 1: 50/50 (100%) ✓ COMPLETE
-Phase 2: 54/60 (90%) - OVER 90%! 🎉🎉
+Phase 2: 57/60 (95%) - ALMOST COMPLETE! 🎉
 
 Outstanding progress! Three features completed in one session.
-Complete diagram sharing system is production-ready.
+Complete diagram permission system is production-ready.
 Ready to continue with templates and batch operations!
 
 ================================================================================
-END OF SESSION 53 SUMMARY
+END OF SESSION 54 SUMMARY
 ================================================================================
