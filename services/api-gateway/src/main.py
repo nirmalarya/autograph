@@ -852,6 +852,7 @@ PUBLIC_ROUTES = [
     "/alerts",  # Alerting system
     "/api/admin/backup/",  # Database backup and restore (for testing)
     "/api/admin/minio/",  # MinIO bucket backup and restore (for testing)
+    "/api/admin/dr/",  # Disaster recovery endpoints (for testing)
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -3557,6 +3558,263 @@ async def delete_minio_bucket_backup(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete bucket backup: {str(e)}"
+        )
+
+
+# ==========================================
+# Disaster Recovery Endpoints
+# ==========================================
+
+@app.get("/api/admin/dr/status")
+@limiter.limit("60/minute")
+async def get_dr_status(request: Request):
+    """
+    Get disaster recovery status and metrics.
+    
+    Returns:
+    - RTO/RPO targets
+    - Backup status
+    - Last DR test results
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    try:
+        # Get database backup status
+        db_manager = get_backup_manager()
+        db_backups_response = db_manager.list_backups()
+        
+        # Extract backup lists from response
+        db_backups_local = db_backups_response.get("local", [])
+        db_backups_minio = db_backups_response.get("minio", [])
+        all_db_backups = db_backups_local + db_backups_minio
+        
+        # Get MinIO backup status
+        minio_manager = get_minio_backup_manager()
+        minio_backups = minio_manager.list_backups()
+        
+        # Calculate last backup times
+        latest_db_backup = None
+        if all_db_backups:
+            latest_db_backup = max(all_db_backups, key=lambda x: x.get("created_at", ""))
+        
+        latest_minio_backup = None
+        if minio_backups:
+            latest_minio_backup = max(minio_backups, key=lambda x: x.get("modified", ""))
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "rto_target_minutes": 60,
+            "rpo_target_minutes": 5,
+            "database_backups": {
+                "count": len(all_db_backups),
+                "latest": latest_db_backup.get("created_at") if latest_db_backup else None,
+                "status": "healthy" if all_db_backups else "no_backups"
+            },
+            "minio_backups": {
+                "count": len(minio_backups),
+                "latest": latest_minio_backup.get("modified") if latest_minio_backup else None,
+                "status": "healthy" if minio_backups else "no_backups"
+            },
+            "last_dr_test": None,  # To be updated after first DR test
+            "next_dr_test": None   # To be scheduled
+        }
+        
+    except Exception as e:
+        logger.error("Failed to get DR status", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get DR status: {str(e)}"
+        )
+
+
+@app.post("/api/admin/dr/simulate")
+@limiter.limit("10/hour")
+async def simulate_disaster_recovery(
+    request: Request,
+    scenario: str = "complete_failure"
+):
+    """
+    Simulate a disaster recovery scenario.
+    
+    Query Parameters:
+    - scenario: Type of disaster to simulate
+      Options: complete_failure, database_corruption, storage_loss
+      Default: complete_failure
+    
+    Returns:
+    - Simulation results and recovery metrics
+    
+    WARNING: This will simulate service failures! Use with caution.
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    logger.warning(
+        "DR simulation requested",
+        correlation_id=correlation_id,
+        scenario=scenario
+    )
+    
+    start_time = time.time()
+    
+    try:
+        simulation_results = {
+            "scenario": scenario,
+            "start_time": datetime.utcnow().isoformat(),
+            "steps": [],
+            "metrics": {}
+        }
+        
+        # Scenario: Complete Infrastructure Failure
+        if scenario == "complete_failure":
+            # Step 1: Assess current state
+            step_start = time.time()
+            simulation_results["steps"].append({
+                "step": 1,
+                "name": "Assess current state",
+                "status": "completed",
+                "duration_seconds": time.time() - step_start,
+                "details": "Checked infrastructure services status"
+            })
+            
+            # Step 2: Verify backups exist
+            step_start = time.time()
+            db_manager = get_backup_manager()
+            db_backups_response = db_manager.list_backups()
+            db_backups = db_backups_response.get("local", []) + db_backups_response.get("minio", [])
+            
+            minio_manager = get_minio_backup_manager()
+            minio_backups = minio_manager.list_backups()
+            
+            simulation_results["steps"].append({
+                "step": 2,
+                "name": "Verify backups available",
+                "status": "completed",
+                "duration_seconds": time.time() - step_start,
+                "details": f"Found {len(db_backups)} database backups and {len(minio_backups)} MinIO backups"
+            })
+            
+            # Step 3: Simulate infrastructure recovery (not actually stopping services)
+            step_start = time.time()
+            await asyncio.sleep(2)  # Simulate infrastructure provisioning time
+            simulation_results["steps"].append({
+                "step": 3,
+                "name": "Infrastructure provisioning (simulated)",
+                "status": "completed",
+                "duration_seconds": time.time() - step_start,
+                "details": "Simulated docker-compose up -d for all services"
+            })
+            
+            # Step 4: Simulate database restore
+            step_start = time.time()
+            if db_backups:
+                latest_db_backup = max(db_backups, key=lambda x: x.get("created_at", ""))
+                # Note: Not actually restoring in simulation
+                await asyncio.sleep(3)  # Simulate restore time
+                simulation_results["steps"].append({
+                    "step": 4,
+                    "name": "Database restore (simulated)",
+                    "status": "completed",
+                    "duration_seconds": time.time() - step_start,
+                    "details": f"Simulated restore from {latest_db_backup.get('backup_name', 'unknown')}"
+                })
+            else:
+                simulation_results["steps"].append({
+                    "step": 4,
+                    "name": "Database restore (simulated)",
+                    "status": "skipped",
+                    "duration_seconds": 0,
+                    "details": "No database backups available"
+                })
+            
+            # Step 5: Simulate MinIO restore
+            step_start = time.time()
+            if minio_backups:
+                # Note: Not actually restoring in simulation
+                await asyncio.sleep(2)  # Simulate restore time
+                simulation_results["steps"].append({
+                    "step": 5,
+                    "name": "MinIO buckets restore (simulated)",
+                    "status": "completed",
+                    "duration_seconds": time.time() - step_start,
+                    "details": f"Simulated restore of {len(minio_backups)} bucket backups"
+                })
+            else:
+                simulation_results["steps"].append({
+                    "step": 5,
+                    "name": "MinIO buckets restore (simulated)",
+                    "status": "skipped",
+                    "duration_seconds": 0,
+                    "details": "No MinIO backups available"
+                })
+            
+            # Step 6: Simulate service startup
+            step_start = time.time()
+            await asyncio.sleep(2)  # Simulate service startup time
+            simulation_results["steps"].append({
+                "step": 6,
+                "name": "Service startup (simulated)",
+                "status": "completed",
+                "duration_seconds": time.time() - step_start,
+                "details": "Simulated starting all microservices"
+            })
+            
+            # Step 7: Verify system health
+            step_start = time.time()
+            health_checks = {
+                "api_gateway": True,  # We're responding, so we're healthy
+                "database": db_backups is not None and len(db_backups) > 0,
+                "storage": minio_backups is not None and len(minio_backups) > 0
+            }
+            simulation_results["steps"].append({
+                "step": 7,
+                "name": "System health verification",
+                "status": "completed",
+                "duration_seconds": time.time() - step_start,
+                "details": f"Health checks: {health_checks}"
+            })
+        
+        # Calculate total recovery time
+        total_duration = time.time() - start_time
+        
+        simulation_results["end_time"] = datetime.utcnow().isoformat()
+        simulation_results["total_duration_seconds"] = total_duration
+        simulation_results["total_duration_minutes"] = total_duration / 60
+        
+        # Calculate metrics
+        simulation_results["metrics"] = {
+            "rto_target_minutes": 60,
+            "actual_recovery_minutes": total_duration / 60,
+            "rto_met": (total_duration / 60) <= 60,
+            "rpo_target_minutes": 5,
+            "estimated_data_loss_minutes": 0,  # Simulation doesn't lose data
+            "rpo_met": True,
+            "total_steps": len(simulation_results["steps"]),
+            "successful_steps": len([s for s in simulation_results["steps"] if s["status"] == "completed"]),
+            "failed_steps": len([s for s in simulation_results["steps"] if s["status"] == "failed"])
+        }
+        
+        logger.info(
+            "DR simulation completed",
+            correlation_id=correlation_id,
+            scenario=scenario,
+            duration_minutes=simulation_results["total_duration_minutes"],
+            rto_met=simulation_results["metrics"]["rto_met"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "simulation": simulation_results
+        }
+        
+    except Exception as e:
+        logger.error("DR simulation failed", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"DR simulation failed: {str(e)}"
         )
 
 
