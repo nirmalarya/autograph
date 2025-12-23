@@ -777,9 +777,11 @@ class TemplateResponse(BaseModel):
 
 def create_version_snapshot(db: Session, file: File, description: Optional[str] = None, created_by: Optional[str] = None) -> Version:
     """Create a new version for a file with auto-incremented version number."""
-    # Get the highest version number for this file
-    max_version = db.query(Version).filter(Version.file_id == file.id).count()
-    next_version_number = max_version + 1
+    # Get the highest version number for this file (use max, not count, for consistency)
+    latest_version = db.query(Version).filter(
+        Version.file_id == file.id
+    ).order_by(Version.version_number.desc()).first()
+    next_version_number = (latest_version.version_number + 1) if latest_version else 1
     
     # Create new version
     new_version = Version(
@@ -1492,8 +1494,9 @@ async def update_diagram(
                 error=str(e)
             )
     
-    # Create new version with auto-incremented version number
-    create_version_snapshot(db, diagram, description=update_data.description, created_by=user_id)
+    # Note: Auto-versioning is handled by background job (every 5 minutes)
+    # Manual versions are created via POST /{diagram_id}/versions endpoint
+    # We don't auto-create versions on every update to avoid version spam
     
     db.commit()
     db.refresh(diagram)
@@ -2104,7 +2107,7 @@ async def increment_export_count(
     }
 
 
-@app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
+@app.get("/{diagram_id}/versions")
 async def get_versions(
     diagram_id: str,
     request: Request,
@@ -2131,10 +2134,10 @@ async def get_versions(
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
     
-    # Query all versions ordered by version_number
+    # Query all versions ordered by version_number descending (newest first)
     versions = db.query(Version).filter(
         Version.file_id == diagram_id
-    ).order_by(Version.version_number).all()
+    ).order_by(Version.version_number.desc()).all()
     
     logger.info(
         "Versions fetched successfully",
@@ -2143,7 +2146,21 @@ async def get_versions(
         version_count=len(versions)
     )
     
-    return versions
+    # Return versions in paginated format with metadata
+    return {
+        "versions": [
+            {
+                "id": v.id,
+                "version_number": v.version_number,
+                "description": v.description,
+                "label": v.label,
+                "created_at": v.created_at.isoformat() if v.created_at else None,
+                "created_by": v.created_by
+            }
+            for v in versions
+        ],
+        "total": len(versions)
+    }
 
 
 # ==========================================
@@ -3544,7 +3561,7 @@ async def fork_version(
         file_type=original_diagram.file_type,
         canvas_data=version.canvas_data,
         note_content=version.note_content,
-        user_id=user_id,
+        owner_id=user_id,
         team_id=original_diagram.team_id,
         folder_id=original_diagram.folder_id
     )
