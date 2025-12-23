@@ -2564,6 +2564,7 @@ class CreateCommentRequest(BaseModel):
     position_x: Optional[float] = None  # For canvas comments
     position_y: Optional[float] = None
     element_id: Optional[str] = None  # TLDraw element ID
+    is_private: Optional[bool] = False  # Private comments visible only to team
 
 class UpdateCommentRequest(BaseModel):
     """Request model for updating a comment."""
@@ -2582,12 +2583,14 @@ class CommentResponse(BaseModel):
     is_resolved: bool
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
+    is_private: bool = False
     created_at: datetime
     updated_at: datetime
     user: Optional[Dict[str, Any]] = None  # User info
     replies_count: int = 0
     reactions: Optional[Dict[str, int]] = None  # Emoji -> count
     mentions: Optional[list[str]] = None  # User IDs mentioned
+    permalink: Optional[str] = None  # Direct link to comment
 
     class Config:
         from_attributes = True
@@ -2599,9 +2602,10 @@ async def get_comments(
     request: Request,
     is_resolved: Optional[bool] = None,
     parent_id: Optional[str] = None,
+    sort_by: Optional[str] = "oldest",  # oldest, newest, most_reactions
     db: Session = Depends(get_db)
 ):
-    """Get all comments for a diagram with filters."""
+    """Get all comments for a diagram with filters and sorting."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -2630,8 +2634,14 @@ async def get_comments(
     if parent_id is not None:
         query = query.filter(Comment.parent_id == parent_id)
     
-    # Order by creation time (oldest first for threads)
-    comments = query.order_by(Comment.created_at.asc()).all()
+    # Apply sorting
+    if sort_by == "newest":
+        comments = query.order_by(Comment.created_at.desc()).all()
+    elif sort_by == "most_reactions":
+        # For most_reactions, we need to fetch all and sort in memory
+        comments = query.all()
+    else:  # oldest (default)
+        comments = query.order_by(Comment.created_at.asc()).all()
     
     # Enrich comments with user info and reactions
     enriched_comments = []
@@ -2651,10 +2661,15 @@ async def get_comments(
         ).group_by(CommentReaction.emoji).all()
         
         reactions = {emoji: count for emoji, count in reactions_query}
+        total_reactions = sum(reactions.values())
         
         # Get mentions
         mentions = db.query(Mention).filter(Mention.comment_id == comment.id).all()
         mentioned_user_ids = [m.user_id for m in mentions]
+        
+        # Generate permalink
+        base_url = request.base_url
+        permalink = f"{base_url}diagram/{diagram_id}#comment-{comment.id}"
         
         comment_dict = {
             "id": comment.id,
@@ -2668,6 +2683,7 @@ async def get_comments(
             "is_resolved": comment.is_resolved,
             "resolved_at": comment.resolved_at,
             "resolved_by": comment.resolved_by,
+            "is_private": comment.is_private,
             "created_at": comment.created_at,
             "updated_at": comment.updated_at,
             "user": {
@@ -2678,10 +2694,16 @@ async def get_comments(
             },
             "replies_count": replies_count,
             "reactions": reactions,
-            "mentions": mentioned_user_ids
+            "total_reactions": total_reactions,
+            "mentions": mentioned_user_ids,
+            "permalink": permalink
         }
         
         enriched_comments.append(comment_dict)
+    
+    # Sort by most_reactions if requested
+    if sort_by == "most_reactions":
+        enriched_comments.sort(key=lambda x: x["total_reactions"], reverse=True)
     
     logger.info(
         "Comments retrieved successfully",
@@ -2731,7 +2753,8 @@ async def create_comment(
         content=comment_data.content,
         position_x=comment_data.position_x,
         position_y=comment_data.position_y,
-        element_id=comment_data.element_id
+        element_id=comment_data.element_id,
+        is_private=comment_data.is_private or False
     )
     
     db.add(new_comment)
@@ -2798,6 +2821,10 @@ async def create_comment(
             error=str(e)
         )
     
+    # Generate permalink
+    base_url = str(request.base_url)
+    permalink = f"{base_url}diagram/{diagram_id}#comment-{new_comment.id}"
+    
     return {
         "id": new_comment.id,
         "file_id": new_comment.file_id,
@@ -2808,8 +2835,10 @@ async def create_comment(
         "position_y": new_comment.position_y,
         "element_id": new_comment.element_id,
         "is_resolved": new_comment.is_resolved,
+        "is_private": new_comment.is_private,
         "created_at": new_comment.created_at.isoformat(),
         "updated_at": new_comment.updated_at.isoformat(),
+        "permalink": permalink,
         "user": {
             "id": user.id if user else None,
             "full_name": user.full_name if user else "Unknown",

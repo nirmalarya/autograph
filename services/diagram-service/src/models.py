@@ -221,6 +221,7 @@ class Comment(Base):
     is_resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True))
     resolved_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    is_private = Column(Boolean, default=False)  # Private comments visible only to team members
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
