@@ -23,6 +23,10 @@ import traceback
 import psutil
 import gc
 
+# MinIO client for storage monitoring
+from minio import Minio
+from minio.error import S3Error
+
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
@@ -224,6 +228,42 @@ network_large_payload_count = Counter(
     registry=registry
 )
 
+# Disk usage monitoring metrics
+disk_usage_bytes = Gauge(
+    'api_gateway_disk_usage_bytes',
+    'Current disk usage in bytes',
+    ['storage_type', 'location'],  # storage_type: 'minio' | 'local', location: bucket name or path
+    registry=registry
+)
+
+disk_usage_percent = Gauge(
+    'api_gateway_disk_usage_percent',
+    'Current disk usage percentage',
+    ['storage_type', 'location'],
+    registry=registry
+)
+
+disk_total_bytes = Gauge(
+    'api_gateway_disk_total_bytes',
+    'Total disk capacity in bytes',
+    ['storage_type', 'location'],
+    registry=registry
+)
+
+disk_available_bytes = Gauge(
+    'api_gateway_disk_available_bytes',
+    'Available disk space in bytes',
+    ['storage_type', 'location'],
+    registry=registry
+)
+
+disk_alert_triggered = Counter(
+    'api_gateway_disk_alert_triggered_total',
+    'Count of disk usage alerts triggered',
+    ['storage_type', 'location', 'threshold_type'],  # threshold_type: 'warning' | 'critical'
+    registry=registry
+)
+
 # Get process for memory and CPU monitoring
 process = psutil.Process()
 baseline_memory_mb = None  # Will be set at startup
@@ -235,6 +275,28 @@ baseline_cpu_percent = None  # Will be set at startup
 def get_redis():
     """Get Redis client with connection pooling."""
     return get_redis_client(db=1)  # Use db 1 for rate limiting
+
+# MinIO client for storage monitoring
+MINIO_HOST = os.getenv("MINIO_HOST", "localhost")
+MINIO_PORT = os.getenv("MINIO_PORT", "9000")
+MINIO_ENDPOINT = f"{MINIO_HOST}:{MINIO_PORT}"
+MINIO_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minioadmin")
+MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin")
+MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+MINIO_BUCKETS = [
+    os.getenv("MINIO_BUCKET_DIAGRAMS", "diagrams"),
+    os.getenv("MINIO_BUCKET_EXPORTS", "exports"),
+    os.getenv("MINIO_BUCKET_UPLOADS", "uploads")
+]
+
+def get_minio_client():
+    """Get MinIO client for storage operations and monitoring."""
+    return Minio(
+        endpoint=MINIO_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=MINIO_SECURE
+    )
 
 # Custom key function for user-based rate limiting
 def get_user_identifier(request: Request) -> str:
@@ -294,6 +356,12 @@ CPU_CRITICAL_THRESHOLD_PERCENT = 90.0  # Critical if CPU exceeds 90%
 NETWORK_LARGE_PAYLOAD_THRESHOLD_BYTES = 1024 * 1024  # 1 MB
 NETWORK_COMPRESSION_MIN_SIZE_BYTES = 1024  # Compress responses > 1 KB
 NETWORK_COMPRESSION_ENABLED = os.getenv("COMPRESSION_ENABLED", "true").lower() == "true"
+
+# Disk usage monitoring configuration
+DISK_CHECK_INTERVAL_SECONDS = 300  # Check every 5 minutes
+DISK_WARNING_THRESHOLD_PERCENT = 70.0  # Warn if disk usage exceeds 70%
+DISK_CRITICAL_THRESHOLD_PERCENT = 80.0  # Critical if disk usage exceeds 80%
+DISK_ALERT_THRESHOLD_PERCENT = 80.0  # Send alerts at 80% (as per feature requirement)
 
 async def monitor_memory_usage():
     """Background task to monitor memory usage periodically."""
@@ -444,6 +512,164 @@ async def monitor_cpu_usage():
             # Continue monitoring despite errors
             await asyncio.sleep(CPU_CHECK_INTERVAL_SECONDS)
 
+async def monitor_disk_usage():
+    """Background task to monitor disk usage periodically for MinIO and local storage."""
+    while True:
+        try:
+            # Monitor MinIO storage
+            try:
+                minio_client = get_minio_client()
+                
+                # Get disk usage for each bucket
+                for bucket_name in MINIO_BUCKETS:
+                    try:
+                        # Check if bucket exists
+                        if not minio_client.bucket_exists(bucket_name):
+                            logger.warning(
+                                f"MinIO bucket does not exist",
+                                bucket=bucket_name
+                            )
+                            continue
+                        
+                        # Calculate total size of objects in bucket
+                        total_size_bytes = 0
+                        objects = minio_client.list_objects(bucket_name, recursive=True)
+                        
+                        for obj in objects:
+                            total_size_bytes += obj.size
+                        
+                        # Get MinIO container disk usage (requires admin API or df command)
+                        # For now, we'll just track bucket sizes
+                        disk_usage_bytes.labels(
+                            storage_type="minio",
+                            location=bucket_name
+                        ).set(total_size_bytes)
+                        
+                        logger.debug(
+                            "MinIO bucket disk usage",
+                            bucket=bucket_name,
+                            size_bytes=total_size_bytes,
+                            size_mb=round(total_size_bytes / 1024 / 1024, 2),
+                            size_gb=round(total_size_bytes / 1024 / 1024 / 1024, 3)
+                        )
+                        
+                    except S3Error as e:
+                        logger.error(
+                            "Error monitoring MinIO bucket",
+                            bucket=bucket_name,
+                            exc=e,
+                            error_code=e.code if hasattr(e, 'code') else None
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Error monitoring MinIO bucket",
+                            bucket=bucket_name,
+                            exc=e
+                        )
+                
+            except Exception as e:
+                logger.error(
+                    "Error connecting to MinIO",
+                    exc=e,
+                    error_type=type(e).__name__
+                )
+            
+            # Monitor local disk usage (where API gateway is running)
+            try:
+                # Get disk usage for root filesystem
+                disk = psutil.disk_usage('/')
+                
+                disk_total_bytes.labels(
+                    storage_type="local",
+                    location="root"
+                ).set(disk.total)
+                
+                disk_usage_bytes.labels(
+                    storage_type="local",
+                    location="root"
+                ).set(disk.used)
+                
+                disk_available_bytes.labels(
+                    storage_type="local",
+                    location="root"
+                ).set(disk.free)
+                
+                disk_usage_percent.labels(
+                    storage_type="local",
+                    location="root"
+                ).set(disk.percent)
+                
+                # Check thresholds and trigger alerts
+                if disk.percent >= DISK_CRITICAL_THRESHOLD_PERCENT:
+                    disk_alert_triggered.labels(
+                        storage_type="local",
+                        location="root",
+                        threshold_type="critical"
+                    ).inc()
+                    
+                    logger.error(
+                        "CRITICAL: Disk usage is very high",
+                        storage_type="local",
+                        location="root",
+                        used_percent=disk.percent,
+                        used_gb=round(disk.used / 1024 / 1024 / 1024, 2),
+                        total_gb=round(disk.total / 1024 / 1024 / 1024, 2),
+                        available_gb=round(disk.free / 1024 / 1024 / 1024, 2),
+                        threshold_percent=DISK_CRITICAL_THRESHOLD_PERCENT,
+                        alert_triggered=True
+                    )
+                elif disk.percent >= DISK_WARNING_THRESHOLD_PERCENT:
+                    disk_alert_triggered.labels(
+                        storage_type="local",
+                        location="root",
+                        threshold_type="warning"
+                    ).inc()
+                    
+                    logger.warning(
+                        "Disk usage is elevated",
+                        storage_type="local",
+                        location="root",
+                        used_percent=disk.percent,
+                        used_gb=round(disk.used / 1024 / 1024 / 1024, 2),
+                        total_gb=round(disk.total / 1024 / 1024 / 1024, 2),
+                        available_gb=round(disk.free / 1024 / 1024 / 1024, 2),
+                        threshold_percent=DISK_WARNING_THRESHOLD_PERCENT,
+                        alert_triggered=True
+                    )
+                else:
+                    # Only log DEBUG level for normal status to avoid spam
+                    logger.debug(
+                        "Disk usage check",
+                        storage_type="local",
+                        location="root",
+                        used_percent=disk.percent,
+                        used_gb=round(disk.used / 1024 / 1024 / 1024, 2),
+                        total_gb=round(disk.total / 1024 / 1024 / 1024, 2),
+                        available_gb=round(disk.free / 1024 / 1024 / 1024, 2)
+                    )
+                    
+            except Exception as e:
+                logger.error(
+                    "Error monitoring local disk usage",
+                    exc=e
+                )
+            
+            # Wait before next check
+            await asyncio.sleep(DISK_CHECK_INTERVAL_SECONDS)
+            
+        except asyncio.CancelledError:
+            logger.info("Disk monitoring task cancelled")
+            break
+        except Exception as e:
+            logger.error(
+                "Error in disk monitoring task",
+                exc=e,
+                error_type=type(e).__name__,
+                error_message=str(e)
+            )
+            # Continue monitoring despite errors
+            await asyncio.sleep(DISK_CHECK_INTERVAL_SECONDS)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
@@ -489,6 +715,7 @@ async def lifespan(app: FastAPI):
     # Start background monitoring tasks
     memory_monitor_task = asyncio.create_task(monitor_memory_usage())
     cpu_monitor_task = asyncio.create_task(monitor_cpu_usage())
+    disk_monitor_task = asyncio.create_task(monitor_disk_usage())
     
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
@@ -503,6 +730,7 @@ async def lifespan(app: FastAPI):
         # Cancel monitoring tasks
         memory_monitor_task.cancel()
         cpu_monitor_task.cancel()
+        disk_monitor_task.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -521,12 +749,17 @@ async def lifespan(app: FastAPI):
     # Cancel monitoring tasks
     memory_monitor_task.cancel()
     cpu_monitor_task.cancel()
+    disk_monitor_task.cancel()
     try:
         await memory_monitor_task
     except asyncio.CancelledError:
         pass
     try:
         await cpu_monitor_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await disk_monitor_task
     except asyncio.CancelledError:
         pass
     
@@ -1616,6 +1849,220 @@ async def test_network_large_response(request: Request, size_mb: float = 1.0):
     }
     
     return response_data
+
+
+@app.get("/test/disk")
+async def test_disk_stats(request: Request):
+    """Test endpoint to get current disk usage statistics."""
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    try:
+        # Get local disk usage
+        disk = psutil.disk_usage('/')
+        
+        # Get MinIO bucket sizes
+        minio_stats = []
+        try:
+            minio_client = get_minio_client()
+            for bucket_name in MINIO_BUCKETS:
+                if minio_client.bucket_exists(bucket_name):
+                    total_size = 0
+                    objects = minio_client.list_objects(bucket_name, recursive=True)
+                    for obj in objects:
+                        total_size += obj.size
+                    
+                    minio_stats.append({
+                        "bucket": bucket_name,
+                        "size_bytes": total_size,
+                        "size_mb": round(total_size / 1024 / 1024, 2),
+                        "size_gb": round(total_size / 1024 / 1024 / 1024, 3)
+                    })
+                else:
+                    minio_stats.append({
+                        "bucket": bucket_name,
+                        "status": "does not exist"
+                    })
+        except Exception as e:
+            minio_stats = {"error": str(e)}
+        
+        return {
+            "message": "Disk monitoring is active",
+            "correlation_id": correlation_id,
+            "local_disk": {
+                "total_bytes": disk.total,
+                "used_bytes": disk.used,
+                "free_bytes": disk.free,
+                "used_percent": disk.percent,
+                "total_gb": round(disk.total / 1024 / 1024 / 1024, 2),
+                "used_gb": round(disk.used / 1024 / 1024 / 1024, 2),
+                "free_gb": round(disk.free / 1024 / 1024 / 1024, 2),
+                "alert_triggered": disk.percent >= DISK_ALERT_THRESHOLD_PERCENT
+            },
+            "minio_storage": minio_stats,
+            "configuration": {
+                "check_interval_seconds": DISK_CHECK_INTERVAL_SECONDS,
+                "warning_threshold_percent": DISK_WARNING_THRESHOLD_PERCENT,
+                "critical_threshold_percent": DISK_CRITICAL_THRESHOLD_PERCENT,
+                "alert_threshold_percent": DISK_ALERT_THRESHOLD_PERCENT
+            },
+            "note": "Disk metrics available at /metrics endpoint",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(
+            "Error getting disk statistics",
+            correlation_id=correlation_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting disk statistics: {str(e)}"
+        )
+
+
+@app.post("/test/disk/upload")
+async def test_disk_upload(request: Request, size_mb: float = 1.0, bucket: str = "uploads"):
+    """Test endpoint to upload a file to MinIO to test disk usage increase.
+    
+    Args:
+        size_mb: Size of file to upload in MB (default: 1.0, max: 100.0)
+        bucket: Bucket to upload to (default: uploads)
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    try:
+        # Limit size for safety
+        size_mb = min(size_mb, 100.0)
+        size_bytes = int(size_mb * 1024 * 1024)
+        
+        # Generate test data
+        test_data = b'0' * size_bytes
+        
+        # Upload to MinIO
+        minio_client = get_minio_client()
+        
+        # Ensure bucket exists
+        if not minio_client.bucket_exists(bucket):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bucket '{bucket}' does not exist"
+            )
+        
+        # Generate unique filename
+        filename = f"test-upload-{uuid.uuid4()}.bin"
+        
+        # Upload file
+        from io import BytesIO
+        minio_client.put_object(
+            bucket,
+            filename,
+            BytesIO(test_data),
+            length=size_bytes,
+            content_type="application/octet-stream"
+        )
+        
+        logger.info(
+            "Test file uploaded to MinIO",
+            correlation_id=correlation_id,
+            bucket=bucket,
+            filename=filename,
+            size_mb=size_mb,
+            size_bytes=size_bytes
+        )
+        
+        return {
+            "message": "File uploaded successfully",
+            "correlation_id": correlation_id,
+            "bucket": bucket,
+            "filename": filename,
+            "size_bytes": size_bytes,
+            "size_mb": size_mb,
+            "note": "Use GET /test/disk to verify disk usage increased",
+            "cleanup_note": f"Use DELETE /test/disk/cleanup?bucket={bucket}&filename={filename} to remove this file",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except S3Error as e:
+        logger.error(
+            "MinIO error during upload",
+            correlation_id=correlation_id,
+            exc=e,
+            error_code=e.code if hasattr(e, 'code') else None
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"MinIO error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(
+            "Error uploading test file",
+            correlation_id=correlation_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error: {str(e)}"
+        )
+
+
+@app.delete("/test/disk/cleanup")
+async def test_disk_cleanup(request: Request, bucket: str, filename: str):
+    """Delete a test file from MinIO.
+    
+    Args:
+        bucket: Bucket name
+        filename: Filename to delete
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    try:
+        minio_client = get_minio_client()
+        
+        # Ensure bucket exists
+        if not minio_client.bucket_exists(bucket):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bucket '{bucket}' does not exist"
+            )
+        
+        # Delete object
+        minio_client.remove_object(bucket, filename)
+        
+        logger.info(
+            "Test file deleted from MinIO",
+            correlation_id=correlation_id,
+            bucket=bucket,
+            filename=filename
+        )
+        
+        return {
+            "message": "File deleted successfully",
+            "correlation_id": correlation_id,
+            "bucket": bucket,
+            "filename": filename,
+            "note": "Use GET /test/disk to verify disk usage decreased",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except S3Error as e:
+        logger.error(
+            "MinIO error during deletion",
+            correlation_id=correlation_id,
+            exc=e,
+            error_code=e.code if hasattr(e, 'code') else None
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"MinIO error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(
+            "Error deleting test file",
+            correlation_id=correlation_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error: {str(e)}"
+        )
 
 
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
