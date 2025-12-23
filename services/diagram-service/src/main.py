@@ -19,7 +19,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User
+from .models import File, User, Version
 
 load_dotenv()
 
@@ -368,6 +368,55 @@ class DiagramResponse(BaseModel):
         from_attributes = True
 
 
+class UpdateDiagramRequest(BaseModel):
+    """Request model for updating a diagram."""
+    title: Optional[str] = None
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    description: Optional[str] = None  # Version description
+
+
+class VersionResponse(BaseModel):
+    """Response model for version."""
+    id: str
+    file_id: str
+    version_number: int
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    description: Optional[str] = None
+    label: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+def create_version(db: Session, file: File, description: Optional[str] = None, created_by: Optional[str] = None) -> Version:
+    """Create a new version for a file with auto-incremented version number."""
+    # Get the highest version number for this file
+    max_version = db.query(Version).filter(Version.file_id == file.id).count()
+    next_version_number = max_version + 1
+    
+    # Create new version
+    new_version = Version(
+        file_id=file.id,
+        version_number=next_version_number,
+        canvas_data=file.canvas_data,
+        note_content=file.note_content,
+        description=description,
+        created_by=created_by
+    )
+    
+    db.add(new_version)
+    
+    # Update file's current_version
+    file.current_version = next_version_number
+    
+    return new_version
+
+
 @app.post("/", response_model=DiagramResponse)
 async def create_diagram(
     request: Request,
@@ -400,6 +449,11 @@ async def create_diagram(
     )
     
     db.add(new_diagram)
+    db.flush()  # Get the diagram ID without committing yet
+    
+    # Create initial version (version 1)
+    create_version(db, new_diagram, description="Initial version", created_by=user_id)
+    
     db.commit()
     db.refresh(new_diagram)
     
@@ -410,7 +464,8 @@ async def create_diagram(
         "Diagram created successfully",
         correlation_id=correlation_id,
         diagram_id=new_diagram.id,
-        user_id=user_id
+        user_id=user_id,
+        version=new_diagram.current_version
     )
     
     return new_diagram
@@ -451,6 +506,108 @@ async def get_diagram(
     )
     
     return diagram
+
+
+@app.put("/{diagram_id}", response_model=DiagramResponse)
+async def update_diagram(
+    diagram_id: str,
+    request: Request,
+    update_data: UpdateDiagramRequest,
+    db: Session = Depends(get_db)
+):
+    """Update a diagram and create a new version."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Updating diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Query diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Update diagram fields
+    if update_data.title is not None:
+        diagram.title = update_data.title
+    if update_data.canvas_data is not None:
+        diagram.canvas_data = update_data.canvas_data
+    if update_data.note_content is not None:
+        diagram.note_content = update_data.note_content
+    
+    # Create new version with auto-incremented version number
+    create_version(db, diagram, description=update_data.description, created_by=user_id)
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    # Update metrics
+    diagrams_updated.inc()
+    
+    logger.info(
+        "Diagram updated successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id,
+        new_version=diagram.current_version
+    )
+    
+    return diagram
+
+
+@app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
+async def get_versions(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get all versions for a diagram."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    logger.info(
+        "Fetching versions",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Verify diagram exists
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        logger.warning(
+            "Diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Query all versions ordered by version_number
+    versions = db.query(Version).filter(
+        Version.file_id == diagram_id
+    ).order_by(Version.version_number).all()
+    
+    logger.info(
+        "Versions fetched successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_count=len(versions)
+    )
+    
+    return versions
 
 
 if __name__ == "__main__":
