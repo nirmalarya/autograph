@@ -364,60 +364,85 @@ async def list_diagrams(
             raise HTTPException(status_code=400, detail="Invalid file_type. Must be: canvas, note, or mixed")
         query = query.filter(File.file_type == file_type)
     
-    # Apply full-text search
+    # Apply full-text search with fuzzy matching
     if search:
+        # Exact match pattern for traditional search
         search_pattern = f"%{search}%"
+        
+        # Fuzzy matching using pg_trgm similarity
+        # similarity() returns a value between 0 and 1 (higher = more similar)
+        # We use 0.25 as threshold (25% similarity) for typo tolerance
+        # This allows for 2-3 character typos in typical words
+        similarity_threshold = 0.25
+        
         # Search in title, note_content, and canvas_data (text elements)
         # Use OR to match any of these fields
+        # Combine exact matching (ILIKE) with fuzzy matching (similarity)
         query = query.filter(
             or_(
+                # Exact matches (case-insensitive)
                 File.title.ilike(search_pattern),
                 File.note_content.ilike(search_pattern),
-                cast(File.canvas_data, String).ilike(search_pattern)
+                cast(File.canvas_data, String).ilike(search_pattern),
+                # Fuzzy matches using trigram similarity
+                func.similarity(File.title, search) >= similarity_threshold,
+                func.similarity(File.note_content, search) >= similarity_threshold
             )
+        )
+        
+        # Order fuzzy search results by relevance (similarity score)
+        # Higher similarity scores appear first
+        query = query.order_by(
+            func.greatest(
+                func.similarity(File.title, search),
+                func.similarity(func.coalesce(File.note_content, ''), search)
+            ).desc()
         )
     
     # Get total count
     total = query.count()
     
     # Apply sorting
-    # Default: sort by updated_at desc (most recently updated first)
-    sort_field = File.updated_at
-    sort_direction = 'desc'
-    
-    if sort_by:
-        # Validate sort_by parameter
-        valid_sort_fields = {
-            'title': File.title,
-            'name': File.title,  # Alias for title
-            'created_at': File.created_at,
-            'created': File.created_at,  # Alias
-            'updated_at': File.updated_at,
-            'updated': File.updated_at,  # Alias
-            'last_viewed': File.last_accessed_at,
-            'last_viewed_at': File.last_accessed_at,
-            'last_accessed_at': File.last_accessed_at
-        }
+    # Note: If search is active, results are already ordered by relevance
+    # Additional sorting can be applied as secondary sort
+    if not search or sort_by:
+        # Default: sort by updated_at desc (most recently updated first)
+        sort_field = File.updated_at
+        sort_direction = 'desc'
         
-        if sort_by.lower() not in valid_sort_fields:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid sort_by. Must be one of: {', '.join(set(valid_sort_fields.keys()))}"
-            )
+        if sort_by:
+            # Validate sort_by parameter
+            valid_sort_fields = {
+                'title': File.title,
+                'name': File.title,  # Alias for title
+                'created_at': File.created_at,
+                'created': File.created_at,  # Alias
+                'updated_at': File.updated_at,
+                'updated': File.updated_at,  # Alias
+                'last_viewed': File.last_accessed_at,
+                'last_viewed_at': File.last_accessed_at,
+                'last_accessed_at': File.last_accessed_at
+            }
+            
+            if sort_by.lower() not in valid_sort_fields:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid sort_by. Must be one of: {', '.join(set(valid_sort_fields.keys()))}"
+                )
+            
+            sort_field = valid_sort_fields[sort_by.lower()]
         
-        sort_field = valid_sort_fields[sort_by.lower()]
-    
-    if sort_order:
-        # Validate sort_order parameter
-        if sort_order.lower() not in ['asc', 'desc']:
-            raise HTTPException(status_code=400, detail="Invalid sort_order. Must be: asc or desc")
-        sort_direction = sort_order.lower()
-    
-    # Apply the sort
-    if sort_direction == 'desc':
-        query = query.order_by(sort_field.desc())
-    else:
-        query = query.order_by(sort_field.asc())
+        if sort_order:
+            # Validate sort_order parameter
+            if sort_order.lower() not in ['asc', 'desc']:
+                raise HTTPException(status_code=400, detail="Invalid sort_order. Must be: asc or desc")
+            sort_direction = sort_order.lower()
+        
+        # Apply the sort (as secondary sort if search is active)
+        if sort_direction == 'desc':
+            query = query.order_by(sort_field.desc())
+        else:
+            query = query.order_by(sort_field.asc())
     
     # Apply pagination
     offset = (page - 1) * page_size
