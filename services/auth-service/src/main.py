@@ -411,6 +411,7 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+    remember_me: bool = False
 
 
 class Token(BaseModel):
@@ -463,15 +464,24 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return encoded_jwt
 
 
-def create_refresh_token(data: dict, db: Session) -> tuple[str, str]:
+def create_refresh_token(data: dict, db: Session, expires_days: int = None) -> tuple[str, str]:
     """Create JWT refresh token and save to database.
+    
+    Args:
+        data: Token payload data
+        db: Database session
+        expires_days: Optional custom expiry in days (default: REFRESH_TOKEN_EXPIRE_DAYS)
     
     Returns:
         tuple: (encoded_jwt, jti) - The encoded token and its JWT ID
     """
     to_encode = data.copy()
     now = datetime.utcnow()
-    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # Use custom expiry if provided, otherwise use default
+    if expires_days is None:
+        expires_days = REFRESH_TOKEN_EXPIRE_DAYS
+    expire = now + timedelta(days=expires_days)
     
     # Generate unique JWT ID (jti)
     import uuid
@@ -1240,7 +1250,14 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
         "email": user.email,
         "role": user.role
     })
-    refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
+    
+    # Use 30 days for refresh token if remember_me is true, otherwise use default
+    refresh_token_expires_days = 30 if user_data.remember_me else None
+    refresh_token, jti = create_refresh_token(
+        data={"sub": user.id}, 
+        db=db, 
+        expires_days=refresh_token_expires_days
+    )
     
     # Create session in Redis with 24-hour TTL
     create_session(access_token, user.id, ttl_seconds=86400)
@@ -1252,7 +1269,10 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
         user_id=user.id,
         ip_address=client_ip,
         user_agent=user_agent,
-        extra_data={"email": user.email}
+        extra_data={
+            "email": user.email,
+            "remember_me": user_data.remember_me
+        }
     )
     
     return {

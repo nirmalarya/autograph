@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
+    remember_me: false,
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -36,6 +37,7 @@ export default function LoginPage() {
         body: JSON.stringify({
           email: formData.email,
           password: formData.password,
+          remember_me: formData.remember_me,
         }),
       });
 
@@ -65,9 +67,10 @@ export default function LoginPage() {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value,
+      [e.target.name]: value,
     });
   };
 
@@ -133,6 +136,23 @@ export default function LoginPage() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
                 placeholder="Enter your password"
               />
+            </div>
+
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="remember_me"
+                name="remember_me"
+                checked={formData.remember_me}
+                onChange={handleChange}
+                className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              />
+              <label
+                htmlFor="remember_me"
+                className="ml-2 block text-sm text-gray-700"
+              >
+                Remember me for 30 days
+              </label>
             </div>
 
             <button
