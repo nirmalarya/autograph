@@ -486,6 +486,28 @@ async def test_slow(delay: int = 35):
     }
 
 
+@app.get("/test/performance")
+async def test_performance(delay: float = 0.5):
+    """Test endpoint to simulate requests of varying duration for performance testing."""
+    correlation_id = f"perf-test-{int(time.time() * 1000)}"
+    
+    logger.info(
+        "Performance test endpoint called",
+        correlation_id=correlation_id,
+        requested_delay=delay
+    )
+    
+    # Simulate some processing
+    await asyncio.sleep(delay)
+    
+    return {
+        "message": f"Response after {delay} seconds",
+        "delay_seconds": delay,
+        "timestamp": datetime.utcnow().isoformat(),
+        "correlation_id": correlation_id
+    }
+
+
 # In-memory counter for idempotency testing
 idempotency_test_counter = {"count": 0}
 

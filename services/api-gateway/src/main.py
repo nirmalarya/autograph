@@ -427,7 +427,10 @@ async def timeout_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
-    """Middleware to track request metrics."""
+    """Middleware to track request metrics and log slow requests."""
+    # Get correlation ID from request state
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    
     # Track active connections
     active_connections.inc()
     
@@ -439,6 +442,8 @@ async def metrics_middleware(request: Request, call_next):
         
         # Track request duration
         duration = time.time() - start_time
+        duration_ms = duration * 1000  # Convert to milliseconds
+        
         request_duration.labels(
             method=request.method,
             path=request.url.path
@@ -450,6 +455,29 @@ async def metrics_middleware(request: Request, call_next):
             path=request.url.path,
             status_code=response.status_code
         ).inc()
+        
+        # Log request duration
+        logger.info(
+            "Request completed",
+            correlation_id=correlation_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round(duration_ms, 2)
+        )
+        
+        # Log slow requests (> 1 second)
+        if duration > 1.0:
+            logger.warning(
+                "Slow request detected",
+                correlation_id=correlation_id,
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
+                threshold_ms=1000,
+                performance_issue=True
+            )
         
         return response
     finally:
