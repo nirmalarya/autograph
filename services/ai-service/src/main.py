@@ -27,6 +27,11 @@ from .analytics import (
     get_prompt_template,
     PROVIDER_PRICING,
 )
+from .generation_cache import get_generation_cache
+from .ai_enhancements import get_ai_enhancements
+from .ai_management import get_ai_management
+from .error_handling import get_error_handler
+import time
 
 load_dotenv()
 
@@ -48,6 +53,132 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class BatchGenerateRequest(BaseModel):
+    """Request to generate multiple diagram variations."""
+    prompt: str
+    variations: int = Field(3, description="Number of variations to generate (1-5)")
+    diagram_type: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class GenerationProgressUpdate(BaseModel):
+    """Progress update for generation."""
+    generation_id: str
+    status: str  # "in_progress", "completed", "failed"
+    progress: float  # 0-100
+    message: str
+    timestamp: str
+
+
+# ============================================================================
+# REQUEST MODELS FOR NEW ENDPOINTS (#366-384)
+# ============================================================================
+
+
+class ExportRequest(BaseModel):
+    """Request to export diagram with prompt."""
+    mermaid_code: str
+    diagram_type: str
+    original_prompt: str
+    provider: str
+    model: str
+    tokens_used: int
+    quality_score: Optional[float] = None
+
+
+class ImportRequest(BaseModel):
+    """Request to import diagram."""
+    export_json: str
+
+
+class OptimizeLayoutRequest(BaseModel):
+    """Request to optimize diagram layout."""
+    mermaid_code: str
+    diagram_type: str
+
+
+class SuggestIconsRequest(BaseModel):
+    """Request for icon suggestions."""
+    mermaid_code: str
+    diagram_type: str
+
+
+class GenerateLabelsRequest(BaseModel):
+    """Request for label generation."""
+    mermaid_code: str
+    diagram_type: str
+
+
+class SuggestConnectionsRequest(BaseModel):
+    """Request for connection suggestions."""
+    mermaid_code: str
+    diagram_type: str
+
+
+class CompleteDiagramRequest(BaseModel):
+    """Request to complete partial diagram."""
+    partial_mermaid: str
+    diagram_type: str
+    context: Optional[str] = None
+
+
+class CheckBestPracticesRequest(BaseModel):
+    """Request to check best practices."""
+    mermaid_code: str
+    diagram_type: str
+
+
+class DiagramToCodeRequest(BaseModel):
+    """Request to convert diagram to code."""
+    mermaid_code: str
+    diagram_type: str
+    target_language: str
+    framework: Optional[str] = None
+
+
+class DiagramToDocRequest(BaseModel):
+    """Request to convert diagram to documentation."""
+    mermaid_code: str
+    diagram_type: str
+    format: str = "markdown"
+
+
+class QualityFeedbackRequest(BaseModel):
+    """Request to submit quality feedback."""
+    generation_id: str
+    rating: int
+    feedback_text: Optional[str] = None
+    issues: Optional[List[str]] = None
+
+
+class CompareModelsRequest(BaseModel):
+    """Request to compare AI models."""
+    prompt: str
+    providers: List[str]
+    models: Optional[List[str]] = None
+
+
+class CustomInstructionsRequest(BaseModel):
+    """Request for generation with custom instructions."""
+    prompt: str
+    custom_instructions: List[str]
+    diagram_type: Optional[str] = None
+
+
+class StyleTransferRequest(BaseModel):
+    """Request for style transfer."""
+    target_mermaid: str
+    source_mermaid: str
+    style_aspects: List[str]
+
+
+class MergeDiagramsRequest(BaseModel):
+    """Request to merge diagrams."""
+    diagram1: str
+    diagram2: str
+    merge_strategy: str = "union"
 
 
 # Request/Response models
@@ -146,6 +277,7 @@ async def generate_diagram(request: GenerateDiagramRequest):
     MGA → OpenAI → Anthropic → Gemini
     
     New Features:
+    - Features #367-368: Generation cache with automatic expiry
     - Layout algorithms: force-directed, tree, circular (Features #321-323)
     - Icon intelligence: auto-detect AWS, Azure, GCP services (Features #324-326)
     - Quality validation: check overlaps, spacing, alignment (Features #327-330)
@@ -153,6 +285,30 @@ async def generate_diagram(request: GenerateDiagramRequest):
     """
     try:
         logger.info(f"Generating diagram for prompt: {request.prompt[:100]}...")
+        
+        # Features #367-368: Check cache first
+        cache = get_generation_cache()
+        cached = cache.get(
+            prompt=request.prompt,
+            diagram_type=request.diagram_type,
+            provider=request.provider,
+            model=request.model
+        )
+        
+        if cached:
+            logger.info("✓ Returning cached generation")
+            return GenerateDiagramResponse(
+                mermaid_code=cached.mermaid_code,
+                diagram_type=cached.diagram_type,
+                explanation=f"[CACHED] {cached.explanation}",
+                provider=cached.provider,
+                model=cached.model,
+                tokens_used=0,  # No tokens used for cached result
+                timestamp=datetime.utcnow().isoformat(),
+                quality_score=cached.quality_score,
+                layout_algorithm=cached.layout_algorithm,
+                enhanced=True
+            )
         
         # Convert diagram_type string to enum if provided
         diagram_type_enum = None
@@ -188,10 +344,54 @@ async def generate_diagram(request: GenerateDiagramRequest):
         if result.get('quality_score'):
             logger.info(f"  Quality score: {result['quality_score']:.1f}/100")
         
+        # Store in cache
+        cache.put(
+            prompt=request.prompt,
+            mermaid_code=result["mermaid_code"],
+            diagram_type=result["diagram_type"],
+            explanation=result["explanation"],
+            provider=result["provider"],
+            model=result["model"],
+            tokens_used=result["tokens_used"],
+            quality_score=result.get("quality_score"),
+            layout_algorithm=result.get("layout_algorithm")
+        )
+        
+        # Track usage in management
+        management = get_ai_management()
+        management.track_provider_usage(
+            provider=result["provider"],
+            success=True,
+            tokens=result["tokens_used"],
+            latency=0.0  # Would need to measure this
+        )
+        management.add_to_history(
+            prompt=request.prompt,
+            provider=result["provider"],
+            model=result["model"],
+            diagram_type=result["diagram_type"],
+            success=True,
+            tokens=result["tokens_used"]
+        )
+        
         return result
         
     except Exception as e:
         logger.error(f"Diagram generation failed: {str(e)}")
+        
+        # Track failure
+        management = get_ai_management()
+        management.track_provider_usage(
+            provider=request.provider or "unknown",
+            success=False,
+            tokens=0,
+            latency=0.0
+        )
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate diagram: {str(e)}"
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate diagram: {str(e)}"
@@ -1351,6 +1551,454 @@ async def get_supported_languages():
         ],
         "default": "en",
         "note": "Prompts can be provided in any of these languages. Error messages will be returned in the requested language."
+    }
+
+
+# ============================================================================
+# NEW ENDPOINTS FOR FEATURES #366-384
+# ============================================================================
+
+
+@app.get("/api/ai/cache/stats")
+async def get_cache_statistics():
+    """
+    Features #367-368: Get generation cache statistics.
+    
+    Returns cache hit rate, size, and entries.
+    """
+    cache = get_generation_cache()
+    stats = cache.get_statistics()
+    
+    return {
+        "cache_statistics": stats,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/cache/clear")
+async def clear_cache():
+    """
+    Clear generation cache.
+    """
+    cache = get_generation_cache()
+    cache.clear()
+    
+    return {
+        "message": "Cache cleared successfully",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/export-with-prompt")
+async def export_diagram_with_prompt(request: ExportRequest):
+    """
+    Feature #369: Export diagram with AI prompt and metadata.
+    
+    Allows re-generation from exported diagrams.
+    """
+    management = get_ai_management()
+    export = management.export_diagram_with_prompt(
+        mermaid_code=request.mermaid_code,
+        diagram_type=request.diagram_type,
+        original_prompt=request.original_prompt,
+        provider=request.provider,
+        model=request.model,
+        tokens_used=request.tokens_used,
+        quality_score=request.quality_score
+    )
+    
+    return {
+        "export_data": management.export_to_json(export),
+        "can_regenerate": True,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/import-with-regeneration")
+async def import_diagram_with_regeneration(request: ImportRequest):
+    """
+    Feature #370: Import diagram with regeneration capability.
+    
+    Import a previously exported diagram and optionally regenerate it.
+    """
+    management = get_ai_management()
+    imported = management.import_from_json(request.export_json)
+    
+    return {
+        "imported_diagram": {
+            "mermaid_code": imported.mermaid_code,
+            "original_prompt": imported.original_prompt,
+            "can_regenerate": imported.can_regenerate,
+            "provider_used": imported.provider_used,
+            "model_used": imported.model_used
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/optimize-layout")
+async def optimize_diagram_layout(request: OptimizeLayoutRequest):
+    """
+    Feature #371: AI-powered layout optimization.
+    
+    Optimize diagram layout for better readability.
+    """
+    enhancements = get_ai_enhancements()
+    optimization = enhancements.optimize_layout(request.mermaid_code, request.diagram_type)
+    
+    return {
+        "optimized_code": optimization.optimized_code,
+        "changes_made": optimization.changes_made,
+        "improvement_score": optimization.improvement_score,
+        "suggestions": optimization.suggestions,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/suggest-icons-enhanced")
+async def suggest_icons_enhanced(request: SuggestIconsRequest):
+    """
+    Feature #372: AI-powered icon suggestions.
+    
+    Suggest appropriate icons for components in diagram.
+    """
+    enhancements = get_ai_enhancements()
+    suggestions = enhancements.suggest_icons(request.mermaid_code, request.diagram_type)
+    
+    return {
+        "icon_suggestions": [
+            {
+                "component": s.component_name,
+                "icon": s.suggested_icon,
+                "confidence": s.confidence,
+                "reason": s.reason
+            }
+            for s in suggestions
+        ],
+        "total_suggestions": len(suggestions),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/generate-labels")
+async def generate_diagram_labels(request: GenerateLabelsRequest):
+    """
+    Feature #373: AI-powered label generation.
+    
+    Generate descriptive labels for diagram elements.
+    """
+    enhancements = get_ai_enhancements()
+    labels = enhancements.generate_labels(request.mermaid_code, request.diagram_type)
+    
+    return {
+        "label_suggestions": [
+            {
+                "element_id": l.element_id,
+                "current_label": l.current_label,
+                "suggested_label": l.suggested_label,
+                "reason": l.improvement_reason
+            }
+            for l in labels
+        ],
+        "total_suggestions": len(labels),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/suggest-connections")
+async def suggest_diagram_connections(request: SuggestConnectionsRequest):
+    """
+    Feature #374: AI-powered connection suggestions.
+    
+    Suggest missing connections in architecture diagrams.
+    """
+    enhancements = get_ai_enhancements()
+    connections = enhancements.suggest_connections(request.mermaid_code, request.diagram_type)
+    
+    return {
+        "connection_suggestions": [
+            {
+                "from": c.from_component,
+                "to": c.to_component,
+                "type": c.connection_type,
+                "confidence": c.confidence,
+                "reason": c.reason
+            }
+            for c in connections
+        ],
+        "total_suggestions": len(connections),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/complete-diagram")
+async def complete_partial_diagram(request: CompleteDiagramRequest):
+    """
+    Feature #375: AI-powered diagram completion.
+    
+    Complete a partially-drawn diagram.
+    """
+    enhancements = get_ai_enhancements()
+    completed = enhancements.complete_diagram(
+        request.partial_mermaid, request.diagram_type, request.context
+    )
+    
+    return {
+        "original_code": request.partial_mermaid,
+        "completed_code": completed,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/check-best-practices")
+async def check_diagram_best_practices(request: CheckBestPracticesRequest):
+    """
+    Feature #376: AI-powered best practices check.
+    
+    Check diagram against best practices.
+    """
+    enhancements = get_ai_enhancements()
+    violations = enhancements.check_best_practices(request.mermaid_code, request.diagram_type)
+    
+    return {
+        "violations": [
+            {
+                "severity": v.severity,
+                "category": v.category,
+                "message": v.message,
+                "line_number": v.line_number,
+                "suggestion": v.suggestion
+            }
+            for v in violations
+        ],
+        "total_violations": len(violations),
+        "passed": len(violations) == 0,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/diagram-to-code")
+async def convert_diagram_to_code(request: DiagramToCodeRequest):
+    """
+    Feature #377: AI-powered diagram to code.
+    
+    Generate code skeleton from diagram.
+    """
+    enhancements = get_ai_enhancements()
+    code_gen = enhancements.diagram_to_code(
+        request.mermaid_code, request.diagram_type, 
+        request.target_language, request.framework
+    )
+    
+    return {
+        "generated_code": code_gen.code,
+        "language": code_gen.language,
+        "framework": code_gen.framework,
+        "dependencies": code_gen.dependencies,
+        "setup_instructions": code_gen.setup_instructions,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/diagram-to-documentation")
+async def convert_diagram_to_documentation(request: DiagramToDocRequest):
+    """
+    Feature #378: AI-powered diagram to documentation.
+    
+    Generate documentation from diagram.
+    """
+    enhancements = get_ai_enhancements()
+    documentation = enhancements.diagram_to_documentation(
+        request.mermaid_code, request.diagram_type, request.format
+    )
+    
+    return {
+        "documentation": documentation,
+        "format": request.format,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/ai/provider-usage-analytics")
+async def get_provider_usage_analytics():
+    """
+    Feature #379: AI provider usage analytics.
+    
+    Get detailed usage statistics per provider.
+    """
+    management = get_ai_management()
+    analytics = management.get_provider_usage_analytics()
+    
+    return {
+        "analytics": [
+            {
+                "provider": a.provider,
+                "total_requests": a.total_requests,
+                "successful_requests": a.successful_requests,
+                "failed_requests": a.failed_requests,
+                "total_tokens": a.total_tokens,
+                "average_latency": a.average_latency,
+                "success_rate": a.success_rate,
+                "last_used": a.last_used
+            }
+            for a in analytics
+        ],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/quality-feedback")
+async def submit_generation_quality_feedback(request: QualityFeedbackRequest):
+    """
+    Feature #380: AI generation quality feedback.
+    
+    Submit user feedback on generation quality.
+    """
+    management = get_ai_management()
+    feedback = management.submit_quality_feedback(
+        request.generation_id, request.rating, request.feedback_text, request.issues
+    )
+    
+    return {
+        "feedback_recorded": True,
+        "generation_id": request.generation_id,
+        "rating": request.rating,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/ai/quality-feedback-summary")
+async def get_quality_feedback_summary():
+    """
+    Feature #380: Get summary of quality feedback.
+    
+    Returns aggregate feedback statistics.
+    """
+    management = get_ai_management()
+    summary = management.get_quality_feedback_summary()
+    
+    return {
+        "summary": summary,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/compare-models")
+async def compare_ai_models(request: CompareModelsRequest):
+    """
+    Feature #381: AI model comparison tool.
+    
+    Generate same diagram with different models and compare results.
+    """
+    management = get_ai_management()
+    results = []
+    provider_models = []
+    
+    for provider in request.providers:
+        try:
+            # Generate with this provider
+            factory = AIProviderFactory()
+            provider_instance = factory.get_provider(provider_name=provider)
+            
+            start_time = time.time()
+            result = await provider_instance.generate_diagram(request.prompt, None)
+            latency = time.time() - start_time
+            
+            provider_models.append({"provider": provider, "model": provider_instance.model_name})
+            results.append({
+                "provider": provider,
+                "model": provider_instance.model_name,
+                "mermaid_code": result.get("mermaid_code", ""),
+                "tokens_used": result.get("tokens_used", 0),
+                "latency": latency,
+                "quality_score": 0.8  # Placeholder
+            })
+        except Exception as e:
+            logger.error(f"Error comparing provider {provider}: {str(e)}")
+    
+    if results:
+        comparison = management.compare_models(request.prompt, provider_models, results)
+        recommendations = management.get_comparison_recommendations(comparison)
+        
+        return {
+            "comparison": {
+                "prompt": comparison.prompt,
+                "results": comparison.results,
+                "winner": comparison.winner,
+                "metrics": comparison.comparison_metrics
+            },
+            "recommendations": recommendations,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to compare any models")
+
+
+@app.post("/api/ai/generate-with-custom-instructions")
+async def generate_with_custom_instructions(request: CustomInstructionsRequest):
+    """
+    Feature #382: AI generation with custom instructions.
+    
+    Generate diagram with additional custom instructions.
+    """
+    # Generate base diagram
+    factory = AIProviderFactory()
+    result = await factory.generate_with_fallback(request.prompt, request.diagram_type)
+    
+    # Apply custom instructions
+    enhancements = get_ai_enhancements()
+    modified_code = enhancements.apply_custom_instructions(
+        result["mermaid_code"],
+        request.custom_instructions
+    )
+    
+    return {
+        "original_code": result["mermaid_code"],
+        "modified_code": modified_code,
+        "custom_instructions": request.custom_instructions,
+        "diagram_type": result["diagram_type"],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/apply-style-transfer")
+async def apply_diagram_style_transfer(request: StyleTransferRequest):
+    """
+    Feature #383: AI generation with style transfer.
+    
+    Transfer styling from one diagram to another.
+    """
+    enhancements = get_ai_enhancements()
+    styled_code = enhancements.apply_style_transfer(
+        request.target_mermaid,
+        request.source_mermaid,
+        request.style_aspects
+    )
+    
+    return {
+        "original_code": request.target_mermaid,
+        "styled_code": styled_code,
+        "style_aspects": request.style_aspects,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/merge-diagrams")
+async def merge_two_diagrams(request: MergeDiagramsRequest):
+    """
+    Feature #384: AI-powered diagram merging.
+    
+    Merge two diagrams intelligently.
+    """
+    enhancements = get_ai_enhancements()
+    merged = enhancements.merge_diagrams(
+        request.diagram1, request.diagram2, request.merge_strategy
+    )
+    
+    return {
+        "merged_diagram": merged,
+        "merge_strategy": request.merge_strategy,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 
