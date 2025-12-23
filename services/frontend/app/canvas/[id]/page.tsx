@@ -1,7 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
+
+// Dynamically import TLDraw to avoid SSR issues
+const TLDrawCanvas = dynamic(() => import('./TLDrawCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full bg-gray-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Loading canvas...</p>
+      </div>
+    </div>
+  ),
+});
 
 export default function CanvasEditorPage() {
   const router = useRouter();
@@ -12,6 +26,8 @@ export default function CanvasEditorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [user, setUser] = useState<{ email?: string; sub?: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
 
   useEffect(() => {
     // Check authentication
@@ -65,6 +81,43 @@ export default function CanvasEditorPage() {
     }
   };
 
+  const handleSave = useCallback(async (editor: any) => {
+    if (!editor || !diagram) return;
+
+    try {
+      setSaving(true);
+      const snapshot = editor.store.getSnapshot();
+      const token = localStorage.getItem('access_token');
+      const payload = JSON.parse(atob(token!.split('.')[1]));
+
+      const response = await fetch(`http://localhost:8082/${diagramId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-ID': payload.sub,
+        },
+        body: JSON.stringify({
+          title: diagram.title,
+          canvas_data: snapshot,
+          note_content: diagram.note_content,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save diagram');
+      }
+
+      const updated = await response.json();
+      setDiagram(updated);
+      setLastSaved(new Date());
+    } catch (err) {
+      console.error('Failed to save diagram:', err);
+      alert('Failed to save diagram. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }, [diagram, diagramId]);
+
   const handleBackToDashboard = () => {
     router.push('/dashboard');
   };
@@ -99,15 +152,16 @@ export default function CanvasEditorPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="fixed inset-0 flex flex-col bg-gray-50">
       {/* Header */}
-      <nav className="bg-white shadow-sm border-b border-gray-200">
+      <nav className="flex-shrink-0 bg-white shadow-sm border-b border-gray-200 z-10">
         <div className="max-w-full px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <button
                 onClick={handleBackToDashboard}
                 className="text-gray-600 hover:text-gray-900 transition"
+                title="Back to Dashboard"
               >
                 ← Back
               </button>
@@ -120,41 +174,41 @@ export default function CanvasEditorPage() {
               </span>
             </div>
             <div className="flex items-center gap-4">
+              {lastSaved && (
+                <span className="text-xs text-gray-500">
+                  Saved at {lastSaved.toLocaleTimeString()}
+                </span>
+              )}
               <span className="text-sm text-gray-600">{user?.email}</span>
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition">
+              <button 
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition"
+                title="Share (coming soon)"
+              >
                 Share
               </button>
-              <button className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition">
-                Save
+              <button 
+                onClick={() => {
+                  const editor = (window as any).tldrawEditor;
+                  if (editor) {
+                    handleSave(editor);
+                  }
+                }}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>
         </div>
       </nav>
 
-      {/* Canvas Area */}
-      <div className="h-[calc(100vh-4rem)] bg-white">
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <div className="text-6xl mb-4">🎨</div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Canvas Editor</h2>
-            <p className="text-gray-600 mb-4">
-              Your diagram "{diagram?.title}" has been created successfully!
-            </p>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 max-w-md mx-auto">
-              <h3 className="font-semibold text-gray-900 mb-2">Diagram Details:</h3>
-              <div className="text-left space-y-1 text-sm">
-                <p><span className="font-medium">ID:</span> {diagram?.id}</p>
-                <p><span className="font-medium">Type:</span> {diagram?.file_type}</p>
-                <p><span className="font-medium">Version:</span> {diagram?.current_version}</p>
-                <p><span className="font-medium">Created:</span> {new Date(diagram?.created_at).toLocaleString()}</p>
-              </div>
-            </div>
-            <p className="text-sm text-gray-500 mt-4">
-              TLDraw canvas integration coming soon...
-            </p>
-          </div>
-        </div>
+      {/* Canvas Area - Full height with TLDraw */}
+      <div className="flex-1 relative bg-white overflow-hidden">
+        <TLDrawCanvas 
+          initialData={diagram?.canvas_data}
+          onSave={handleSave}
+        />
       </div>
     </main>
   );
