@@ -162,9 +162,9 @@ export default function DashboardPage() {
             <p className="text-gray-600 mb-4">
               Manage your account
             </p>
-            <button className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition">
+            <a href="/settings/security" className="block w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition text-center">
               Open Settings
-            </button>
+            </a>
           </div>
         </div>
 
