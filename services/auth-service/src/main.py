@@ -3,7 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, validator
@@ -22,7 +22,7 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User
+from .models import User, RefreshToken
 
 load_dotenv()
 
@@ -404,6 +404,10 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
@@ -444,18 +448,40 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     return encoded_jwt
 
 
-def create_refresh_token(data: dict) -> str:
-    """Create JWT refresh token."""
+def create_refresh_token(data: dict, db: Session) -> tuple[str, str]:
+    """Create JWT refresh token and save to database.
+    
+    Returns:
+        tuple: (encoded_jwt, jti) - The encoded token and its JWT ID
+    """
     to_encode = data.copy()
     now = datetime.utcnow()
     expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # Generate unique JWT ID (jti)
+    import uuid
+    jti = str(uuid.uuid4())
+    
     to_encode.update({
         "exp": expire,
         "iat": now,
-        "type": "refresh"
+        "type": "refresh",
+        "jti": jti
     })
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    
+    # Save refresh token to database for rotation tracking
+    refresh_token_record = RefreshToken(
+        user_id=data["sub"],
+        token_jti=jti,
+        expires_at=expire,
+        is_used=False,
+        is_revoked=False
+    )
+    db.add(refresh_token_record)
+    db.commit()
+    
+    return encoded_jwt, jti
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -785,7 +811,7 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "email": user.email,
         "role": user.role
     })
-    refresh_token = create_refresh_token(data={"sub": user.id})
+    refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
     
     return {
         "access_token": access_token,
@@ -834,13 +860,105 @@ async def login_form(
         "email": user.email,
         "role": user.role
     })
-    refresh_token = create_refresh_token(data={"sub": user.id})
+    refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
     
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+
+@app.post("/refresh", response_model=Token)
+async def refresh_tokens(request: RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Refresh access token using refresh token.
+    
+    Implements token rotation - old refresh token is invalidated.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Decode refresh token
+        payload = jwt.decode(request.refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        token_type: str = payload.get("type")
+        jti: str = payload.get("jti")
+        
+        if user_id is None or token_type != "refresh" or jti is None:
+            raise credentials_exception
+        
+        # Check if refresh token exists in database
+        token_record = db.query(RefreshToken).filter(
+            RefreshToken.token_jti == jti
+        ).first()
+        
+        if not token_record:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token not found"
+            )
+        
+        # Check if token is already used (token rotation)
+        if token_record.is_used:
+            # Token reuse detected - reject the request
+            # Note: In a production system, you might want to revoke all tokens
+            # for this user as a security measure, but for now we just reject
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token already used"
+            )
+        
+        # Check if token is revoked
+        if token_record.is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token has been revoked"
+            )
+        
+        # Check if token is expired
+        if token_record.expires_at < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token has expired"
+            )
+        
+        # Get user
+        user = get_user_by_id(db, user_id)
+        if not user:
+            raise credentials_exception
+        
+        # Check if user is active
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive"
+            )
+        
+        # Mark old refresh token as used
+        token_record.is_used = True
+        token_record.used_at = datetime.now(timezone.utc)
+        db.commit()
+        
+        # Create new tokens
+        new_access_token = create_access_token(data={
+            "sub": user.id,
+            "email": user.email,
+            "role": user.role
+        })
+        new_refresh_token, new_jti = create_refresh_token(data={"sub": user.id}, db=db)
+        
+        return {
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer"
+        }
+        
+    except JWTError:
+        raise credentials_exception
 
 
 @app.get("/me", response_model=UserResponse)

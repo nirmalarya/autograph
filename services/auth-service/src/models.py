@@ -422,3 +422,32 @@ class UsageMetric(Base):
         Index('idx_usage_metrics_created', 'created_at'),
         Index('idx_usage_metrics_user_type', 'user_id', 'metric_type'),
     )
+
+
+class RefreshToken(Base):
+    """Refresh tokens table for token rotation tracking."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Token details
+    token_jti = Column(String(255), unique=True, nullable=False, index=True)  # JWT ID (jti claim)
+    
+    # Status
+    is_used = Column(Boolean, default=False, nullable=False)
+    used_at = Column(DateTime(timezone=True))
+    is_revoked = Column(Boolean, default=False, nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    
+    # Expiration
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    __table_args__ = (
+        Index('idx_refresh_tokens_user', 'user_id'),
+        Index('idx_refresh_tokens_jti', 'token_jti'),
+        Index('idx_refresh_tokens_expires', 'expires_at'),
+    )
