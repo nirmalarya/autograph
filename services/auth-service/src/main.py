@@ -641,6 +641,102 @@ def get_rate_limit_ttl(ip_address: str) -> int:
     return redis_client.ttl(key)
 
 
+# Session Management Functions
+def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) -> None:
+    """Create a session in Redis with 24-hour TTL.
+    
+    Args:
+        access_token: The access token to use as session key
+        user_id: The user ID
+        ttl_seconds: Time to live in seconds (default: 86400 = 24 hours)
+    """
+    key = f"session:{access_token}"
+    session_data = {
+        "user_id": user_id,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    # Store session data as JSON string
+    redis_client.setex(key, ttl_seconds, json.dumps(session_data))
+
+
+def validate_session(access_token: str) -> bool:
+    """Validate that a session exists in Redis.
+    
+    Args:
+        access_token: The access token to check
+        
+    Returns:
+        True if session exists, False otherwise
+    """
+    key = f"session:{access_token}"
+    return redis_client.exists(key) > 0
+
+
+def get_session(access_token: str) -> dict | None:
+    """Get session data from Redis.
+    
+    Args:
+        access_token: The access token
+        
+    Returns:
+        Session data dict or None if not found
+    """
+    key = f"session:{access_token}"
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+
+def delete_session(access_token: str) -> None:
+    """Delete a session from Redis.
+    
+    Args:
+        access_token: The access token
+    """
+    key = f"session:{access_token}"
+    redis_client.delete(key)
+
+
+def delete_all_user_sessions(user_id: str) -> int:
+    """Delete all sessions for a user.
+    
+    Args:
+        user_id: The user ID
+        
+    Returns:
+        Number of sessions deleted
+    """
+    # Find all session keys for this user
+    # This is not efficient for large scale, but works for our use case
+    # In production, you might want to maintain a separate index
+    pattern = "session:*"
+    deleted = 0
+    
+    for key in redis_client.scan_iter(match=pattern):
+        session_data = redis_client.get(key)
+        if session_data:
+            data = json.loads(session_data)
+            if data.get("user_id") == user_id:
+                redis_client.delete(key)
+                deleted += 1
+    
+    return deleted
+
+
+def get_session_ttl(access_token: str) -> int:
+    """Get remaining TTL for a session.
+    
+    Args:
+        access_token: The access token
+        
+    Returns:
+        Remaining seconds until session expires, or -1 if not found
+    """
+    key = f"session:{access_token}"
+    return redis_client.ttl(key)
+
+
 # Audit Logging Functions
 def create_audit_log(
     db: Session,
@@ -734,6 +830,14 @@ async def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Validate session exists in Redis
+        if not validate_session(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired or invalid",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
@@ -1138,6 +1242,9 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
     })
     refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
     
+    # Create session in Redis with 24-hour TTL
+    create_session(access_token, user.id, ttl_seconds=86400)
+    
     # Log successful login
     create_audit_log(
         db=db,
@@ -1253,6 +1360,9 @@ async def login_form(
     })
     refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
     
+    # Create session in Redis with 24-hour TTL
+    create_session(access_token, user.id, ttl_seconds=86400)
+    
     # Log successful login
     create_audit_log(
         db=db,
@@ -1352,6 +1462,9 @@ async def refresh_tokens(request: RefreshTokenRequest, db: Session = Depends(get
         })
         new_refresh_token, new_jti = create_refresh_token(data={"sub": user.id}, db=db)
         
+        # Create session in Redis with 24-hour TTL
+        create_session(new_access_token, user.id, ttl_seconds=86400)
+        
         return {
             "access_token": new_access_token,
             "refresh_token": new_refresh_token,
@@ -1396,6 +1509,9 @@ async def logout(
             if ttl > 0:
                 # Blacklist token for remaining TTL
                 blacklist_token(token, ttl)
+                
+                # Delete session from Redis
+                delete_session(token)
                 
                 logger.info(
                     "User logged out",
@@ -1466,6 +1582,9 @@ async def logout_all(
         # Blacklist all user tokens in Redis (24 hours TTL to cover max token lifetime)
         blacklist_all_user_tokens(current_user.id, ttl_seconds=86400)
         
+        # Delete all user sessions from Redis
+        deleted_sessions = delete_all_user_sessions(current_user.id)
+        
         # Revoke all refresh tokens in database
         db.query(RefreshToken).filter(
             RefreshToken.user_id == current_user.id,
@@ -1480,7 +1599,8 @@ async def logout_all(
         logger.info(
             "User logged out from all sessions",
             user_id=current_user.id,
-            email=current_user.email
+            email=current_user.email,
+            sessions_deleted=deleted_sessions
         )
         
         # Log logout-all
