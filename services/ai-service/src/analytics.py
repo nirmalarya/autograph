@@ -629,11 +629,17 @@ PROMPT_TEMPLATES = {
         "three_tier": "Create a 3-tier architecture diagram with frontend ({frontend}), backend ({backend}), and database ({database}).",
         "cloud_native": "Design a cloud-native architecture on {cloud_provider} using {services}. Include auto-scaling and high availability.",
         "event_driven": "Create an event-driven architecture using {message_broker} with producers, consumers, and event store.",
+        # Feature #351: AWS 3-tier architecture template
+        "aws_3tier": "Create a 3-tier architecture on AWS with the following layers: 1) Presentation tier with CloudFront CDN and S3 for static content, 2) Application tier with Application Load Balancer, Auto Scaling Group of EC2 instances running the application in private subnets across multiple availability zones, 3) Data tier with RDS PostgreSQL in Multi-AZ configuration. Include VPC with public and private subnets, NAT Gateway for outbound traffic, Security Groups, and Route 53 for DNS.",
+        # Feature #352: Kubernetes deployment template
+        "kubernetes": "Create a Kubernetes deployment diagram showing: 1) Ingress controller for external traffic routing, 2) Multiple deployments with pods running containerized applications, 3) Services (ClusterIP, NodePort, LoadBalancer) for service discovery, 4) ConfigMaps and Secrets for configuration, 5) Persistent Volumes for stateful applications, 6) Horizontal Pod Autoscaler for scaling, 7) Network policies for security. Show the relationship between namespaces, pods, services, and ingress.",
     },
     "sequence": {
         "api_flow": "Create a sequence diagram showing the flow for {api_name}. Include {participants} and show authentication, validation, and data flow.",
         "user_journey": "Create a sequence diagram showing user journey for {feature}. Include frontend, backend, database, and external services.",
         "authentication": "Create a sequence diagram for {auth_type} authentication flow. Show all security checks and token exchanges.",
+        # Feature #353: OAuth 2.0 flow template
+        "oauth2": "Create a detailed sequence diagram for OAuth 2.0 Authorization Code Flow with PKCE showing the complete interaction between: 1) User/Resource Owner, 2) Client Application (web or mobile), 3) Authorization Server, and 4) Resource Server. Include all steps: initial request with code_challenge, user authentication, authorization consent, authorization code generation, token exchange with code_verifier, access token issuance, refresh token usage, and API calls with bearer token. Show all security validations and redirects.",
     },
     "erd": {
         "database": "Create an ERD for {domain} showing entities, relationships, and key fields. Include {entities}.",

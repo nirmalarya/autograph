@@ -1030,6 +1030,330 @@ async def get_available_models():
     }
 
 
+# ============================================================================
+# FEATURES #354-365: PROMPT ENGINEERING & ADVANCED GENERATION
+# ============================================================================
+
+from .prompt_engineering import (
+    get_prompt_engineer,
+    get_diagram_analyzer,
+    PROMPT_BEST_PRACTICES,
+    PROMPT_EXAMPLES,
+)
+from .error_handling import (
+    get_error_handler,
+    AIServiceError,
+    ErrorCode,
+)
+
+
+class AnalyzePromptRequest(BaseModel):
+    """Request to analyze prompt quality."""
+    prompt: str
+
+
+class PromptAnalysisResponse(BaseModel):
+    """Response with prompt analysis."""
+    original_prompt: str
+    quality: str
+    quality_score: float
+    issues: List[str]
+    suggestions: List[str]
+    improved_prompt: Optional[str]
+    estimated_complexity: str
+    detected_type: Optional[str]
+    detected_technologies: List[str]
+
+
+class AutocompleteRequest(BaseModel):
+    """Request for prompt autocomplete."""
+    partial_prompt: str
+    limit: int = 5
+
+
+class ExplainDiagramRequest(BaseModel):
+    """Request to explain a diagram."""
+    mermaid_code: str
+    diagram_type: str
+    original_prompt: str
+
+
+class CritiqueDiagramRequest(BaseModel):
+    """Request to critique a diagram."""
+    mermaid_code: str
+    diagram_type: str
+    original_prompt: str
+
+
+class BatchGenerateRequest(BaseModel):
+    """Request to generate multiple diagram variations."""
+    prompt: str
+    variations: int = Field(3, ge=1, le=5, description="Number of variations (1-5)")
+    diagram_type: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class GenerationProgressUpdate(BaseModel):
+    """Progress update during generation."""
+    generation_id: str
+    status: str
+    progress: float  # 0-100
+    message: str
+    timestamp: str
+
+
+@app.get("/api/ai/best-practices")
+async def get_prompt_best_practices():
+    """
+    Feature #354: Get prompt engineering best practices guide.
+    """
+    return {
+        "best_practices": PROMPT_BEST_PRACTICES,
+        "examples": PROMPT_EXAMPLES,
+        "tips": [
+            "Always specify the technology stack",
+            "Mention the diagram type if known",
+            "Describe relationships and data flow",
+            "Include context about system purpose",
+            "Be specific about components",
+        ]
+    }
+
+
+@app.post("/api/ai/analyze-prompt")
+async def analyze_prompt(request: AnalyzePromptRequest):
+    """
+    Feature #355: Analyze prompt quality and provide suggestions.
+    
+    Returns quality assessment and improvement suggestions.
+    """
+    engineer = get_prompt_engineer()
+    analysis = engineer.analyze_prompt(request.prompt)
+    
+    # Add to history
+    engineer.add_to_history(request.prompt)
+    
+    return PromptAnalysisResponse(
+        original_prompt=analysis.original_prompt,
+        quality=analysis.quality.value,
+        quality_score=analysis.quality_score,
+        issues=analysis.issues,
+        suggestions=analysis.suggestions,
+        improved_prompt=analysis.improved_prompt,
+        estimated_complexity=analysis.estimated_complexity.value,
+        detected_type=analysis.detected_type,
+        detected_technologies=analysis.detected_technologies
+    )
+
+
+@app.post("/api/ai/autocomplete-prompt")
+async def autocomplete_prompt(request: AutocompleteRequest):
+    """
+    Feature #360: Autocomplete prompt from history.
+    
+    Returns matching prompts from user's history.
+    """
+    engineer = get_prompt_engineer()
+    suggestions = engineer.autocomplete_prompt(request.partial_prompt, request.limit)
+    
+    return {
+        "partial": request.partial_prompt,
+        "suggestions": suggestions,
+        "count": len(suggestions)
+    }
+
+
+@app.post("/api/ai/explain-diagram")
+async def explain_diagram(request: ExplainDiagramRequest):
+    """
+    Feature #357: Generate explanation of a diagram.
+    
+    AI analyzes the diagram and provides human-readable explanation.
+    """
+    analyzer = get_diagram_analyzer()
+    explanation = analyzer.explain_diagram(
+        request.mermaid_code,
+        request.diagram_type,
+        request.original_prompt
+    )
+    
+    return {
+        "explanation": explanation,
+        "diagram_type": request.diagram_type,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/critique-diagram")
+async def critique_diagram(request: CritiqueDiagramRequest):
+    """
+    Feature #358: Critique diagram and suggest improvements.
+    Feature #356: AI suggestions to add missing components.
+    
+    AI analyzes diagram quality and suggests improvements.
+    """
+    analyzer = get_diagram_analyzer()
+    critique = analyzer.critique_diagram(
+        request.mermaid_code,
+        request.diagram_type,
+        request.original_prompt
+    )
+    
+    return {
+        "critique": critique,
+        "diagram_type": request.diagram_type,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/api/ai/batch-generate")
+async def batch_generate(request: BatchGenerateRequest):
+    """
+    Feature #361: Generate multiple diagram variations.
+    
+    Generates multiple variations of the same diagram with different approaches.
+    """
+    variations = []
+    
+    # Different temperature settings for variations
+    temperatures = [0.3, 0.7, 0.9][:request.variations]
+    
+    for i, temp in enumerate(temperatures, 1):
+        try:
+            # Create variation with different temperature
+            gen_request = GenerateDiagramRequest(
+                prompt=request.prompt,
+                diagram_type=request.diagram_type,
+                provider=request.provider,
+            )
+            
+            # Generate with custom settings
+            factory = AIProviderFactory()
+            provider = factory.get_provider(
+                provider_name=request.provider,
+                model=None
+            )
+            
+            # Get analytics for tracking
+            analytics = get_analytics()
+            gen_id = analytics.start_generation(
+                prompt=request.prompt,
+                diagram_type=request.diagram_type or "architecture",
+                provider=provider.provider_name,
+                model=provider.model_name,
+                temperature=temp,
+                max_tokens=2000,
+                user_id=None,
+                session_id=None
+            )
+            
+            # Generate
+            result = await provider.generate_diagram(request.prompt, request.diagram_type)
+            
+            # Track completion
+            analytics.complete_generation(
+                generation_id=gen_id,
+                mermaid_code=result.get("mermaid_code", ""),
+                tokens_used=result.get("tokens_used", 0),
+                quality_score=None
+            )
+            
+            variations.append({
+                "variation_number": i,
+                "temperature": temp,
+                "mermaid_code": result.get("mermaid_code", ""),
+                "diagram_type": result.get("diagram_type", request.diagram_type),
+                "explanation": result.get("explanation", ""),
+            })
+            
+        except Exception as e:
+            logger.error(f"Error generating variation {i}: {str(e)}")
+            variations.append({
+                "variation_number": i,
+                "temperature": temp,
+                "error": str(e)
+            })
+    
+    return {
+        "prompt": request.prompt,
+        "variations": variations,
+        "total_variations": len(variations),
+        "successful": sum(1 for v in variations if "error" not in v),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/ai/generation-progress/{generation_id}")
+async def get_generation_progress(generation_id: str):
+    """
+    Feature #362: Get generation progress status.
+    
+    Returns current progress of an ongoing generation.
+    """
+    analytics = get_analytics()
+    generation = analytics.get_generation(generation_id)
+    
+    if not generation:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    
+    # Determine progress based on generation state
+    if generation.success:
+        status = "completed"
+        progress = 100.0
+        message = "Generation completed successfully"
+    elif generation.error:
+        status = "failed"
+        progress = 100.0
+        message = f"Generation failed: {generation.error}"
+    else:
+        status = "in_progress"
+        progress = 50.0
+        message = "Generating diagram..."
+    
+    return GenerationProgressUpdate(
+        generation_id=generation_id,
+        status=status,
+        progress=progress,
+        message=message,
+        timestamp=datetime.utcnow().isoformat()
+    )
+
+
+@app.get("/api/ai/error-statistics")
+async def get_error_statistics():
+    """
+    Get error statistics for monitoring.
+    
+    Returns error counts and most common errors.
+    """
+    error_handler = get_error_handler()
+    stats = error_handler.get_error_statistics()
+    
+    return {
+        "statistics": stats,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/ai/supported-languages")
+async def get_supported_languages():
+    """
+    Feature #359: Get supported languages for multi-language prompts.
+    
+    Returns list of supported language codes.
+    """
+    return {
+        "languages": [
+            {"code": "en", "name": "English"},
+            {"code": "de", "name": "Deutsch (German)"},
+            {"code": "es", "name": "Español (Spanish)"},
+            {"code": "fr", "name": "Français (French)"},
+        ],
+        "default": "en",
+        "note": "Prompts can be provided in any of these languages. Error messages will be returned in the requested language."
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AI_SERVICE_PORT", "8084")))
