@@ -72,8 +72,18 @@ class StructuredLogger:
     def info(self, message: str, correlation_id: str = None, **kwargs):
         self.log("info", message, correlation_id, **kwargs)
     
-    def error(self, message: str, correlation_id: str = None, **kwargs):
+    def error(self, message: str, correlation_id: str = None, exc: Exception = None, **kwargs):
+        """Log error message with optional exception and stack trace."""
+        if exc is not None:
+            # Add exception details and stack trace
+            kwargs['error_type'] = type(exc).__name__
+            kwargs['error_message'] = str(exc)
+            kwargs['stack_trace'] = traceback.format_exc()
         self.log("error", message, correlation_id, **kwargs)
+    
+    def exception(self, message: str, exc: Exception, correlation_id: str = None, **kwargs):
+        """Log exception with full stack trace and context."""
+        self.error(message, correlation_id=correlation_id, exc=exc, **kwargs)
     
     def warning(self, message: str, correlation_id: str = None, **kwargs):
         self.log("warning", message, correlation_id, **kwargs)
@@ -543,6 +553,93 @@ async def test_logging():
         "correlation_id": correlation_id,
         "current_log_level": os.getenv("LOG_LEVEL", "INFO")
     }
+
+
+@app.get("/test/error")
+async def test_error(user_id: str = "test-user-123", file_id: str = "test-file-456"):
+    """Test endpoint to trigger errors with context for error tracking verification."""
+    correlation_id = "test-error-" + str(int(time.time()))
+    
+    try:
+        # Simulate an operation that fails
+        logger.info(
+            "Starting test operation",
+            correlation_id=correlation_id,
+            user_id=user_id,
+            file_id=file_id
+        )
+        
+        # Trigger a division by zero error with context
+        result = 1 / 0  # This will raise ZeroDivisionError
+        
+        return {"result": result}
+    except ZeroDivisionError as e:
+        # Log the error with full stack trace and context
+        logger.exception(
+            "Test error triggered successfully",
+            exc=e,
+            correlation_id=correlation_id,
+            user_id=user_id,
+            file_id=file_id,
+            operation="test_division",
+            request_path="/test/error"
+        )
+        
+        # Also test the error method with exception
+        logger.error(
+            "Alternative error logging method",
+            correlation_id=correlation_id,
+            exc=e,
+            user_id=user_id,
+            file_id=file_id
+        )
+        
+        return {
+            "message": "Error logged successfully with stack trace",
+            "correlation_id": correlation_id,
+            "user_id": user_id,
+            "file_id": file_id,
+            "error_type": type(e).__name__,
+            "error_message": str(e)
+        }
+
+
+@app.get("/test/nested-error")
+async def test_nested_error():
+    """Test endpoint to trigger nested errors with full stack trace."""
+    correlation_id = "test-nested-error-" + str(int(time.time()))
+    
+    def level_3():
+        """Innermost function that raises error."""
+        return {"data": [1, 2, 3][10]}  # IndexError
+    
+    def level_2():
+        """Middle function."""
+        return level_3()
+    
+    def level_1():
+        """Outer function."""
+        return level_2()
+    
+    try:
+        result = level_1()
+        return result
+    except IndexError as e:
+        # Log error with nested stack trace
+        logger.exception(
+            "Nested error captured",
+            exc=e,
+            correlation_id=correlation_id,
+            depth=3,
+            function_chain="level_1 -> level_2 -> level_3"
+        )
+        
+        return {
+            "message": "Nested error logged with full stack trace",
+            "correlation_id": correlation_id,
+            "error_type": type(e).__name__,
+            "stack_depth": 3
+        }
 
 
 @app.get("/metrics")

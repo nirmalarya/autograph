@@ -19,6 +19,7 @@ import signal
 import asyncio
 from contextlib import asynccontextmanager
 import time
+import traceback
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -76,8 +77,18 @@ class StructuredLogger:
     def info(self, message: str, correlation_id: str = None, **kwargs):
         self.log("info", message, correlation_id, **kwargs)
     
-    def error(self, message: str, correlation_id: str = None, **kwargs):
+    def error(self, message: str, correlation_id: str = None, exc: Exception = None, **kwargs):
+        """Log error message with optional exception and stack trace."""
+        if exc is not None:
+            # Add exception details and stack trace
+            kwargs['error_type'] = type(exc).__name__
+            kwargs['error_message'] = str(exc)
+            kwargs['stack_trace'] = traceback.format_exc()
         self.log("error", message, correlation_id, **kwargs)
+    
+    def exception(self, message: str, exc: Exception, correlation_id: str = None, **kwargs):
+        """Log exception with full stack trace and context."""
+        self.error(message, correlation_id=correlation_id, exc=exc, **kwargs)
     
     def warning(self, message: str, correlation_id: str = None, **kwargs):
         self.log("warning", message, correlation_id, **kwargs)
