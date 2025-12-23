@@ -1535,6 +1535,7 @@ async def get_shared_diagram(
     share.view_count = (share.view_count or 0) + 1
     share.last_accessed_at = datetime.utcnow()
     db.commit()
+    db.refresh(share)  # Refresh to get the latest data
     
     # Get owner info
     owner = db.query(User).filter(User.id == diagram.owner_id).first()
@@ -1554,6 +1555,8 @@ async def get_shared_diagram(
         "note_content": diagram.note_content,
         "permission": share.permission,
         "is_public": share.is_public,
+        "view_count": share.view_count,
+        "last_accessed_at": share.last_accessed_at.isoformat() if share.last_accessed_at else None,
         "owner": {
             "id": owner.id if owner else None,
             "full_name": owner.full_name if owner else "Unknown",
