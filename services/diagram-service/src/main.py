@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import time
 import uuid
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, cast, String, func
 import httpx
 
 # Prometheus metrics
@@ -359,10 +360,18 @@ async def list_diagrams(
             raise HTTPException(status_code=400, detail="Invalid file_type. Must be: canvas, note, or mixed")
         query = query.filter(File.file_type == file_type)
     
-    # Apply search
+    # Apply full-text search
     if search:
         search_pattern = f"%{search}%"
-        query = query.filter(File.title.ilike(search_pattern))
+        # Search in title, note_content, and canvas_data (text elements)
+        # Use OR to match any of these fields
+        query = query.filter(
+            or_(
+                File.title.ilike(search_pattern),
+                File.note_content.ilike(search_pattern),
+                cast(File.canvas_data, String).ilike(search_pattern)
+            )
+        )
     
     # Get total count
     total = query.count()
