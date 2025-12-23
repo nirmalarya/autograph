@@ -271,6 +271,9 @@ class Share(Base):
     is_public = Column(Boolean, default=True)
     password_hash = Column(String(255))
     
+    # User-specific sharing (for "Shared with me" feature)
+    shared_with_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
+    
     # Expiration
     expires_at = Column(DateTime(timezone=True))
     
@@ -288,6 +291,7 @@ class Share(Base):
     __table_args__ = (
         Index('idx_shares_file', 'file_id'),
         Index('idx_shares_token', 'token'),
+        Index('idx_shares_user', 'shared_with_user_id'),
     )
 
 

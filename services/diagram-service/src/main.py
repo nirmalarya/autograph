@@ -526,6 +526,73 @@ async def list_recent_diagrams(
     }
 
 
+@app.get("/shared-with-me")
+async def list_shared_with_me(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """List diagrams shared with the current user.
+    
+    This endpoint returns diagrams that other users have explicitly shared
+    with the current user via user-specific shares.
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing shared with me diagrams",
+        correlation_id=correlation_id,
+        user_id=user_id
+    )
+    
+    # Query diagrams shared with this user
+    # Join shares table with files table
+    # Filter by shared_with_user_id = current user
+    # Only include non-deleted files
+    shared_diagrams = db.query(File).join(
+        Share, File.id == Share.file_id
+    ).filter(
+        Share.shared_with_user_id == user_id,
+        File.is_deleted == False
+    ).order_by(
+        Share.created_at.desc()
+    ).all()
+    
+    # For each diagram, get the share info (permission level, owner)
+    result = []
+    for diagram in shared_diagrams:
+        # Get the share info
+        share = db.query(Share).filter(
+            Share.file_id == diagram.id,
+            Share.shared_with_user_id == user_id
+        ).first()
+        
+        # Get owner info
+        owner = db.query(User).filter(User.id == diagram.owner_id).first()
+        
+        diagram_data = DiagramResponse.model_validate(diagram).model_dump()
+        diagram_data['permission'] = share.permission if share else 'view'
+        diagram_data['owner_email'] = owner.email if owner else 'Unknown'
+        diagram_data['shared_at'] = share.created_at.isoformat() if share else None
+        
+        result.append(diagram_data)
+    
+    logger.info(
+        "Shared with me diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        returned=len(result)
+    )
+    
+    return {
+        "diagrams": result,
+        "total": len(result)
+    }
+
+
 # Pydantic models for request/response with validation
 class CreateDiagramRequest(BaseModel):
     """Request model for creating a diagram."""
@@ -2002,7 +2069,8 @@ async def create_share_link(
         "permission": "view" | "edit",  // Default: "view"
         "is_public": true | false,       // Default: true
         "password": "optional_password", // For password-protected shares
-        "expires_in_days": 7             // Optional expiration
+        "expires_in_days": 7,            // Optional expiration
+        "shared_with_email": "user@example.com"  // Share with specific user
     }
     
     Returns:
@@ -2012,7 +2080,8 @@ async def create_share_link(
         "share_url": "http://localhost:3000/shared/{token}",
         "permission": "view",
         "is_public": true,
-        "expires_at": "2025-12-30T00:00:00Z" or null
+        "expires_at": "2025-12-30T00:00:00Z" or null,
+        "shared_with_email": "user@example.com" or null
     }
     """
     correlation_id = request.headers.get("X-Correlation-ID", "unknown")
@@ -2069,10 +2138,26 @@ async def create_share_link(
     is_public = body.get("is_public", True)
     password = body.get("password")
     expires_in_days = body.get("expires_in_days")
+    shared_with_email = body.get("shared_with_email")
     
     # Validate permission
     if permission not in ["view", "edit"]:
         raise HTTPException(status_code=400, detail="Permission must be 'view' or 'edit'")
+    
+    # If sharing with specific user, look up user by email
+    shared_with_user_id = None
+    if shared_with_email:
+        shared_user = db.query(User).filter(User.email == shared_with_email).first()
+        if not shared_user:
+            logger.warning(
+                "Share creation failed - user not found",
+                correlation_id=correlation_id,
+                shared_with_email=shared_with_email
+            )
+            raise HTTPException(status_code=404, detail=f"User with email {shared_with_email} not found")
+        shared_with_user_id = shared_user.id
+        # User-specific shares are not public
+        is_public = False
     
     # Generate unique share token
     import secrets
@@ -2100,6 +2185,7 @@ async def create_share_link(
         permission=permission,
         is_public=is_public,
         password_hash=password_hash,
+        shared_with_user_id=shared_with_user_id,
         expires_at=expires_at,
         view_count=0,
         created_by=user_id,
@@ -2121,7 +2207,8 @@ async def create_share_link(
         share_id=share.id,
         token=token[:10] + "...",
         permission=permission,
-        is_public=is_public
+        is_public=is_public,
+        shared_with_email=shared_with_email
     )
     
     return {
@@ -2131,7 +2218,8 @@ async def create_share_link(
         "permission": permission,
         "is_public": is_public,
         "expires_at": expires_at.isoformat() if expires_at else None,
-        "has_password": password is not None
+        "has_password": password is not None,
+        "shared_with_email": shared_with_email
     }
 
 

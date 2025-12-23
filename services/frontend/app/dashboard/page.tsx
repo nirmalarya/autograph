@@ -48,7 +48,7 @@ export default function DashboardPage() {
   const [sortBy, setSortBy] = useState<string>('updated_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [activeTab, setActiveTab] = useState<'all' | 'recent'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'recent' | 'shared'>('all');
   
   // Batch operations state
   const [selectedDiagrams, setSelectedDiagrams] = useState<Set<string>>(new Set());
@@ -97,6 +97,9 @@ export default function DashboardPage() {
       if (activeTab === 'recent') {
         url = 'http://localhost:8082/recent';
         params.append('limit', '10');
+      } else if (activeTab === 'shared') {
+        // For "Shared with me" tab, use the /shared-with-me endpoint
+        url = 'http://localhost:8082/shared-with-me';
       } else {
         // For "All" tab, use regular list endpoint with pagination
         params.append('page', page.toString());
@@ -133,8 +136,8 @@ export default function DashboardPage() {
       setDiagrams(data.diagrams);
       setTotal(data.total);
       
-      // Recent endpoint doesn't have pagination
-      if (activeTab === 'recent') {
+      // Recent and Shared endpoints don't have pagination
+      if (activeTab === 'recent' || activeTab === 'shared') {
         setTotalPages(1);
         setHasNext(false);
         setHasPrev(false);
@@ -397,6 +400,19 @@ export default function DashboardPage() {
               } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
             >
               Recent
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('shared');
+                setPage(1);
+              }}
+              className={`${
+                activeTab === 'shared'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
+            >
+              Shared with me
             </button>
           </nav>
         </div>
