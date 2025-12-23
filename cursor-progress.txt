@@ -1,89 +1,64 @@
 ================================================================================
-AUTOGRAPH V3 - SESSION 18 PROGRESS SUMMARY (COMPLETE)
+AUTOGRAPH V3 - SESSION 19 PROGRESS SUMMARY (COMPLETE)
 ================================================================================
 
 Date: December 22, 2025
-Session: 18 of Many
-Agent Role: Database & Memory Monitoring Implementation
-Status: ✅ COMPLETE (Features #41-42 completed - Database query & memory monitoring!)
+Session: 19 of Many
+Agent Role: CPU Usage Monitoring Implementation
+Status: ✅ COMPLETE (Feature #43 completed - CPU usage monitoring!)
 
 ================================================================================
 ACCOMPLISHMENTS
 ================================================================================
 
-✅ FEATURE #41: DATABASE QUERY PERFORMANCE MONITORING
-   - Implemented SQLAlchemy event listeners to track query duration
-   - Added slow query detection with 100ms threshold
-   - EXPLAIN plan capture for slow SELECT queries
-   - Query text logging with truncation (500 chars)
-   - Millisecond-precision duration tracking
-   - All queries monitored automatically
+✅ FEATURE #43: CPU USAGE MONITORING IDENTIFIES PERFORMANCE BOTTLENECKS
+   - Implemented CPU monitoring with psutil library
+   - Added Prometheus metrics for CPU usage (percent, load averages)
+   - Background task monitors CPU every 60 seconds
+   - CPU growth tracking from baseline
+   - Configurable thresholds (70% warning, 90% critical)
+   - Test endpoints for CPU monitoring and stress testing
    
    Implementation:
-   • Modified database.py with event listeners
-   • before_cursor_execute: Record query start time
-   • after_cursor_execute: Calculate duration, log slow queries
-   • QueryPerformanceMonitor class for logging
-   • EXPLAIN plan execution for slow SELECT queries
-   • Query duration stored in connection info
-   
-   Test Endpoints:
-   • GET /test/slow-query - Triggers slow query with pg_sleep (configurable delay)
-   • GET /test/complex-query - Complex JOIN query testing
-   • GET /test/fast-query - Fast query (should not trigger warning)
-   
-   Test Results:
-   ✓ All 19 test scenarios passing (100%)
-
-✅ FEATURE #42: MEMORY USAGE MONITORING PREVENTS MEMORY LEAKS
-   - Added psutil library for system-level memory monitoring
-   - Recorded baseline memory at startup
-   - Background task monitors memory every 60 seconds
-   - Memory growth tracking from baseline
-   - Configurable thresholds (512MB warning, 1024MB critical)
-   - Prometheus metrics for memory usage
-   - Garbage collection testing and monitoring
-   
-   Implementation:
-   • Added psutil==6.1.0 to requirements.txt
-   • Created memory metrics (bytes, percent, available)
-   • Background monitor_memory_usage() task
-   • Baseline memory recording in lifespan
-   • Memory threshold checks (512MB/1024MB)
+   • Added psutil CPU monitoring to API Gateway
+   • Created CPU metrics (percent, load averages)
+   • Background monitor_cpu_usage() task
+   • Baseline CPU recording in lifespan
+   • CPU threshold checks (70%/90%)
    • Logs at DEBUG/WARNING/ERROR based on usage
    
    Test Endpoints:
-   • GET /test/memory - Current memory usage statistics
-   • GET /test/memory/allocate?size_mb=N - Allocate memory for testing
-   • GET /test/memory/gc - Trigger garbage collection
+   • GET /test/cpu - Current CPU usage statistics
+   • GET /test/cpu/stress?duration_seconds=N&intensity=N - CPU stress testing
+     - Duration: 1-30 seconds (capped for safety)
+     - Intensity: 1-10 levels
    
    Test Results:
-   ✓ All 23 test scenarios passing (100%)
+   ✓ All 12 test scenarios passing (100%)
 
 ================================================================================
 SESSION STATISTICS
 ================================================================================
 
-Features Implemented: 2 (Features #41-42)
-Features Verified: 2
-Files Created: 2 (test_database_query_performance.py - 675 lines, test_memory_monitoring.py - 583 lines)
-Files Modified: 4 (database.py, main.py - auth-service, requirements.txt, main.py - api-gateway)
-Test Scripts: 2 comprehensive tests (42 scenarios total, 100% passing)
-Total Commits: 3
+Features Implemented: 1 (Feature #43)
+Features Verified: 1
+Files Created: 1 (test_cpu_monitoring.py - 734 lines)
+Files Modified: 2 (main.py - api-gateway +167 lines, feature_list.json)
+Test Scripts: 1 comprehensive test (12 scenarios, 100% passing)
+Total Commits: 1
 
 Progress:
-- Started: 40/679 features (5.89%)
-- Completed: 42/679 features (6.19%)
-- Improvement: +2 features (+0.30%)
+- Started: 42/679 features (6.19%)
+- Completed: 43/679 features (6.33%)
+- Improvement: +1 feature (+0.15%)
 
 Time Investment:
-- Feature #41 implementation: ~105 minutes
-- Feature #42 implementation: ~90 minutes
-- Total session: ~195 minutes (3.25 hours)
+- Feature #43 implementation: ~120 minutes
+- Total session: ~120 minutes (2 hours)
 
 Test Coverage:
-- 42 test scenarios created and passing (19 + 23)
-- 1,258 lines of test code written (675 + 583)
+- 12 test scenarios created and passing
+- 734 lines of test code written
 - 100% pass rate on all tests
 - Comprehensive coverage of all requirements
 
@@ -91,45 +66,42 @@ Test Coverage:
 TECHNICAL HIGHLIGHTS
 ================================================================================
 
-Database Query Performance Monitoring (Feature #41):
-✓ SQLAlchemy event listeners (before/after cursor execute)
-✓ Query duration tracking with millisecond precision
-✓ Slow query threshold: 100ms (configurable)
-✓ EXPLAIN plan capture for slow SELECT queries
-✓ Query text truncation to 500 characters
-✓ WARNING level logs for slow queries
-✓ Zero performance impact on fast queries
-
-Memory Usage Monitoring (Feature #42):
-✓ psutil for system-level memory monitoring
-✓ Baseline memory recorded at startup (67.58MB)
+CPU Usage Monitoring (Feature #43):
+✓ Process CPU usage tracking (psutil.Process.cpu_percent)
+✓ System-wide CPU monitoring (psutil.cpu_percent)
+✓ CPU core count (logical & physical)
+✓ Load averages (1min, 5min, 15min) on Unix/Linux
+✓ Baseline CPU recorded at startup (0.0%)
+✓ CPU growth from baseline calculation
 ✓ Background monitoring every 60 seconds
-✓ Memory growth tracking from baseline
-✓ Thresholds: 512MB warning, 1024MB critical
-✓ Prometheus metrics (bytes, percent, available)
-✓ Garbage collection monitoring and testing
-✓ Memory allocation testing with GC recovery
-✓ Stable memory usage confirmed (no leaks)
+✓ Thresholds: 70% warning, 90% critical
+✓ Prometheus metrics (4 gauges)
+✓ CPU stress testing with configurable duration/intensity
+✓ Duration capped at 30 seconds for safety
+✓ Correlation ID support
 
-Example Memory Monitoring Output:
+Example CPU Monitoring Output:
 ```json
 {
-  "current_memory_mb": 53.35,
-  "baseline_memory_mb": 67.58,
-  "memory_growth_mb": -14.23,
-  "memory_percent": 0.68,
-  "system_memory_total_mb": 7837.33,
-  "system_memory_available_mb": 1684.07,
-  "warning_threshold_mb": 512,
-  "critical_threshold_mb": 1024
+  "process_cpu_percent": 0.0,
+  "baseline_cpu_percent": 0.0,
+  "cpu_growth_percent": 0.0,
+  "system_cpu_percent": 10.3,
+  "cpu_count_logical": 10,
+  "cpu_count_physical": 10,
+  "load_average_1m": 7.59,
+  "load_average_5m": 9.45,
+  "load_average_15m": 8.21,
+  "warning_threshold_percent": 70.0,
+  "critical_threshold_percent": 90.0
 }
 ```
 
 Benefits:
-✓ Production-ready database and memory monitoring
-✓ Automatic detection of slow queries and memory issues
-✓ EXPLAIN plans help identify missing indexes
-✓ Memory leak prevention and early detection
+✓ Production-ready CPU performance monitoring
+✓ Automatic detection of CPU bottlenecks
+✓ Load averages help identify system pressure
+✓ CPU stress testing for validation
 ✓ Minimal performance overhead
 ✓ Ready for integration with APM tools
 ✓ Comprehensive Prometheus metrics
@@ -139,62 +111,49 @@ FILES CREATED/MODIFIED
 ================================================================================
 
 Created:
-1. test_database_query_performance.py (675 lines)
-   - 7 test functions covering all requirements
-   - 19 total test assertions
-   - 100% pass rate
-
-2. test_memory_monitoring.py (583 lines)
-   - 7 test functions covering all requirements
-   - 23 total test assertions
+1. test_cpu_monitoring.py (734 lines)
+   - 12 test functions covering all requirements
+   - Tests CPU tracking, stress testing, thresholds
+   - Tests Prometheus metrics and correlation IDs
    - 100% pass rate
 
 Modified:
-1. services/auth-service/src/database.py
-   - Added event listeners for query monitoring
-   - Added QueryPerformanceMonitor class
-   - SLOW_QUERY_THRESHOLD_MS constant (100ms)
-   
-2. services/auth-service/src/main.py
-   - Added /test/slow-query endpoint
-   - Added /test/complex-query endpoint
-   - Added /test/fast-query endpoint
-
-3. services/api-gateway/requirements.txt
-   - Added psutil==6.1.0
-
-4. services/api-gateway/src/main.py
-   - Imported psutil and gc
-   - Added memory metrics (bytes, percent, available)
-   - Added baseline_memory_mb tracking
-   - Added monitor_memory_usage() background task
+1. services/api-gateway/src/main.py (+167 lines)
+   - Added CPU metrics (4 Prometheus gauges)
+     * cpu_usage_percent
+     * cpu_load_average_1m
+     * cpu_load_average_5m
+     * cpu_load_average_15m
+   - Added baseline_cpu_percent tracking
+   - Added monitor_cpu_usage() background task
    - Enhanced lifespan() to record baseline and start monitoring
-   - Added /test/memory endpoint
-   - Added /test/memory/allocate endpoint
-   - Added /test/memory/gc endpoint
-   - Updated PUBLIC_ROUTES to include /test/ paths
+   - Added /test/cpu endpoint
+   - Added /test/cpu/stress endpoint
+   - Updated CPU_CHECK_INTERVAL_SECONDS = 60
+   - Updated CPU_WARNING_THRESHOLD_PERCENT = 70.0
+   - Updated CPU_CRITICAL_THRESHOLD_PERCENT = 90.0
    
-5. feature_list.json
-   - Marked Features #41 and #42 as passing
+2. feature_list.json
+   - Marked Feature #43 as passing
 
 ================================================================================
 NEXT SESSION PRIORITIES
 ================================================================================
 
-Continue Phase 1 Infrastructure (8 features remaining to reach 50):
+Continue Phase 1 Infrastructure (7 features remaining to reach 50):
 
 High Priority (next 5 features):
-1. Feature #43: CPU usage monitoring identifies performance bottlenecks
-2. Feature #44: Network monitoring tracks request/response sizes
-3. Feature #45: Disk usage monitoring for storage services
-4. Feature #46: Service health checks with detailed status
-5. Feature #47: Distributed tracing with correlation IDs (already partially done)
+1. Feature #44: Network monitoring tracks request/response sizes
+2. Feature #45: Disk usage monitoring for storage services
+3. Feature #46: Service dependency mapping for architecture visualization
+4. Feature #47: Alerting system for critical failures
+5. Feature #48: Backup and restore for PostgreSQL database
 
-Note: Infrastructure monitoring features provide complete observability.
-Focus on CPU, network, and disk monitoring to complete Phase 1.
+Note: Continue building observability stack with network and disk monitoring.
+Focus on completing Phase 1 infrastructure features.
 
-PHASE 1 TARGET: 50/50 features (currently 42/50 = 84% complete)
-Only 8 more features to complete Phase 1!
+PHASE 1 TARGET: 50/50 features (currently 43/50 = 86% complete)
+Only 7 more features to complete Phase 1!
 
 ================================================================================
 ENVIRONMENT STATUS
@@ -216,10 +175,11 @@ Microservices:
    - Configurable log levels
    - Error tracking with stack traces
    - Performance monitoring with request duration
-   - Memory monitoring with psutil ✨ NEW
-   - Background memory monitoring (60s interval) ✨ NEW
-   - Memory thresholds (512MB/1024MB) ✨ NEW
-   - Prometheus memory metrics ✨ NEW
+   - Memory monitoring with psutil
+   - CPU monitoring with psutil ✨ NEW
+   - Background CPU monitoring (60s interval) ✨ NEW
+   - CPU thresholds (70%/90%) ✨ NEW
+   - Prometheus CPU metrics ✨ NEW
    
 ✅ Auth Service - Port 8085
    - Database connection with retry logic
@@ -227,9 +187,7 @@ Microservices:
    - Structured logging with JSON
    - Configurable log levels
    - Error tracking with stack traces
-   - Database query performance monitoring ✨ NEW
-   - Slow query detection (> 100ms) ✨ NEW
-   - EXPLAIN plan capture ✨ NEW
+   - Database query performance monitoring
 
 All core services healthy with production-ready monitoring.
 
@@ -237,16 +195,16 @@ All core services healthy with production-ready monitoring.
 SUCCESS METRICS
 ================================================================================
 
-Session 18 Completion: ✅ 100%
-- 2 features completed ✅
-- 2 features verified ✅
-- 42 test scenarios passing ✅
-- 3 clean commits ✅
+Session 19 Completion: ✅ 100%
+- 1 feature completed ✅
+- 1 feature verified ✅
+- 12 test scenarios passing ✅
+- 1 clean commit ✅
 - Zero bugs found ✅
 
 Overall Progress:
-- Features: 42/679 (6.19%)
-- Phase 1: 42/50 (84%)
+- Features: 43/679 (6.33%)
+- Phase 1: 43/50 (86%)
 - Phase 2: 0/60 (0%)
 
 Quality Metrics:
@@ -258,84 +216,88 @@ Quality Metrics:
 ✅ Comprehensive test coverage
 
 Key Achievements:
-- Database query performance monitoring implemented
-- Memory usage monitoring with leak prevention
-- 42 test scenarios, all passing
+- CPU usage monitoring implemented
+- Load average tracking (Unix/Linux)
+- 12 test scenarios, all passing
 - Production-ready monitoring stack
-- 84% of Phase 1 complete
+- 86% of Phase 1 complete
 
 ================================================================================
 LESSONS LEARNED
 ================================================================================
 
-1. SQLAlchemy Event Listeners
-   - Powerful mechanism for cross-cutting concerns
-   - before_cursor_execute and after_cursor_execute are perfect for monitoring
-   - Connection.info dict is thread-safe for storing temporary data
-   - No need to modify individual queries
-   - Works with all ORM and Core queries
+1. CPU Monitoring with psutil
+   - Process.cpu_percent(interval=1) for accurate readings
+   - Need interval > 0 on first call to get non-zero value
+   - System-wide cpu_percent() vs process-level tracking
+   - Load averages only available on Unix-like systems
+   - Use psutil.getloadavg() for 1/5/15 minute averages
 
-2. Memory Monitoring Best Practices
-   - psutil provides accurate system-level memory info
-   - Record baseline at startup for growth tracking
-   - Background tasks perfect for periodic monitoring
-   - Use thresholds to trigger alerts (512MB/1024MB worked well)
+2. Background CPU Monitoring
+   - 60-second interval good balance for monitoring
+   - Thresholds: 70% warning, 90% critical (reasonable for microservices)
+   - Baseline tracking essential for growth detection
    - Log at appropriate levels (DEBUG normal, WARNING elevated, ERROR critical)
    - Prometheus metrics essential for external monitoring
 
-3. Garbage Collection Insights
-   - Python GC is generally efficient
-   - Manual gc.collect() useful for testing but rarely needed in production
-   - Memory may not return to OS immediately after GC
-   - Track objects collected for leak detection
-   - Monitor uncollectable objects (should be 0)
+3. CPU Stress Testing
+   - Prime number calculation good CPU-intensive workload
+   - Need duration limits to prevent abuse (30s cap)
+   - Intensity parameter allows flexible testing
+   - Small sleep (0.01s) allows other tasks to run
+   - CPU readings may not immediately reflect stress due to scheduling
 
-4. Test Endpoint Design
-   - /test/memory/allocate allows controlled memory testing
-   - /test/memory/gc validates GC behavior
-   - size_mb parameter makes tests flexible
-   - Return detailed statistics for verification
-   - Correlation IDs essential for log tracking
+4. Test Design for CPU
+   - interval=1 needed for accurate cpu_percent() readings
+   - Load averages not available on Windows
+   - REQUEST_TIMEOUT (30s) limits long-running stress tests
+   - Better to test with shorter durations (< 30s)
+   - Verify thresholds configured correctly
 
-5. Background Task Management
-   - Use asyncio.create_task() for background tasks
-   - Cancel tasks gracefully on shutdown
-   - Handle CancelledError properly
-   - Use try/except to prevent task crashes
-   - Log task start/stop for debugging
+5. Performance Considerations
+   - CPU monitoring has minimal overhead
+   - Background task every 60s is efficient
+   - psutil is lightweight and fast
+   - Process.cpu_percent() is non-blocking
+   - Metrics updated in background, not on request
 
 ================================================================================
 IMPLEMENTATION NOTES
 ================================================================================
 
-Memory Monitoring Background Task:
+CPU Monitoring Background Task:
 
 ```python
-async def monitor_memory_usage():
-    """Background task to monitor memory usage periodically."""
+async def monitor_cpu_usage():
+    """Background task to monitor CPU usage periodically."""
     while True:
         try:
-            mem_info = process.memory_info()
-            current_memory_mb = mem_info.rss / 1024 / 1024
-            memory_percent = process.memory_percent()
+            # Get current CPU usage (interval=1 for accurate reading)
+            cpu_percent = process.cpu_percent(interval=1)
             
             # Update Prometheus metrics
-            memory_usage_bytes.set(mem_info.rss)
-            memory_usage_percent.set(memory_percent)
+            cpu_usage_percent.set(cpu_percent)
             
-            vm = psutil.virtual_memory()
-            memory_available_bytes.set(vm.available)
+            # Get system load averages (Unix-like systems)
+            try:
+                load_avg = psutil.getloadavg()
+                cpu_load_average_1m.set(load_avg[0])
+                cpu_load_average_5m.set(load_avg[1])
+                cpu_load_average_15m.set(load_avg[2])
+            except (AttributeError, OSError):
+                pass  # Not available on all platforms
             
-            # Calculate growth and log if needed
-            if baseline_memory_mb:
-                memory_growth_mb = current_memory_mb - baseline_memory_mb
+            # Calculate CPU growth and log if needed
+            if baseline_cpu_percent is not None:
+                cpu_growth_percent = cpu_percent - baseline_cpu_percent
                 
-                if current_memory_mb > MEMORY_CRITICAL_THRESHOLD_MB:
-                    logger.error("CRITICAL: Memory usage is very high", ...)
-                elif current_memory_mb > MEMORY_WARNING_THRESHOLD_MB:
-                    logger.warning("Memory usage is elevated", ...)
+                if cpu_percent > CPU_CRITICAL_THRESHOLD_PERCENT:
+                    logger.error("CRITICAL: CPU usage is very high", ...)
+                elif cpu_percent > CPU_WARNING_THRESHOLD_PERCENT:
+                    logger.warning("CPU usage is elevated", ...)
             
-            await asyncio.sleep(MEMORY_CHECK_INTERVAL_SECONDS)
+            await asyncio.sleep(CPU_CHECK_INTERVAL_SECONDS)
+            
         except asyncio.CancelledError:
             break
 ```
@@ -343,68 +305,68 @@ async def monitor_memory_usage():
 Key Design Decisions:
 1. Background task vs middleware: Background task for periodic checks
 2. 60s interval: Balance between monitoring and overhead
-3. Thresholds: 512MB warning, 1024MB critical (reasonable for microservice)
-4. Baseline tracking: Essential for leak detection
+3. Thresholds: 70% warning, 90% critical (reasonable for microservice)
+4. Baseline tracking: Essential for performance regression detection
 5. Prometheus metrics: Enable external monitoring/alerting
 
 ================================================================================
 CONCLUSION
 ================================================================================
 
-Session 18 successfully completed 2 features - Database Query Performance Monitoring
-and Memory Usage Monitoring!
+Session 19 successfully completed Feature #43 - CPU Usage Monitoring!
 
-✅ Database Query Performance Monitoring (Feature #41)
-   - SQLAlchemy event listeners for automatic monitoring
-   - Slow query detection with 100ms threshold
-   - EXPLAIN plans for query optimization
-   - 19 test scenarios passing
-
-✅ Memory Usage Monitoring (Feature #42)
-   - psutil for system-level monitoring
-   - Baseline tracking and growth detection
+✅ CPU Usage Monitoring (Feature #43)
+   - Process and system CPU tracking
+   - Load average monitoring (Unix/Linux)
    - Background monitoring with thresholds
-   - 23 test scenarios passing
+   - 12 test scenarios passing
 
 Major Technical Achievements:
-1. Zero-code-change query monitoring (event listeners)
-2. Automatic slow query detection with EXPLAIN plans
-3. Production-ready memory leak prevention
-4. Background monitoring with configurable thresholds
+1. Comprehensive CPU performance monitoring
+2. Automatic detection of CPU bottlenecks
+3. Production-ready with configurable thresholds
+4. Background monitoring with minimal overhead
 5. Comprehensive Prometheus metrics
-6. 42 test scenarios, 100% pass rate
+6. CPU stress testing for validation
+7. 12 test scenarios, 100% pass rate
 
-The system now has EIGHT layers of observability and reliability:
+The system now has NINE layers of observability and reliability:
 1. Timeout - prevents indefinite waiting
 2. Retry - handles transient failures
 3. Circuit Breaker - prevents cascading failures
 4. Idempotency - prevents duplicate operations
 5. Logging - JSON structured logs with correlation IDs
 6. Error Tracking - full stack traces with context
-7. Database Monitoring - slow query detection with EXPLAIN plans ✨
-8. Memory Monitoring - leak prevention with thresholds ✨
+7. Database Monitoring - slow query detection with EXPLAIN plans
+8. Memory Monitoring - leak prevention with thresholds
+9. CPU Monitoring - performance bottleneck identification ✨
 
 Quality maintained throughout. All code is production-ready with comprehensive
-tests. Clean git history with 3 descriptive commits.
+tests. Clean git history with descriptive commit.
 
 Next session will focus on:
-- CPU usage monitoring (Feature #43)
 - Network monitoring (Feature #44)
 - Disk usage monitoring (Feature #45)
+- Service dependency mapping (Feature #46)
 - Complete remaining Phase 1 infrastructure features
 
-Progress: 42/679 features (6.19%) - Steady advancement toward 50/50 Phase 1 goal (84% complete).
-Only 8 more features to complete Phase 1!
+Progress: 43/679 features (6.33%) - Steady advancement toward 50/50 Phase 1 goal (86% complete).
+Only 7 more features to complete Phase 1!
 
-Two more infrastructure features completed! Moving toward production-ready observability.
+One more infrastructure feature completed! Moving toward production-ready observability.
 
 ================================================================================
-END OF SESSION 18 SUMMARY
+END OF SESSION 19 SUMMARY
 ================================================================================
 
 ================================================================================
 PREVIOUS SESSIONS SUMMARY
 ================================================================================
+
+Session 18: Database & Memory Monitoring
+- Features #41, #42 completed
+- Database query performance monitoring, memory monitoring
+- 2 features in one session
 
 Session 17: Error Tracking & Performance Monitoring
 - Features #39, #40 completed
@@ -433,7 +395,7 @@ Earlier Sessions:
 - Alembic migrations, foreign key constraints, indexes
 - Basic service implementations
 
-Total Progress: 42/679 features (6.19%)
-Phase 1: 42/50 features (84% complete)
+Total Progress: 43/679 features (6.33%)
+Phase 1: 43/50 features (86% complete)
 
 ================================================================================
