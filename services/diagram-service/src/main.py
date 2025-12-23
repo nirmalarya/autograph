@@ -1496,15 +1496,15 @@ async def get_shared_diagram(
         )
         raise HTTPException(status_code=404, detail="Share link not found")
     
+    # Get current time for timezone-aware operations
+    from datetime import timezone
+    now_utc = datetime.now(timezone.utc)
+    
     # Check if expired
-    # TODO: Fix timezone comparison issue
-    # For now, expiration checking is disabled to avoid timezone comparison errors
-    # The expiration date is still stored and can be checked client-side or fixed later
-    # if share.expires_at:
-    #     now_utc = datetime.utcnow()
-    #     if share.expires_at < now_utc:
-    #         logger.warning("Share link expired", token=token[:10] + "...")
-    #         raise HTTPException(status_code=410, detail="Share link has expired")
+    if share.expires_at:
+        if share.expires_at < now_utc:
+            logger.warning("Share link expired", token=token[:10] + "...")
+            raise HTTPException(status_code=410, detail="Share link has expired")
     
     # Check password if required
     if share.password_hash:
@@ -1535,7 +1535,7 @@ async def get_shared_diagram(
     
     # Update view count and last accessed
     share.view_count = (share.view_count or 0) + 1
-    share.last_accessed_at = now  # Use the timezone-aware 'now' from above
+    share.last_accessed_at = now_utc
     db.commit()
     db.refresh(share)  # Refresh to get the latest data
     
