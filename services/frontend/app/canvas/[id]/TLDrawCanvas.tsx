@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Tldraw } from '@tldraw/tldraw';
+import { Tldraw, Editor } from '@tldraw/tldraw';
 import '@tldraw/tldraw/tldraw.css';
 
 interface TLDrawCanvasProps {
@@ -15,6 +15,22 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Set up auto-save interval
+  useEffect(() => {
+    if (!onSave || !mounted) return;
+
+    const autoSaveInterval = setInterval(() => {
+      const editor = (window as any).tldrawEditor;
+      if (editor) {
+        onSave(editor);
+      }
+    }, 300000); // 5 minutes = 300,000 milliseconds
+
+    return () => {
+      clearInterval(autoSaveInterval);
+    };
+  }, [onSave, mounted]);
 
   if (!mounted) {
     return (
@@ -30,7 +46,7 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
   return (
     <Tldraw
       snapshot={initialData}
-      onMount={(editor) => {
+      onMount={(editor: Editor) => {
         // Store editor reference globally for save button
         (window as any).tldrawEditor = editor;
         
@@ -41,15 +57,6 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
           } catch (err) {
             console.error('Failed to load canvas snapshot:', err);
           }
-        }
-      }}
-      // Auto-save every 5 minutes
-      onChange={(editor) => {
-        if (onSave && !(window as any).autoSaveTimer) {
-          (window as any).autoSaveTimer = setTimeout(() => {
-            onSave(editor);
-            (window as any).autoSaveTimer = null;
-          }, 300000); // 5 minutes = 300,000 milliseconds
         }
       }}
     />

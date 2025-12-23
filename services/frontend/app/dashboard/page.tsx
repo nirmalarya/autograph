@@ -47,7 +47,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [diagramTitle, setDiagramTitle] = useState('');
-  const [diagramType, setDiagramType] = useState<'canvas' | 'note' | 'mixed'>('canvas');
+  const [diagramType, setDiagramType] = useState<'canvas' | 'note' | 'mixed' | 'mermaid'>('canvas');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   
@@ -195,7 +195,15 @@ export default function DashboardPage() {
 
   const handleDiagramClick = (diagram: Diagram) => {
     if (diagram.file_type === 'note') {
-      router.push(`/note/${diagram.id}`);
+      // Check if it's a Mermaid diagram by looking at note_content pattern
+      // For simplicity, we'll route to mermaid editor if title contains "Mermaid" or note_content starts with mermaid keywords
+      // In a real app, we'd have a separate field or check the content
+      if (diagram.title.toLowerCase().includes('mermaid') || 
+          diagram.title.toLowerCase().includes('diagram-as-code')) {
+        router.push(`/mermaid/${diagram.id}`);
+      } else {
+        router.push(`/note/${diagram.id}`);
+      }
     } else {
       router.push(`/canvas/${diagram.id}`);
     }
@@ -212,6 +220,16 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem('access_token');
+      
+      // For Mermaid diagrams, store as 'note' type with default Mermaid code
+      const actualType = diagramType === 'mermaid' ? 'note' : diagramType;
+      const defaultMermaidCode = `graph TD
+    A[Start] --> B{Is it working?}
+    B -->|Yes| C[Great!]
+    B -->|No| D[Debug]
+    D --> B
+    C --> E[End]`;
+      
       const response = await fetch('http://localhost:8082/', {
         method: 'POST',
         headers: {
@@ -219,10 +237,10 @@ export default function DashboardPage() {
           'X-User-ID': user?.sub || '',
         },
         body: JSON.stringify({
-          title: diagramTitle,
-          file_type: diagramType,
-          canvas_data: diagramType === 'canvas' || diagramType === 'mixed' ? { shapes: [] } : null,
-          note_content: diagramType === 'note' || diagramType === 'mixed' ? '' : null,
+          title: diagramType === 'mermaid' ? `${diagramTitle} (Mermaid)` : diagramTitle,
+          file_type: actualType,
+          canvas_data: actualType === 'canvas' || actualType === 'mixed' ? { shapes: [] } : null,
+          note_content: diagramType === 'mermaid' ? defaultMermaidCode : (actualType === 'note' || actualType === 'mixed' ? '' : null),
         }),
       });
 
@@ -240,7 +258,9 @@ export default function DashboardPage() {
       fetchDiagrams();
       
       // Redirect to the appropriate editor
-      if (diagramType === 'canvas') {
+      if (diagramType === 'mermaid') {
+        router.push(`/mermaid/${diagram.id}`);
+      } else if (diagramType === 'canvas') {
         router.push(`/canvas/${diagram.id}`);
       } else if (diagramType === 'note') {
         router.push(`/note/${diagram.id}`);
@@ -1028,6 +1048,22 @@ export default function DashboardPage() {
                     <div>
                       <div className="font-medium text-gray-900">Mixed</div>
                       <div className="text-sm text-gray-600">Canvas and notes combined</div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center p-3 border border-purple-300 rounded-md cursor-pointer hover:bg-purple-50 bg-purple-25">
+                    <input
+                      type="radio"
+                      name="type"
+                      value="mermaid"
+                      checked={diagramType === 'mermaid' as any}
+                      onChange={(e) => setDiagramType(e.target.value as any)}
+                      className="mr-3"
+                      disabled={creating}
+                    />
+                    <div>
+                      <div className="font-medium text-gray-900">Diagram-as-Code (Mermaid)</div>
+                      <div className="text-sm text-gray-600">Code-based diagrams with Mermaid.js</div>
                     </div>
                   </label>
                 </div>
