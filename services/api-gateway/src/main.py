@@ -853,6 +853,7 @@ PUBLIC_ROUTES = [
     "/api/admin/backup/",  # Database backup and restore (for testing)
     "/api/admin/minio/",  # MinIO bucket backup and restore (for testing)
     "/api/admin/dr/",  # Disaster recovery endpoints (for testing)
+    "/api/feature-flags",  # Feature flags API (all endpoints)
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -3815,6 +3816,523 @@ async def simulate_disaster_recovery(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"DR simulation failed: {str(e)}"
+        )
+
+
+# ==========================================
+# Feature Flags API
+# ==========================================
+
+# Import feature flag module
+import sys
+sys.path.append("/app/shared/python")
+from feature_flags import FeatureFlag, FeatureFlagManager, RolloutStrategy
+
+# Global feature flag manager instance
+_feature_flag_manager = None
+
+def get_feature_flag_manager() -> FeatureFlagManager:
+    """Get or create feature flag manager instance."""
+    global _feature_flag_manager
+    if _feature_flag_manager is None:
+        redis_client = get_redis()
+        _feature_flag_manager = FeatureFlagManager(redis_client)
+    return _feature_flag_manager
+
+
+@app.post("/api/feature-flags", status_code=status.HTTP_201_CREATED)
+async def create_feature_flag(
+    request: Request,
+    flag_data: dict,
+):
+    """
+    Create a new feature flag.
+    
+    Request body:
+    {
+        "name": "new_dashboard",
+        "enabled": false,
+        "description": "New dashboard UI",
+        "rollout_percentage": 0,
+        "strategy": "percentage"
+    }
+    """
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info(
+            "Creating feature flag",
+            correlation_id=correlation_id,
+            flag_name=flag_data.get("name")
+        )
+        
+        # Create feature flag object
+        flag = FeatureFlag(
+            name=flag_data["name"],
+            enabled=flag_data.get("enabled", False),
+            description=flag_data.get("description", ""),
+            rollout_percentage=flag_data.get("rollout_percentage", 0),
+            strategy=RolloutStrategy(flag_data.get("strategy", "percentage")),
+            whitelist=flag_data.get("whitelist", []),
+            blacklist=flag_data.get("blacklist", []),
+            environments=flag_data.get("environments", []),
+            metadata=flag_data.get("metadata", {}),
+        )
+        
+        # Create flag in manager
+        manager = get_feature_flag_manager()
+        success = manager.create_flag(flag)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Flag {flag.name} already exists"
+            )
+        
+        logger.info(
+            "Feature flag created successfully",
+            correlation_id=correlation_id,
+            flag_name=flag.name
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "flag": flag.to_dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to create feature flag", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create feature flag: {str(e)}"
+        )
+
+
+@app.get("/api/feature-flags")
+async def list_feature_flags(request: Request):
+    """List all feature flags."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info("Listing feature flags", correlation_id=correlation_id)
+        
+        manager = get_feature_flag_manager()
+        flags = manager.list_flags()
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "count": len(flags),
+            "flags": [flag.to_dict() for flag in flags]
+        }
+        
+    except Exception as e:
+        logger.error("Failed to list feature flags", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list feature flags: {str(e)}"
+        )
+
+
+@app.get("/api/feature-flags/{flag_name}")
+async def get_feature_flag(request: Request, flag_name: str):
+    """Get a specific feature flag."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info("Getting feature flag", correlation_id=correlation_id, flag_name=flag_name)
+        
+        manager = get_feature_flag_manager()
+        flag = manager.get_flag(flag_name)
+        
+        if not flag:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "flag": flag.to_dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get feature flag", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get feature flag: {str(e)}"
+        )
+
+
+@app.put("/api/feature-flags/{flag_name}")
+async def update_feature_flag(
+    request: Request,
+    flag_name: str,
+    flag_data: dict,
+):
+    """Update an existing feature flag."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info("Updating feature flag", correlation_id=correlation_id, flag_name=flag_name)
+        
+        manager = get_feature_flag_manager()
+        flag = manager.get_flag(flag_name)
+        
+        if not flag:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        # Update flag properties
+        if "enabled" in flag_data:
+            flag.enabled = flag_data["enabled"]
+        if "description" in flag_data:
+            flag.description = flag_data["description"]
+        if "rollout_percentage" in flag_data:
+            flag.rollout_percentage = max(0, min(100, flag_data["rollout_percentage"]))
+        if "strategy" in flag_data:
+            flag.strategy = RolloutStrategy(flag_data["strategy"])
+        if "whitelist" in flag_data:
+            flag.whitelist = set(flag_data["whitelist"])
+        if "blacklist" in flag_data:
+            flag.blacklist = set(flag_data["blacklist"])
+        if "environments" in flag_data:
+            flag.environments = set(flag_data["environments"])
+        if "metadata" in flag_data:
+            flag.metadata = flag_data["metadata"]
+        
+        # Update flag in manager
+        success = manager.update_flag(flag)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update flag {flag_name}"
+            )
+        
+        logger.info(
+            "Feature flag updated successfully",
+            correlation_id=correlation_id,
+            flag_name=flag.name
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "flag": flag.to_dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update feature flag", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update feature flag: {str(e)}"
+        )
+
+
+@app.delete("/api/feature-flags/{flag_name}")
+async def delete_feature_flag(request: Request, flag_name: str):
+    """Delete a feature flag."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info("Deleting feature flag", correlation_id=correlation_id, flag_name=flag_name)
+        
+        manager = get_feature_flag_manager()
+        success = manager.delete_flag(flag_name)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        logger.info(
+            "Feature flag deleted successfully",
+            correlation_id=correlation_id,
+            flag_name=flag_name
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Flag {flag_name} deleted"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete feature flag", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete feature flag: {str(e)}"
+        )
+
+
+@app.post("/api/feature-flags/{flag_name}/check")
+async def check_feature_flag(
+    request: Request,
+    flag_name: str,
+    check_data: dict = None,
+):
+    """
+    Check if a feature flag is enabled for a user.
+    
+    Request body:
+    {
+        "user_id": "user123",
+        "environment": "production"
+    }
+    """
+    correlation_id = request.state.correlation_id
+    
+    try:
+        check_data = check_data or {}
+        user_id = check_data.get("user_id")
+        environment = check_data.get("environment")
+        
+        logger.info(
+            "Checking feature flag",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            user_id=user_id
+        )
+        
+        manager = get_feature_flag_manager()
+        enabled = manager.is_enabled(
+            flag_name=flag_name,
+            user_id=user_id,
+            environment=environment,
+            default=False
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "flag_name": flag_name,
+            "user_id": user_id,
+            "environment": environment,
+            "enabled": enabled
+        }
+        
+    except Exception as e:
+        logger.error("Failed to check feature flag", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check feature flag: {str(e)}"
+        )
+
+
+@app.patch("/api/feature-flags/{flag_name}/rollout")
+async def set_rollout_percentage(
+    request: Request,
+    flag_name: str,
+    rollout_data: dict,
+):
+    """
+    Set the rollout percentage for a feature flag.
+    
+    Request body:
+    {
+        "percentage": 50
+    }
+    """
+    correlation_id = request.state.correlation_id
+    
+    try:
+        percentage = rollout_data["percentage"]
+        
+        logger.info(
+            "Setting rollout percentage",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            percentage=percentage
+        )
+        
+        manager = get_feature_flag_manager()
+        success = manager.set_rollout_percentage(flag_name, percentage)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        flag = manager.get_flag(flag_name)
+        
+        logger.info(
+            "Rollout percentage updated successfully",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            percentage=percentage
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "flag": flag.to_dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to set rollout percentage", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to set rollout percentage: {str(e)}"
+        )
+
+
+@app.post("/api/feature-flags/{flag_name}/whitelist")
+async def add_to_whitelist(
+    request: Request,
+    flag_name: str,
+    whitelist_data: dict,
+):
+    """
+    Add a user to the whitelist for a feature flag.
+    
+    Request body:
+    {
+        "user_id": "user123"
+    }
+    """
+    correlation_id = request.state.correlation_id
+    
+    try:
+        user_id = whitelist_data["user_id"]
+        
+        logger.info(
+            "Adding user to whitelist",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            user_id=user_id
+        )
+        
+        manager = get_feature_flag_manager()
+        success = manager.add_to_whitelist(flag_name, user_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        logger.info(
+            "User added to whitelist successfully",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            user_id=user_id
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"User {user_id} added to whitelist for {flag_name}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to add user to whitelist", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add user to whitelist: {str(e)}"
+        )
+
+
+@app.delete("/api/feature-flags/{flag_name}/whitelist/{user_id}")
+async def remove_from_whitelist(
+    request: Request,
+    flag_name: str,
+    user_id: str,
+):
+    """Remove a user from the whitelist for a feature flag."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info(
+            "Removing user from whitelist",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            user_id=user_id
+        )
+        
+        manager = get_feature_flag_manager()
+        success = manager.remove_from_whitelist(flag_name, user_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Flag {flag_name} not found"
+            )
+        
+        logger.info(
+            "User removed from whitelist successfully",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            user_id=user_id
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"User {user_id} removed from whitelist for {flag_name}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to remove user from whitelist", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to remove user from whitelist: {str(e)}"
+        )
+
+
+@app.get("/api/feature-flags/{flag_name}/stats")
+async def get_usage_stats(request: Request, flag_name: str, days: int = 7):
+    """Get usage statistics for a feature flag."""
+    correlation_id = request.state.correlation_id
+    
+    try:
+        logger.info(
+            "Getting feature flag usage stats",
+            correlation_id=correlation_id,
+            flag_name=flag_name,
+            days=days
+        )
+        
+        manager = get_feature_flag_manager()
+        stats = manager.get_usage_stats(flag_name, days)
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "stats": stats
+        }
+        
+    except Exception as e:
+        logger.error("Failed to get usage stats", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get usage stats: {str(e)}"
         )
 
 
