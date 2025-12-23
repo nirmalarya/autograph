@@ -439,6 +439,7 @@ class DiagramResponse(BaseModel):
     note_content: Optional[str] = None
     owner_id: str
     folder_id: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     is_starred: bool
     is_deleted: bool
     view_count: int
@@ -568,6 +569,89 @@ def create_version(db: Session, file: File, description: Optional[str] = None, c
     return new_version
 
 
+async def generate_thumbnail(diagram_id: str, canvas_data: dict) -> Optional[str]:
+    """
+    Generate a thumbnail for a diagram and store it in MinIO.
+    
+    Returns the MinIO URL of the thumbnail, or None if generation fails.
+    """
+    try:
+        # Call export-service to generate thumbnail
+        export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://export-service:8097")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/thumbnail",
+                json={
+                    "diagram_id": diagram_id,
+                    "canvas_data": canvas_data or {},
+                    "width": 256,
+                    "height": 256
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.warning(
+                    "Thumbnail generation failed",
+                    diagram_id=diagram_id,
+                    status_code=response.status_code
+                )
+                return None
+            
+            thumbnail_data = response.json()
+            thumbnail_base64 = thumbnail_data.get("thumbnail_base64")
+            
+            if not thumbnail_base64:
+                logger.warning("No thumbnail data returned", diagram_id=diagram_id)
+                return None
+            
+            # Decode base64 and upload to MinIO
+            import base64
+            from minio import Minio
+            from io import BytesIO
+            
+            thumbnail_bytes = base64.b64decode(thumbnail_base64)
+            
+            # Connect to MinIO
+            minio_client = Minio(
+                os.getenv("MINIO_ENDPOINT", "minio:9000"),
+                access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+                secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                secure=False
+            )
+            
+            # Upload thumbnail to MinIO
+            bucket_name = "diagrams"
+            object_name = f"thumbnails/{diagram_id}.png"
+            
+            minio_client.put_object(
+                bucket_name,
+                object_name,
+                BytesIO(thumbnail_bytes),
+                len(thumbnail_bytes),
+                content_type="image/png"
+            )
+            
+            # Return the MinIO URL
+            thumbnail_url = f"http://{os.getenv('MINIO_ENDPOINT', 'minio:9000')}/{bucket_name}/{object_name}"
+            
+            logger.info(
+                "Thumbnail generated and stored",
+                diagram_id=diagram_id,
+                thumbnail_url=thumbnail_url
+            )
+            
+            return thumbnail_url
+            
+    except Exception as e:
+        logger.error(
+            "Error generating thumbnail",
+            diagram_id=diagram_id,
+            error=str(e)
+        )
+        return None
+
+
 @app.post("/", response_model=DiagramResponse)
 async def create_diagram(
     request: Request,
@@ -602,6 +686,20 @@ async def create_diagram(
     db.add(new_diagram)
     db.flush()  # Get the diagram ID without committing yet
     
+    # Generate thumbnail asynchronously (don't block on failure)
+    if diagram.canvas_data:
+        try:
+            thumbnail_url = await generate_thumbnail(new_diagram.id, diagram.canvas_data)
+            if thumbnail_url:
+                new_diagram.thumbnail_url = thumbnail_url
+        except Exception as e:
+            logger.warning(
+                "Thumbnail generation failed, continuing without thumbnail",
+                correlation_id=correlation_id,
+                diagram_id=new_diagram.id,
+                error=str(e)
+            )
+    
     # Create initial version (version 1)
     create_version(db, new_diagram, description="Initial version", created_by=user_id)
     
@@ -616,7 +714,8 @@ async def create_diagram(
         correlation_id=correlation_id,
         diagram_id=new_diagram.id,
         user_id=user_id,
-        version=new_diagram.current_version
+        version=new_diagram.current_version,
+        has_thumbnail=new_diagram.thumbnail_url is not None
     )
     
     return new_diagram
@@ -1141,6 +1240,20 @@ async def update_diagram(
     
     # Track who last edited the diagram
     diagram.last_edited_by = user_id
+    
+    # Regenerate thumbnail if canvas_data was updated
+    if update_data.canvas_data is not None:
+        try:
+            thumbnail_url = await generate_thumbnail(diagram.id, update_data.canvas_data)
+            if thumbnail_url:
+                diagram.thumbnail_url = thumbnail_url
+        except Exception as e:
+            logger.warning(
+                "Thumbnail regeneration failed, continuing without thumbnail update",
+                correlation_id=correlation_id,
+                diagram_id=diagram.id,
+                error=str(e)
+            )
     
     # Create new version with auto-incremented version number
     create_version(db, diagram, description=update_data.description, created_by=user_id)
