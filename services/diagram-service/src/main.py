@@ -12,6 +12,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
+import uuid
 from sqlalchemy.orm import Session
 import httpx
 
@@ -20,7 +21,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share
+from .models import File, User, Version, Folder, Share, Template
 
 load_dotenv()
 
@@ -508,6 +509,39 @@ class VersionResponse(BaseModel):
         from_attributes = True
 
 
+class CreateTemplateRequest(BaseModel):
+    """Request model for creating a template."""
+    name: str
+    description: Optional[str] = None
+    file_type: str = "canvas"
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[list[str]] = []
+    is_public: bool = False
+
+
+class TemplateResponse(BaseModel):
+    """Response model for template."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    owner_id: str
+    file_type: str
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    is_public: bool
+    usage_count: int
+    category: Optional[str] = None
+    tags: Optional[list] = []
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
 def create_version(db: Session, file: File, description: Optional[str] = None, created_by: Optional[str] = None) -> Version:
     """Create a new version for a file with auto-incremented version number."""
     # Get the highest version number for this file
@@ -584,6 +618,343 @@ async def create_diagram(
     )
     
     return new_diagram
+
+
+# ============================================================================
+# TEMPLATE ENDPOINTS (Must be before /{diagram_id} to avoid route conflicts)
+# ============================================================================
+
+@app.post("/templates", response_model=TemplateResponse)
+async def create_template(
+    request: Request,
+    template: CreateTemplateRequest,
+    db: Session = Depends(get_db)
+):
+    """Save a diagram as a template."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating template",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        template_name=template.name
+    )
+    
+    try:
+        # Create template
+        new_template = Template(
+            id=str(uuid.uuid4()),
+            name=template.name,
+            description=template.description,
+            owner_id=user_id,
+            file_type=template.file_type,
+            canvas_data=template.canvas_data,
+            note_content=template.note_content,
+            category=template.category,
+            tags=template.tags or [],
+            is_public=template.is_public,
+            usage_count=0
+        )
+        
+        db.add(new_template)
+        db.commit()
+        db.refresh(new_template)
+        
+        # Metrics
+        diagrams_created.inc()
+        request_duration.labels(method="POST", path="/templates").observe(time.time() - start_time)
+        request_count.labels(method="POST", path="/templates", status_code=201).inc()
+        
+        logger.info(
+            "Template created successfully",
+            correlation_id=correlation_id,
+            template_id=new_template.id,
+            template_name=new_template.name
+        )
+        
+        return new_template
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to create template",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create template: {str(e)}")
+
+
+@app.get("/templates", response_model=list[TemplateResponse])
+async def list_templates(
+    request: Request,
+    db: Session = Depends(get_db),
+    category: Optional[str] = None,
+    is_public: Optional[bool] = None
+):
+    """List available templates."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing templates",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        category=category,
+        is_public=is_public
+    )
+    
+    try:
+        # Build query - show user's templates + public templates
+        query = db.query(Template).filter(
+            (Template.owner_id == user_id) | (Template.is_public == True)
+        )
+        
+        # Apply filters
+        if category:
+            query = query.filter(Template.category == category)
+        if is_public is not None:
+            query = query.filter(Template.is_public == is_public)
+        
+        # Order by usage count (most popular first) then by created date
+        templates = query.order_by(Template.usage_count.desc(), Template.created_at.desc()).all()
+        
+        # Metrics
+        request_duration.labels(method="GET", path="/templates").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/templates", status_code=200).inc()
+        
+        logger.info(
+            "Templates listed successfully",
+            correlation_id=correlation_id,
+            count=len(templates)
+        )
+        
+        return templates
+        
+    except Exception as e:
+        logger.error(
+            "Failed to list templates",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to list templates: {str(e)}")
+
+
+@app.get("/templates/{template_id}", response_model=TemplateResponse)
+async def get_template(
+    request: Request,
+    template_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get a specific template by ID."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Getting template",
+        correlation_id=correlation_id,
+        template_id=template_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get template
+        template = db.query(Template).filter(Template.id == template_id).first()
+        
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        
+        # Check access - must be owner or template must be public
+        if template.owner_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="You do not have access to this template")
+        
+        # Metrics
+        request_duration.labels(method="GET", path="/templates/{id}").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/templates/{id}", status_code=200).inc()
+        
+        logger.info(
+            "Template retrieved successfully",
+            correlation_id=correlation_id,
+            template_id=template_id
+        )
+        
+        return template
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get template",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to get template: {str(e)}")
+
+
+@app.post("/templates/{template_id}/use", response_model=DiagramResponse)
+async def create_diagram_from_template(
+    request: Request,
+    template_id: str,
+    db: Session = Depends(get_db)
+):
+    """Create a new diagram from a template."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating diagram from template",
+        correlation_id=correlation_id,
+        template_id=template_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get template
+        template = db.query(Template).filter(Template.id == template_id).first()
+        
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        
+        # Check access
+        if template.owner_id != user_id and not template.is_public:
+            raise HTTPException(status_code=403, detail="You do not have access to this template")
+        
+        # Create new diagram from template
+        new_diagram = File(
+            id=str(uuid.uuid4()),
+            title=f"{template.name} (from template)",
+            owner_id=user_id,
+            file_type=template.file_type,
+            canvas_data=template.canvas_data,
+            note_content=template.note_content,
+            current_version=1
+        )
+        
+        db.add(new_diagram)
+        
+        # Increment template usage count
+        template.usage_count += 1
+        
+        # Create initial version
+        initial_version = Version(
+            id=str(uuid.uuid4()),
+            file_id=new_diagram.id,
+            version_number=1,
+            canvas_data=template.canvas_data,
+            note_content=template.note_content,
+            description="Created from template",
+            created_by=user_id
+        )
+        
+        db.add(initial_version)
+        db.commit()
+        db.refresh(new_diagram)
+        
+        # Metrics
+        diagrams_created.inc()
+        request_duration.labels(method="POST", path="/templates/{id}/use").observe(time.time() - start_time)
+        request_count.labels(method="POST", path="/templates/{id}/use", status_code=201).inc()
+        
+        logger.info(
+            "Diagram created from template successfully",
+            correlation_id=correlation_id,
+            template_id=template_id,
+            diagram_id=new_diagram.id
+        )
+        
+        return new_diagram
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to create diagram from template",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create diagram from template: {str(e)}")
+
+
+@app.delete("/templates/{template_id}")
+async def delete_template(
+    request: Request,
+    template_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a template (owner only)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Deleting template",
+        correlation_id=correlation_id,
+        template_id=template_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get template
+        template = db.query(Template).filter(Template.id == template_id).first()
+        
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+        
+        # Check ownership
+        if template.owner_id != user_id:
+            raise HTTPException(status_code=403, detail="Only the template owner can delete it")
+        
+        # Delete template
+        db.delete(template)
+        db.commit()
+        
+        # Metrics
+        request_duration.labels(method="DELETE", path="/templates/{id}").observe(time.time() - start_time)
+        request_count.labels(method="DELETE", path="/templates/{id}", status_code=200).inc()
+        
+        logger.info(
+            "Template deleted successfully",
+            correlation_id=correlation_id,
+            template_id=template_id
+        )
+        
+        return {"message": "Template deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to delete template",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to delete template: {str(e)}")
 
 
 @app.get("/{diagram_id}", response_model=DiagramResponse)

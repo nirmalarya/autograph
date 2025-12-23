@@ -422,3 +422,38 @@ class UsageMetric(Base):
         Index('idx_usage_metrics_created', 'created_at'),
         Index('idx_usage_metrics_user_type', 'user_id', 'metric_type'),
     )
+
+
+class Template(Base):
+    """Diagram template table for reusable patterns."""
+    __tablename__ = "templates"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Template content (same as diagram)
+    file_type = Column(String(50), default="canvas", nullable=False)  # canvas, note, mixed
+    canvas_data = Column(JSONB)  # TLDraw canvas state
+    note_content = Column(Text)  # Markdown content
+    
+    # Template metadata
+    thumbnail_url = Column(String(512))
+    is_public = Column(Boolean, default=False)  # Public templates visible to all users
+    usage_count = Column(Integer, default=0)  # Track how many times template is used
+    category = Column(String(100))  # e.g., "Architecture", "Flowchart", "ERD"
+    tags = Column(JSON, default=[])  # Searchable tags
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    owner = relationship("User")
+
+    __table_args__ = (
+        Index('idx_templates_owner', 'owner_id'),
+        Index('idx_templates_public', 'is_public'),
+        Index('idx_templates_category', 'category'),
+    )
