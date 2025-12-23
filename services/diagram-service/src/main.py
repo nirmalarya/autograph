@@ -788,33 +788,51 @@ async def update_diagram(
 async def delete_diagram(
     diagram_id: str,
     request: Request,
+    permanent: bool = False,
     db: Session = Depends(get_db)
 ):
-    """Soft delete a diagram (move to trash)."""
+    """Delete a diagram (soft or hard delete).
+    
+    Args:
+        diagram_id: ID of the diagram to delete
+        permanent: If True, permanently delete (hard delete). If False, move to trash (soft delete).
+    """
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
     
     if not user_id:
         raise HTTPException(status_code=401, detail="User ID required")
     
+    delete_type = "hard" if permanent else "soft"
     logger.info(
-        "Soft deleting diagram",
+        f"{delete_type.capitalize()} deleting diagram",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
-        user_id=user_id
+        user_id=user_id,
+        permanent=permanent
     )
     
-    # Get diagram
-    diagram = db.query(File).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
-    ).first()
+    # For soft delete, only get non-deleted diagrams
+    # For hard delete, get deleted diagrams (from trash)
+    if permanent:
+        # Hard delete: get from trash (is_deleted=True)
+        diagram = db.query(File).filter(
+            File.id == diagram_id,
+            File.is_deleted == True
+        ).first()
+    else:
+        # Soft delete: get active diagrams (is_deleted=False)
+        diagram = db.query(File).filter(
+            File.id == diagram_id,
+            File.is_deleted == False
+        ).first()
     
     if not diagram:
         logger.warning(
-            "Diagram not found or already deleted",
+            "Diagram not found",
             correlation_id=correlation_id,
-            diagram_id=diagram_id
+            diagram_id=diagram_id,
+            permanent=permanent
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -829,28 +847,54 @@ async def delete_diagram(
         )
         raise HTTPException(status_code=403, detail="Not authorized to delete this diagram")
     
-    # Soft delete: set is_deleted=True and deleted_at timestamp
-    diagram.is_deleted = True
-    diagram.deleted_at = datetime.utcnow()
-    
-    db.commit()
-    
-    logger.info(
-        "Diagram soft deleted successfully",
-        correlation_id=correlation_id,
-        diagram_id=diagram_id,
-        user_id=user_id,
-        deleted_at=diagram.deleted_at.isoformat()
-    )
-    
-    # Update metrics
-    diagrams_updated.inc()
-    
-    return {
-        "message": "Diagram moved to trash",
-        "id": diagram_id,
-        "deleted_at": diagram.deleted_at.isoformat()
-    }
+    if permanent:
+        # Hard delete: permanently remove from database
+        # First, delete all versions
+        versions_deleted = db.query(Version).filter(Version.file_id == diagram_id).delete()
+        
+        # Then delete the diagram itself
+        db.delete(diagram)
+        db.commit()
+        
+        logger.info(
+            "Diagram permanently deleted",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            versions_deleted=versions_deleted
+        )
+        
+        # Update metrics
+        diagrams_updated.inc()
+        
+        return {
+            "message": "Diagram permanently deleted",
+            "id": diagram_id,
+            "versions_deleted": versions_deleted
+        }
+    else:
+        # Soft delete: set is_deleted=True and deleted_at timestamp
+        diagram.is_deleted = True
+        diagram.deleted_at = datetime.utcnow()
+        
+        db.commit()
+        
+        logger.info(
+            "Diagram soft deleted successfully",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            deleted_at=diagram.deleted_at.isoformat()
+        )
+        
+        # Update metrics
+        diagrams_updated.inc()
+        
+        return {
+            "message": "Diagram moved to trash",
+            "id": diagram_id,
+            "deleted_at": diagram.deleted_at.isoformat()
+        }
 
 
 @app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
