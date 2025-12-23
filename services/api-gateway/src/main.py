@@ -170,9 +170,35 @@ memory_available_bytes = Gauge(
     registry=registry
 )
 
-# Get process for memory monitoring
+# CPU monitoring metrics
+cpu_usage_percent = Gauge(
+    'api_gateway_cpu_usage_percent',
+    'Current CPU usage percentage',
+    registry=registry
+)
+
+cpu_load_average_1m = Gauge(
+    'api_gateway_cpu_load_average_1m',
+    'CPU load average (1 minute)',
+    registry=registry
+)
+
+cpu_load_average_5m = Gauge(
+    'api_gateway_cpu_load_average_5m',
+    'CPU load average (5 minutes)',
+    registry=registry
+)
+
+cpu_load_average_15m = Gauge(
+    'api_gateway_cpu_load_average_15m',
+    'CPU load average (15 minutes)',
+    registry=registry
+)
+
+# Get process for memory and CPU monitoring
 process = psutil.Process()
 baseline_memory_mb = None  # Will be set at startup
+baseline_cpu_percent = None  # Will be set at startup
 
 # Redis connection with connection pooling
 # Using connection pool with max_connections=50 for high concurrency
@@ -229,6 +255,11 @@ shutdown_state = ShutdownState()
 MEMORY_CHECK_INTERVAL_SECONDS = 60  # Check every minute
 MEMORY_WARNING_THRESHOLD_MB = 512  # Warn if memory exceeds 512MB
 MEMORY_CRITICAL_THRESHOLD_MB = 1024  # Critical if memory exceeds 1GB
+
+# CPU monitoring configuration
+CPU_CHECK_INTERVAL_SECONDS = 60  # Check every minute
+CPU_WARNING_THRESHOLD_PERCENT = 70.0  # Warn if CPU exceeds 70%
+CPU_CRITICAL_THRESHOLD_PERCENT = 90.0  # Critical if CPU exceeds 90%
 
 async def monitor_memory_usage():
     """Background task to monitor memory usage periodically."""
@@ -305,6 +336,80 @@ async def monitor_memory_usage():
             # Continue monitoring despite errors
             await asyncio.sleep(MEMORY_CHECK_INTERVAL_SECONDS)
 
+async def monitor_cpu_usage():
+    """Background task to monitor CPU usage periodically."""
+    while True:
+        try:
+            # Get current CPU usage (interval=1 to get non-zero value on first call)
+            cpu_percent = process.cpu_percent(interval=1)
+            
+            # Update Prometheus metrics
+            cpu_usage_percent.set(cpu_percent)
+            
+            # Get system load averages (Unix-like systems)
+            try:
+                load_avg = psutil.getloadavg()  # Returns (1min, 5min, 15min)
+                cpu_load_average_1m.set(load_avg[0])
+                cpu_load_average_5m.set(load_avg[1])
+                cpu_load_average_15m.set(load_avg[2])
+            except (AttributeError, OSError):
+                # getloadavg() not available on all platforms (e.g., Windows)
+                pass
+            
+            # Calculate CPU growth since baseline
+            if baseline_cpu_percent is not None:
+                cpu_growth_percent = cpu_percent - baseline_cpu_percent
+                
+                # Log CPU status
+                log_level = "info"
+                if cpu_percent > CPU_CRITICAL_THRESHOLD_PERCENT:
+                    log_level = "error"
+                elif cpu_percent > CPU_WARNING_THRESHOLD_PERCENT:
+                    log_level = "warning"
+                
+                if log_level == "error":
+                    logger.error(
+                        "CRITICAL: CPU usage is very high",
+                        current_cpu_percent=round(cpu_percent, 2),
+                        baseline_cpu_percent=round(baseline_cpu_percent, 2),
+                        cpu_growth_percent=round(cpu_growth_percent, 2),
+                        threshold_percent=CPU_CRITICAL_THRESHOLD_PERCENT,
+                        performance_bottleneck=True
+                    )
+                elif log_level == "warning":
+                    logger.warning(
+                        "CPU usage is elevated",
+                        current_cpu_percent=round(cpu_percent, 2),
+                        baseline_cpu_percent=round(baseline_cpu_percent, 2),
+                        cpu_growth_percent=round(cpu_growth_percent, 2),
+                        threshold_percent=CPU_WARNING_THRESHOLD_PERCENT,
+                        performance_warning=True
+                    )
+                else:
+                    # Only log DEBUG level for normal status to avoid spam
+                    logger.debug(
+                        "CPU usage check",
+                        current_cpu_percent=round(cpu_percent, 2),
+                        baseline_cpu_percent=round(baseline_cpu_percent, 2),
+                        cpu_growth_percent=round(cpu_growth_percent, 2)
+                    )
+            
+            # Wait before next check
+            await asyncio.sleep(CPU_CHECK_INTERVAL_SECONDS)
+            
+        except asyncio.CancelledError:
+            logger.info("CPU monitoring task cancelled")
+            break
+        except Exception as e:
+            logger.error(
+                "Error in CPU monitoring task",
+                exc=e,
+                error_type=type(e).__name__,
+                error_message=str(e)
+            )
+            # Continue monitoring despite errors
+            await asyncio.sleep(CPU_CHECK_INTERVAL_SECONDS)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
@@ -328,8 +433,28 @@ async def lifespan(app: FastAPI):
     vm = psutil.virtual_memory()
     memory_available_bytes.set(vm.available)
     
-    # Start background memory monitoring task
+    # Record baseline CPU usage (call with interval to get initial reading)
+    global baseline_cpu_percent
+    baseline_cpu_percent = process.cpu_percent(interval=1)
+    
+    logger.info(
+        "Baseline CPU usage recorded",
+        cpu_percent=round(baseline_cpu_percent, 2)
+    )
+    
+    # Update initial CPU metrics
+    cpu_usage_percent.set(baseline_cpu_percent)
+    try:
+        load_avg = psutil.getloadavg()
+        cpu_load_average_1m.set(load_avg[0])
+        cpu_load_average_5m.set(load_avg[1])
+        cpu_load_average_15m.set(load_avg[2])
+    except (AttributeError, OSError):
+        pass  # Not available on all platforms
+    
+    # Start background monitoring tasks
     memory_monitor_task = asyncio.create_task(monitor_memory_usage())
+    cpu_monitor_task = asyncio.create_task(monitor_cpu_usage())
     
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
@@ -341,8 +466,9 @@ async def lifespan(app: FastAPI):
             in_flight_requests=shutdown_state.in_flight_requests
         )
         shutdown_state.start_shutdown()
-        # Cancel memory monitoring task
+        # Cancel monitoring tasks
         memory_monitor_task.cancel()
+        cpu_monitor_task.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -358,10 +484,15 @@ async def lifespan(app: FastAPI):
         in_flight_requests=shutdown_state.in_flight_requests
     )
     
-    # Cancel memory monitoring
+    # Cancel monitoring tasks
     memory_monitor_task.cancel()
+    cpu_monitor_task.cancel()
     try:
         await memory_monitor_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await cpu_monitor_task
     except asyncio.CancelledError:
         pass
     
@@ -1092,6 +1223,134 @@ async def test_memory_garbage_collection(request: Request):
         "gc_stats": gc_stats,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.get("/test/cpu")
+async def test_cpu_usage(request: Request):
+    """Test endpoint to check current CPU usage."""
+    # Get current CPU usage (interval=1 for accurate reading)
+    cpu_percent = process.cpu_percent(interval=1)
+    
+    # Get system-wide CPU info
+    system_cpu_percent = psutil.cpu_percent(interval=1, percpu=False)
+    cpu_count_logical = psutil.cpu_count(logical=True)
+    cpu_count_physical = psutil.cpu_count(logical=False)
+    
+    cpu_data = {
+        "process_cpu_percent": round(cpu_percent, 2),
+        "baseline_cpu_percent": round(baseline_cpu_percent, 2) if baseline_cpu_percent is not None else None,
+        "cpu_growth_percent": round(cpu_percent - baseline_cpu_percent, 2) if baseline_cpu_percent is not None else None,
+        "system_cpu_percent": round(system_cpu_percent, 2),
+        "cpu_count_logical": cpu_count_logical,
+        "cpu_count_physical": cpu_count_physical,
+        "warning_threshold_percent": CPU_WARNING_THRESHOLD_PERCENT,
+        "critical_threshold_percent": CPU_CRITICAL_THRESHOLD_PERCENT,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Try to get load averages (Unix-like systems only)
+    try:
+        load_avg = psutil.getloadavg()
+        cpu_data["load_average_1m"] = round(load_avg[0], 2)
+        cpu_data["load_average_5m"] = round(load_avg[1], 2)
+        cpu_data["load_average_15m"] = round(load_avg[2], 2)
+    except (AttributeError, OSError):
+        cpu_data["load_average_note"] = "Load averages not available on this platform"
+    
+    return cpu_data
+
+
+@app.get("/test/cpu/stress")
+async def test_cpu_stress(request: Request, duration_seconds: int = 5, intensity: int = 1):
+    """Test endpoint to stress CPU and verify monitoring.
+    
+    Args:
+        duration_seconds: How long to stress CPU (default: 5 seconds, max: 30)
+        intensity: CPU stress intensity level 1-10 (default: 1)
+    """
+    correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+    
+    # Limit duration and intensity for safety
+    duration_seconds = min(duration_seconds, 30)
+    intensity = max(1, min(intensity, 10))
+    
+    try:
+        # Get CPU before stress
+        cpu_before = process.cpu_percent(interval=0.1)
+        
+        # CPU-intensive operation: calculate prime numbers
+        def stress_cpu(target_duration: float, workload: int):
+            """Perform CPU-intensive calculations."""
+            start_time = time.time()
+            count = 0
+            
+            # Adjust workload based on intensity
+            max_number = 10000 * workload
+            
+            while time.time() - start_time < target_duration:
+                # Find prime numbers (CPU-intensive)
+                for num in range(2, max_number):
+                    is_prime = True
+                    for i in range(2, int(num ** 0.5) + 1):
+                        if num % i == 0:
+                            is_prime = False
+                            break
+                    if is_prime:
+                        count += 1
+                
+                # Small sleep to allow other tasks
+                time.sleep(0.01)
+            
+            return count
+        
+        # Run stress test
+        logger.info(
+            "Starting CPU stress test",
+            correlation_id=correlation_id,
+            duration_seconds=duration_seconds,
+            intensity=intensity
+        )
+        
+        primes_count = stress_cpu(duration_seconds, intensity)
+        
+        # Get CPU after stress
+        cpu_after = process.cpu_percent(interval=0.1)
+        
+        logger.info(
+            "CPU stress test completed",
+            correlation_id=correlation_id,
+            duration_seconds=duration_seconds,
+            intensity=intensity,
+            cpu_before=round(cpu_before, 2),
+            cpu_after=round(cpu_after, 2),
+            primes_calculated=primes_count
+        )
+        
+        return {
+            "message": "CPU stress test completed",
+            "correlation_id": correlation_id,
+            "duration_seconds": duration_seconds,
+            "intensity": intensity,
+            "cpu_before_percent": round(cpu_before, 2),
+            "cpu_after_percent": round(cpu_after, 2),
+            "cpu_increase_percent": round(cpu_after - cpu_before, 2),
+            "primes_calculated": primes_count,
+            "note": "Check logs for CPU monitoring warnings if CPU > 70%",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.exception(
+            "Error in CPU stress test",
+            exc=e,
+            correlation_id=correlation_id,
+            duration_seconds=duration_seconds,
+            intensity=intensity
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error: {str(e)}"
+        )
 
 
 @app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
