@@ -970,6 +970,120 @@ async def restore_diagram(
     }
 
 
+@app.post("/{diagram_id}/duplicate")
+async def duplicate_diagram(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Duplicate a diagram with a new UUID and fresh version history.
+    
+    Args:
+        diagram_id: ID of the diagram to duplicate
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Duplicating diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get original diagram (must be active, not deleted)
+    original = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not original:
+        logger.warning(
+            "Diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization (user must have access to original)
+    if original.owner_id != user_id:
+        logger.warning(
+            "Unauthorized duplicate attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=original.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Not authorized to duplicate this diagram")
+    
+    # Create duplicate with new UUID
+    import uuid
+    duplicate_id = str(uuid.uuid4())
+    
+    # Append " (Copy)" to title if not already there
+    duplicate_title = original.title
+    if not duplicate_title.endswith(" (Copy)"):
+        duplicate_title = f"{duplicate_title} (Copy)"
+    
+    # Create new diagram
+    duplicate = File(
+        id=duplicate_id,
+        title=duplicate_title,
+        file_type=original.file_type,
+        canvas_data=original.canvas_data,  # Copy canvas data exactly
+        note_content=original.note_content,  # Copy note content exactly
+        owner_id=user_id,
+        team_id=original.team_id,
+        folder_id=original.folder_id,
+        is_deleted=False,
+        current_version=1,  # Fresh version history
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    
+    db.add(duplicate)
+    
+    # Create initial version for duplicate
+    initial_version = Version(
+        id=str(uuid.uuid4()),
+        file_id=duplicate_id,
+        version_number=1,
+        canvas_data=original.canvas_data,
+        note_content=original.note_content,
+        created_by=user_id,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(initial_version)
+    db.commit()
+    db.refresh(duplicate)
+    
+    logger.info(
+        "Diagram duplicated successfully",
+        correlation_id=correlation_id,
+        original_id=diagram_id,
+        duplicate_id=duplicate_id,
+        user_id=user_id
+    )
+    
+    # Update metrics
+    diagrams_created.inc()
+    
+    return {
+        "message": "Diagram duplicated successfully",
+        "original_id": diagram_id,
+        "duplicate_id": duplicate_id,
+        "title": duplicate.title,
+        "file_type": duplicate.file_type,
+        "version": duplicate.current_version,
+        "created_at": duplicate.created_at.isoformat(),
+        "updated_at": duplicate.updated_at.isoformat()
+    }
+
+
 @app.get("/{diagram_id}/versions", response_model=list[VersionResponse])
 async def get_versions(
     diagram_id: str,
