@@ -1,7 +1,9 @@
 """Diagram Service - Diagram CRUD and storage."""
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 import os
 import json
 import logging
@@ -10,9 +12,14 @@ import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
+from sqlalchemy.orm import Session
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
+
+# Import database and models
+from .database import get_db
+from .models import File, User
 
 load_dotenv()
 
@@ -329,6 +336,121 @@ async def list_diagrams(request: Request):
         "total": 0,
         "message": "Diagram list endpoint - authentication verified"
     }
+
+
+# Pydantic models for request/response
+class CreateDiagramRequest(BaseModel):
+    """Request model for creating a diagram."""
+    title: str
+    file_type: str = "canvas"  # canvas, note, mixed
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    folder_id: Optional[str] = None
+
+
+class DiagramResponse(BaseModel):
+    """Response model for diagram."""
+    id: str
+    title: str
+    file_type: str
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+    owner_id: str
+    folder_id: Optional[str] = None
+    is_starred: bool
+    is_deleted: bool
+    view_count: int
+    current_version: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@app.post("/", response_model=DiagramResponse)
+async def create_diagram(
+    request: Request,
+    diagram: CreateDiagramRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new diagram."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating diagram",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        title=diagram.title,
+        file_type=diagram.file_type
+    )
+    
+    # Create new diagram
+    new_diagram = File(
+        title=diagram.title,
+        owner_id=user_id,
+        file_type=diagram.file_type,
+        canvas_data=diagram.canvas_data,
+        note_content=diagram.note_content,
+        folder_id=diagram.folder_id
+    )
+    
+    db.add(new_diagram)
+    db.commit()
+    db.refresh(new_diagram)
+    
+    # Update metrics
+    diagrams_created.inc()
+    
+    logger.info(
+        "Diagram created successfully",
+        correlation_id=correlation_id,
+        diagram_id=new_diagram.id,
+        user_id=user_id
+    )
+    
+    return new_diagram
+
+
+@app.get("/{diagram_id}", response_model=DiagramResponse)
+async def get_diagram(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get a diagram by ID."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    logger.info(
+        "Fetching diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Query diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    logger.info(
+        "Diagram fetched successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id
+    )
+    
+    return diagram
 
 
 if __name__ == "__main__":
