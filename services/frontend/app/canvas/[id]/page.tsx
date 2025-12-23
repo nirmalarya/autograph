@@ -122,6 +122,26 @@ export default function CanvasEditorPage() {
     router.push('/dashboard');
   };
 
+  // Add Ctrl+S / Cmd+S keyboard shortcut for manual save
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check for Ctrl+S (Windows/Linux) or Cmd+S (Mac)
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault(); // Prevent browser's default save dialog
+        
+        const editor = (window as any).tldrawEditor;
+        if (editor && !saving) {
+          handleSave(editor);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleSave, saving]);
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-50">

@@ -43,13 +43,13 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
           }
         }
       }}
-      // Auto-save every 30 seconds
+      // Auto-save every 5 minutes
       onChange={(editor) => {
         if (onSave && !(window as any).autoSaveTimer) {
           (window as any).autoSaveTimer = setTimeout(() => {
             onSave(editor);
             (window as any).autoSaveTimer = null;
-          }, 30000);
+          }, 300000); // 5 minutes = 300,000 milliseconds
         }
       }}
     />
