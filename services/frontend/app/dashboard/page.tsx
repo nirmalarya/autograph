@@ -10,6 +10,7 @@ interface Diagram {
   created_at: string;
   updated_at: string;
   current_version: number;
+  version_count?: number;
   thumbnail_url?: string;
   owner_email?: string;
   size_bytes?: number;
@@ -727,7 +728,7 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <div className="text-sm text-gray-600 space-y-1">
-                          <p>Version: {diagram.current_version}</p>
+                          <p>Version: {diagram.current_version} ({diagram.version_count || 1} total)</p>
                           <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
                           <p>Size: {formatBytes(diagram.size_bytes)}</p>
                           <p>Exports: {diagram.export_count || 0}</p>
@@ -772,6 +773,9 @@ export default function DashboardPage() {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Version
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Versions
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Size
@@ -857,6 +861,12 @@ export default function DashboardPage() {
                           className="px-6 py-4 whitespace-nowrap cursor-pointer"
                         >
                           <div className="text-sm text-gray-600">v{diagram.current_version}</div>
+                        </td>
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
+                          <div className="text-sm text-gray-600">{diagram.version_count || 1}</div>
                         </td>
                         <td 
                           onClick={() => handleDiagramClick(diagram)}

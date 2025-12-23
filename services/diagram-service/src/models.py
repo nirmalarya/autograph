@@ -144,6 +144,7 @@ class File(Base):
     
     # Version control
     current_version = Column(Integer, default=1)
+    version_count = Column(Integer, default=1)  # Track total number of versions
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -669,6 +669,7 @@ class DiagramResponse(BaseModel):
     collaborator_count: int = 1  # Number of collaborators (owner + shared users)
     comment_count: int = 0  # Number of comments on diagram
     current_version: int
+    version_count: int = 1  # Total number of versions
     last_edited_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -789,8 +790,9 @@ def create_version(db: Session, file: File, description: Optional[str] = None, c
     
     db.add(new_version)
     
-    # Update file's current_version
+    # Update file's current_version and version_count
     file.current_version = next_version_number
+    file.version_count = next_version_number
     
     return new_version
 
