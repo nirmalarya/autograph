@@ -401,12 +401,20 @@ export default function DashboardPage() {
               {total} diagram{total !== 1 ? 's' : ''} total
             </p>
           </div>
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
-          >
-            + Create Diagram
-          </button>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => router.push('/ai-generate')}
+              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-md font-medium hover:from-purple-700 hover:to-blue-700 transition shadow-sm"
+            >
+              ✨ AI Generate
+            </button>
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+            >
+              + Create Diagram
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
