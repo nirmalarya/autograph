@@ -19,6 +19,14 @@ from .refinement import (
     RefinementHistory
 )
 from .templates import DiagramTemplateLibrary, DiagramDomain
+from .analytics import (
+    get_analytics,
+    GenerationAnalytics,
+    GENERATION_PRESETS,
+    PROMPT_TEMPLATES,
+    get_prompt_template,
+    PROVIDER_PRICING,
+)
 
 load_dotenv()
 
@@ -564,6 +572,462 @@ async def detect_domain(prompt: str):
             status_code=500,
             detail=f"Failed to detect domain: {str(e)}"
         )
+
+
+# =============================================================================
+# Feature #341-350: AI Generation Analytics and Management
+# =============================================================================
+
+
+class GenerationSettingsRequest(BaseModel):
+    """Request to generate with custom settings."""
+    prompt: str
+    diagram_type: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    temperature: float = Field(0.7, ge=0.0, le=2.0, description="Temperature (0-2)")
+    max_tokens: int = Field(2000, ge=100, le=4000, description="Max tokens")
+    preset: Optional[str] = Field(None, description="Use preset (creative, balanced, precise, concise, detailed)")
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class RegenerateRequest(BaseModel):
+    """Request to regenerate from a previous generation."""
+    generation_id: str
+    user_id: Optional[str] = None
+
+
+class CostOptimizationRequest(BaseModel):
+    """Request for cost-optimized generation."""
+    prompt: str
+    diagram_type: Optional[str] = None
+    optimize_for: str = Field("balance", description="balance, cost, quality, or speed")
+
+
+@app.post("/api/ai/generate-with-settings")
+async def generate_with_settings(request: GenerationSettingsRequest):
+    """
+    Feature #348-349: Generate diagram with custom temperature and max_tokens.
+    
+    Supports presets: creative, balanced, precise, concise, detailed
+    """
+    try:
+        analytics = get_analytics()
+        
+        # Apply preset if specified
+        temperature = request.temperature
+        max_tokens = request.max_tokens
+        
+        if request.preset and request.preset in GENERATION_PRESETS:
+            preset = GENERATION_PRESETS[request.preset]
+            temperature = preset["temperature"]
+            max_tokens = preset["max_tokens"]
+        
+        # Get provider
+        provider_name = request.provider or "bayer_mga"
+        model_name = request.model
+        
+        factory = AIProviderFactory()
+        provider = factory.get_provider(provider_name)
+        
+        if not model_name:
+            model_name = provider.get_default_model()
+        
+        # Start tracking
+        import time
+        start_time = time.time()
+        
+        record = analytics.start_generation(
+            prompt=request.prompt,
+            diagram_type=request.diagram_type or "architecture",
+            provider=provider_name,
+            model=model_name,
+            user_id=request.user_id,
+            session_id=request.session_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        
+        # Generate
+        result = await provider.generate_diagram(
+            prompt=request.prompt,
+            diagram_type=DiagramType(request.diagram_type) if request.diagram_type else None,
+            model=model_name
+        )
+        
+        generation_time = time.time() - start_time
+        
+        # Validate quality
+        validator = QualityValidator()
+        quality_report = validator.validate_diagram(result["mermaid_code"])
+        
+        # Complete tracking
+        analytics.complete_generation(
+            record=record,
+            mermaid_code=result["mermaid_code"],
+            tokens_used=result.get("tokens_used", 0),
+            generation_time=generation_time,
+            quality_score=quality_report.overall_score,
+            quality_details={
+                "has_overlaps": quality_report.has_overlaps,
+                "min_spacing": quality_report.min_spacing,
+                "alignment_score": quality_report.alignment_score,
+                "readability_score": quality_report.readability_score,
+            }
+        )
+        
+        return {
+            "generation_id": record.generation_id,
+            "mermaid_code": result["mermaid_code"],
+            "diagram_type": result.get("diagram_type", "unknown"),
+            "explanation": result.get("explanation", ""),
+            "provider": provider_name,
+            "model": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "preset_used": request.preset,
+            "tokens_used": result.get("tokens_used", 0),
+            "generation_time": generation_time,
+            "quality_score": quality_report.overall_score,
+            "cost_estimate": record.cost_estimate.cost_usd if record.cost_estimate else 0.0,
+        }
+        
+    except Exception as e:
+        logger.error(f"Generation with settings failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate: {str(e)}"
+        )
+
+
+@app.get("/api/ai/generation-presets")
+async def get_generation_presets():
+    """
+    Feature #348: Get available generation presets.
+    """
+    return {
+        "presets": GENERATION_PRESETS
+    }
+
+
+@app.get("/api/ai/generation-history")
+async def get_generation_history(
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """
+    Feature #346: Get generation history with pagination.
+    """
+    try:
+        analytics = get_analytics()
+        history = analytics.get_generation_history(
+            user_id=user_id,
+            session_id=session_id,
+            limit=limit,
+            offset=offset,
+        )
+        
+        return {
+            "generations": history,
+            "count": len(history),
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get history: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get history: {str(e)}"
+        )
+
+
+@app.get("/api/ai/generation/{generation_id}")
+async def get_generation(generation_id: str):
+    """
+    Feature #346: Get specific generation by ID.
+    """
+    try:
+        analytics = get_analytics()
+        generation = analytics.get_generation_by_id(generation_id)
+        
+        if not generation:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Generation {generation_id} not found"
+            )
+        
+        return generation
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get generation: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get generation: {str(e)}"
+        )
+
+
+@app.post("/api/ai/regenerate")
+async def regenerate(request: RegenerateRequest):
+    """
+    Feature #347: Regenerate from a previous generation using same prompt.
+    """
+    try:
+        analytics = get_analytics()
+        
+        # Get previous generation
+        previous = analytics.get_generation_by_id(request.generation_id)
+        if not previous:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Generation {request.generation_id} not found"
+            )
+        
+        # Regenerate with same settings
+        factory = AIProviderFactory()
+        provider = factory.get_provider(previous["provider"])
+        
+        import time
+        start_time = time.time()
+        
+        # Start new tracking
+        record = analytics.start_generation(
+            prompt=previous["prompt"],
+            diagram_type=previous["diagram_type"],
+            provider=previous["provider"],
+            model=previous["model"],
+            user_id=request.user_id,
+            session_id=previous.get("session_id"),
+            temperature=previous.get("temperature", 0.7),
+            max_tokens=previous.get("max_tokens", 2000),
+        )
+        
+        # Generate
+        result = await provider.generate_diagram(
+            prompt=previous["prompt"],
+            diagram_type=DiagramType(previous["diagram_type"]) if previous["diagram_type"] else None,
+            model=previous["model"]
+        )
+        
+        generation_time = time.time() - start_time
+        
+        # Validate quality
+        validator = QualityValidator()
+        quality_report = validator.validate_diagram(result["mermaid_code"])
+        
+        # Complete tracking
+        analytics.complete_generation(
+            record=record,
+            mermaid_code=result["mermaid_code"],
+            tokens_used=result.get("tokens_used", 0),
+            generation_time=generation_time,
+            quality_score=quality_report.overall_score,
+            quality_details={
+                "has_overlaps": quality_report.has_overlaps,
+                "min_spacing": quality_report.min_spacing,
+                "alignment_score": quality_report.alignment_score,
+                "readability_score": quality_report.readability_score,
+            }
+        )
+        
+        return {
+            "generation_id": record.generation_id,
+            "original_generation_id": request.generation_id,
+            "mermaid_code": result["mermaid_code"],
+            "diagram_type": result.get("diagram_type", "unknown"),
+            "explanation": result.get("explanation", ""),
+            "provider": previous["provider"],
+            "model": previous["model"],
+            "tokens_used": result.get("tokens_used", 0),
+            "generation_time": generation_time,
+            "quality_score": quality_report.overall_score,
+            "cost_estimate": record.cost_estimate.cost_usd if record.cost_estimate else 0.0,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Regenerate failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to regenerate: {str(e)}"
+        )
+
+
+@app.get("/api/ai/provider-comparison")
+async def get_provider_comparison():
+    """
+    Feature #343: Compare providers by quality, cost, and performance.
+    """
+    try:
+        analytics = get_analytics()
+        comparison = analytics.get_provider_comparison()
+        
+        return {
+            "providers": comparison,
+            "count": len(comparison),
+        }
+    except Exception as e:
+        logger.error(f"Provider comparison failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compare providers: {str(e)}"
+        )
+
+
+@app.post("/api/ai/suggest-provider")
+async def suggest_provider(request: CostOptimizationRequest):
+    """
+    Feature #344-345: Suggest best provider/model based on optimization criteria.
+    
+    optimize_for options:
+    - balance: Best overall (default)
+    - cost: Cheapest option
+    - quality: Highest quality
+    - speed: Fastest generation
+    """
+    try:
+        analytics = get_analytics()
+        
+        provider, model, reason = analytics.suggest_best_provider(
+            prompt=request.prompt,
+            diagram_type=request.diagram_type or "architecture",
+            optimize_for=request.optimize_for,
+        )
+        
+        # Get pricing info
+        pricing = PROVIDER_PRICING.get(provider, {}).get(model, {})
+        
+        return {
+            "recommended_provider": provider,
+            "recommended_model": model,
+            "reason": reason,
+            "optimize_for": request.optimize_for,
+            "pricing": {
+                "prompt_cost_per_1k": pricing.get("prompt", 0.01),
+                "completion_cost_per_1k": pricing.get("completion", 0.03),
+            }
+        }
+    except Exception as e:
+        logger.error(f"Provider suggestion failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to suggest provider: {str(e)}"
+        )
+
+
+@app.get("/api/ai/usage-summary")
+async def get_usage_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """
+    Feature #341-342: Get usage summary with token and cost totals.
+    """
+    try:
+        analytics = get_analytics()
+        
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+        
+        summary = analytics.get_usage_summary(
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+        
+        return summary
+    except Exception as e:
+        logger.error(f"Usage summary failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get usage summary: {str(e)}"
+        )
+
+
+@app.get("/api/ai/pricing")
+async def get_pricing():
+    """
+    Feature #342: Get pricing information for all providers and models.
+    """
+    return {
+        "pricing": PROVIDER_PRICING,
+        "currency": "USD",
+        "unit": "per 1000 tokens",
+    }
+
+
+@app.get("/api/ai/prompt-templates")
+async def get_prompt_templates():
+    """
+    Feature #350: Get available prompt templates.
+    """
+    return {
+        "templates": PROMPT_TEMPLATES,
+        "categories": list(PROMPT_TEMPLATES.keys()),
+    }
+
+
+@app.get("/api/ai/prompt-template/{category}/{template_name}")
+async def get_specific_prompt_template(
+    category: str,
+    template_name: str,
+):
+    """
+    Feature #350: Get a specific prompt template.
+    """
+    if category not in PROMPT_TEMPLATES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Category '{category}' not found"
+        )
+    
+    templates = PROMPT_TEMPLATES[category]
+    if template_name not in templates:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template '{template_name}' not found in category '{category}'"
+        )
+    
+    return {
+        "category": category,
+        "template_name": template_name,
+        "template": templates[template_name],
+    }
+
+
+@app.get("/api/ai/available-models")
+async def get_available_models():
+    """
+    Feature #344: Get all available models by provider.
+    """
+    return {
+        "providers": {
+            "bayer_mga": {
+                "models": ["gpt-4.1", "gpt-4-turbo", "gpt-3.5-turbo"],
+                "default": "gpt-4.1",
+                "description": "Bayer MGA (Primary Provider)",
+            },
+            "openai": {
+                "models": ["gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+                "default": "gpt-4-turbo",
+                "description": "OpenAI (Fallback 1)",
+            },
+            "anthropic": {
+                "models": ["claude-3-5-sonnet", "claude-3-sonnet", "claude-3-haiku"],
+                "default": "claude-3-5-sonnet",
+                "description": "Anthropic (Fallback 2)",
+            },
+            "gemini": {
+                "models": ["gemini-1.5-pro", "gemini-pro"],
+                "default": "gemini-pro",
+                "description": "Google Gemini (Fallback 3)",
+            },
+        }
+    }
 
 
 if __name__ == "__main__":
