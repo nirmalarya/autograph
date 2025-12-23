@@ -25,6 +25,10 @@ from .database import get_db
 from .models import User, RefreshToken, PasswordResetToken, AuditLog
 import redis
 import secrets
+import pyotp
+import qrcode
+import io
+import base64
 
 load_dotenv()
 
@@ -1237,9 +1241,43 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
             detail="User account is inactive"
         )
     
-    # Reset rate limit on successful login
+    # Reset rate limit on successful password authentication
     reset_rate_limit(client_ip)
     
+    # Check if MFA is enabled for this user
+    if user.mfa_enabled and user.mfa_secret:
+        # MFA is enabled - don't create tokens yet
+        # User must verify MFA code via /mfa/verify endpoint
+        logger.info(
+            "Login requires MFA verification",
+            user_id=user.id,
+            email=user.email
+        )
+        
+        # Log login attempt (MFA required)
+        create_audit_log(
+            db=db,
+            action="login_mfa_required",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={
+                "email": user.email,
+                "remember_me": user_data.remember_me
+            }
+        )
+        
+        # Return a special response indicating MFA is required
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "mfa_required": True,
+                "email": user.email,
+                "message": "MFA verification required. Please provide your authenticator code."
+            }
+        )
+    
+    # MFA not enabled - proceed with normal login
     # Update last login
     user.last_login_at = datetime.utcnow()
     db.commit()
@@ -1677,6 +1715,24 @@ class PasswordResetConfirm(BaseModel):
         return v
 
 
+class MFASetupResponse(BaseModel):
+    """Response model for MFA setup."""
+    secret: str
+    qr_code: str  # Base64-encoded QR code image
+    provisioning_uri: str
+
+
+class MFAEnableRequest(BaseModel):
+    """Request model for enabling MFA."""
+    code: str  # 6-digit TOTP code
+
+
+class MFAVerifyRequest(BaseModel):
+    """Request model for verifying MFA during login."""
+    email: EmailStr
+    code: str  # 6-digit TOTP code
+
+
 @app.post("/password-reset/request")
 async def request_password_reset(
     request_data: PasswordResetRequest,
@@ -1937,6 +1993,253 @@ async def confirm_password_reset(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password"
+        )
+
+
+@app.post("/mfa/setup", response_model=MFASetupResponse)
+async def setup_mfa(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate MFA secret and QR code for user to scan with authenticator app.
+    
+    This endpoint generates a new TOTP secret but does NOT enable MFA yet.
+    User must verify the code with /mfa/enable to actually enable MFA.
+    """
+    try:
+        # Generate a new TOTP secret
+        secret = pyotp.random_base32()
+        
+        # Create provisioning URI for QR code
+        # Format: otpauth://totp/AutoGraph:user@example.com?secret=SECRET&issuer=AutoGraph
+        totp = pyotp.TOTP(secret)
+        provisioning_uri = totp.provisioning_uri(
+            name=current_user.email,
+            issuer_name="AutoGraph v3"
+        )
+        
+        # Generate QR code
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(provisioning_uri)
+        qr.make(fit=True)
+        
+        # Convert QR code to base64-encoded PNG
+        img = qr.make_image(fill_color="black", back_color="white")
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        qr_code_base64 = base64.b64encode(buffer.getvalue()).decode()
+        
+        # Store the secret temporarily (will be saved permanently when user enables MFA)
+        # For now, we'll store it in the user record but not enable MFA yet
+        current_user.mfa_secret = secret
+        db.commit()
+        
+        logger.info(
+            "MFA setup initiated",
+            user_id=current_user.id,
+            email=current_user.email
+        )
+        
+        return {
+            "secret": secret,
+            "qr_code": qr_code_base64,
+            "provisioning_uri": provisioning_uri
+        }
+        
+    except Exception as e:
+        logger.error(
+            "Error during MFA setup",
+            user_id=current_user.id,
+            error=str(e)
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to setup MFA"
+        )
+
+
+@app.post("/mfa/enable")
+async def enable_mfa(
+    request_data: MFAEnableRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Enable MFA for user after verifying TOTP code.
+    
+    User must first call /mfa/setup to get the secret and QR code,
+    then scan the QR code with their authenticator app,
+    then call this endpoint with the 6-digit code from the app.
+    """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Check if user has a secret (from /mfa/setup)
+        if not current_user.mfa_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MFA not set up. Please call /mfa/setup first."
+            )
+        
+        # Verify the TOTP code
+        totp = pyotp.TOTP(current_user.mfa_secret)
+        if not totp.verify(request_data.code, valid_window=1):
+            # Log failed MFA enable attempt
+            create_audit_log(
+                db=db,
+                action="mfa_enable_failed",
+                user_id=current_user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": current_user.email, "reason": "invalid_code"}
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid MFA code. Please try again."
+            )
+        
+        # Enable MFA for user
+        current_user.mfa_enabled = True
+        db.commit()
+        
+        logger.info(
+            "MFA enabled successfully",
+            user_id=current_user.id,
+            email=current_user.email
+        )
+        
+        # Log successful MFA enable
+        create_audit_log(
+            db=db,
+            action="mfa_enabled",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email}
+        )
+        
+        return {
+            "message": "MFA enabled successfully",
+            "detail": "You will now need to enter a code from your authenticator app when logging in."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error enabling MFA",
+            user_id=current_user.id,
+            error=str(e)
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enable MFA"
+        )
+
+
+@app.post("/mfa/verify")
+async def verify_mfa(
+    request_data: MFAVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Verify MFA code during login.
+    
+    This endpoint is called after successful password authentication
+    when the user has MFA enabled. It verifies the TOTP code and
+    returns JWT tokens if successful.
+    """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Get user by email
+        user = db.query(User).filter(User.email == request_data.email).first()
+        if not user:
+            # Don't reveal whether user exists
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid MFA code"
+            )
+        
+        # Check if MFA is enabled
+        if not user.mfa_enabled or not user.mfa_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MFA is not enabled for this user"
+            )
+        
+        # Verify the TOTP code
+        totp = pyotp.TOTP(user.mfa_secret)
+        if not totp.verify(request_data.code, valid_window=1):
+            # Log failed MFA verification
+            create_audit_log(
+                db=db,
+                action="mfa_verify_failed",
+                user_id=user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": user.email, "reason": "invalid_code"}
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid MFA code"
+            )
+        
+        # MFA verification successful - create tokens
+        access_token = create_access_token(data={
+            "sub": user.id,
+            "email": user.email,
+            "role": user.role
+        })
+        refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
+        
+        # Create session in Redis with 24-hour TTL
+        create_session(access_token, user.id, ttl_seconds=86400)
+        
+        # Update last login timestamp
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+        
+        logger.info(
+            "MFA verification successful",
+            user_id=user.id,
+            email=user.email
+        )
+        
+        # Log successful MFA verification
+        create_audit_log(
+            db=db,
+            action="mfa_verify_success",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user.email}
+        )
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error verifying MFA",
+            error=str(e)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify MFA"
         )
 
 

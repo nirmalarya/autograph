@@ -34,6 +34,10 @@ class User(Base):
     sso_provider = Column(String(50))  # microsoft, okta, onelogin
     sso_id = Column(String(255))
     
+    # MFA fields
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String(255))  # Base32-encoded TOTP secret
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
