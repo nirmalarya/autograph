@@ -1,0 +1,100 @@
+Traceback (most recent call last):
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 419, in main
+    results.append(("Rate Limiting", test_rate_limiting()))
+                                     ~~~~~~~~~~~~~~~~~~^^
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 140, in test_rate_limiting
+    count, ttl = check_redis_rate_limit(test_ip)
+                 ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 100, in check_redis_rate_limit
+    import redis
+ModuleNotFoundError: No module named 'redis'
+Traceback (most recent call last):
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 427, in main
+    results.append(("Audit Logging", test_audit_logging()))
+                                     ~~~~~~~~~~~~~~~~~~^^
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 196, in test_audit_logging
+    initial_logs = get_audit_logs()
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 78, in get_audit_logs
+    conn = psycopg2.connect(
+        host=POSTGRES_HOST,
+    ...<3 lines>...
+        password=POSTGRES_PASSWORD
+    )
+  File "/opt/homebrew/lib/python3.14/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: could not initiate GSSAPI security context: Unspecified GSS failure.  Minor code may provide more information: Ticket expired
+connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+
+Traceback (most recent call last):
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 435, in main
+    results.append(("Rate Limiting by IP", test_rate_limit_by_ip()))
+                                           ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 354, in test_rate_limit_by_ip
+    count1, ttl1 = check_redis_rate_limit(ip1)
+                   ~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/Users/nirmalarya/Workspace/auto-harness/cursor-autonomous-coding/autograph-v3/test_rate_limiting_audit.py", line 100, in check_redis_rate_limit
+    import redis
+ModuleNotFoundError: No module named 'redis'
+
+================================================================================
+AUTOGRAPH V3 - RATE LIMITING AND AUDIT LOGGING TESTS
+================================================================================
+Testing Features #87-89
+Auth Service: http://localhost:8085
+Test started at: 2025-12-23T02:06:31.664296
+✓ Auth service is healthy
+
+================================================================================
+TEST 1: Login Rate Limiting (Features #87-88)
+================================================================================
+
+Step 1: Registering test user: rate_test_1766473591@example.com
+✓ User registered successfully
+
+Step 2: Attempting 5 failed login attempts (should all succeed)
+✓ Attempt 1: Correctly rejected with 401
+✓ Attempt 2: Correctly rejected with 401
+✓ Attempt 3: Correctly rejected with 401
+✓ Attempt 4: Correctly rejected with 401
+✓ Attempt 5: Correctly rejected with 401
+✓ All 5 failed attempts were processed
+
+Step 3: Checking Redis rate limit counter
+✗ Test 1 failed with exception: No module named 'redis'
+
+================================================================================
+TEST 2: Audit Logging (Feature #89)
+================================================================================
+
+Step 1: Getting initial audit log count
+✗ Test 2 failed with exception: connection to server at "localhost" (::1), port 5432 failed: could not initiate GSSAPI security context: Unspecified GSS failure.  Minor code may provide more information: Ticket expired
+connection to server at "localhost" (::1), port 5432 failed: FATAL:  password authentication failed for user "postgres"
+
+
+================================================================================
+TEST 3: Rate Limiting by IP Address (Feature #88)
+================================================================================
+
+Step 1: Registering test user: ip_test_1766473596@example.com
+✓ User registered successfully
+
+Step 2: Making 5 failed attempts from IP1: 10.2.0.111
+✓ Attempt 1 from IP1: Rejected (401)
+✓ Attempt 2 from IP1: Rejected (401)
+✓ Attempt 3 from IP1: Rejected (401)
+✓ Attempt 4 from IP1: Rejected (401)
+✓ Attempt 5 from IP1: Rejected (401)
+
+Step 3: Checking rate limit for IP1
+✗ Test 3 failed with exception: No module named 'redis'
+
+================================================================================
+TEST SUMMARY
+================================================================================
+✗ FAIL: Rate Limiting
+✗ FAIL: Audit Logging
+✗ FAIL: Rate Limiting by IP
+
+Total: 0/3 tests passed (0.0%)
+
+❌ 3 test(s) failed. Please review and fix issues.

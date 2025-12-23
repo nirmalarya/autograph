@@ -22,7 +22,7 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User, RefreshToken, PasswordResetToken
+from .models import User, RefreshToken, PasswordResetToken, AuditLog
 import redis
 import secrets
 
@@ -564,6 +564,160 @@ def is_user_blacklisted(user_id: str) -> bool:
     return redis_client.exists(f"user_blacklist:{user_id}") > 0
 
 
+# Rate Limiting Functions
+def check_rate_limit(ip_address: str, max_attempts: int = 5, window_seconds: int = 900) -> tuple[bool, int]:
+    """Check if IP address has exceeded rate limit for login attempts.
+    
+    Args:
+        ip_address: The IP address to check
+        max_attempts: Maximum number of attempts allowed (default: 5)
+        window_seconds: Time window in seconds (default: 900 = 15 minutes)
+        
+    Returns:
+        Tuple of (is_allowed, attempts_remaining)
+    """
+    key = f"rate_limit:login:{ip_address}"
+    
+    # Get current attempt count
+    current_attempts = redis_client.get(key)
+    
+    if current_attempts is None:
+        # First attempt
+        return (True, max_attempts - 1)
+    
+    current_attempts = int(current_attempts)
+    
+    if current_attempts >= max_attempts:
+        # Rate limit exceeded
+        ttl = redis_client.ttl(key)
+        return (False, 0)
+    
+    # Still within limit
+    return (True, max_attempts - current_attempts - 1)
+
+
+def record_failed_login(ip_address: str, window_seconds: int = 900) -> int:
+    """Record a failed login attempt for an IP address.
+    
+    Args:
+        ip_address: The IP address
+        window_seconds: Time window in seconds (default: 900 = 15 minutes)
+        
+    Returns:
+        Current number of failed attempts
+    """
+    key = f"rate_limit:login:{ip_address}"
+    
+    # Increment counter
+    current = redis_client.incr(key)
+    
+    # Set expiry on first attempt
+    if current == 1:
+        redis_client.expire(key, window_seconds)
+    
+    return current
+
+
+def reset_rate_limit(ip_address: str) -> None:
+    """Reset rate limit for an IP address (after successful login).
+    
+    Args:
+        ip_address: The IP address
+    """
+    key = f"rate_limit:login:{ip_address}"
+    redis_client.delete(key)
+
+
+def get_rate_limit_ttl(ip_address: str) -> int:
+    """Get remaining TTL for rate limit.
+    
+    Args:
+        ip_address: The IP address
+        
+    Returns:
+        Remaining seconds until rate limit resets, or -1 if not rate limited
+    """
+    key = f"rate_limit:login:{ip_address}"
+    return redis_client.ttl(key)
+
+
+# Audit Logging Functions
+def create_audit_log(
+    db: Session,
+    action: str,
+    user_id: str = None,
+    resource_type: str = None,
+    resource_id: str = None,
+    ip_address: str = None,
+    user_agent: str = None,
+    extra_data: dict = None
+) -> AuditLog:
+    """Create an audit log entry.
+    
+    Args:
+        db: Database session
+        action: Action performed (e.g., 'login', 'logout', 'register')
+        user_id: User ID (optional for actions like failed login)
+        resource_type: Type of resource affected (optional)
+        resource_id: ID of resource affected (optional)
+        ip_address: IP address of request
+        user_agent: User agent string
+        extra_data: Additional metadata (optional)
+        
+    Returns:
+        Created AuditLog instance
+    """
+    audit_log = AuditLog(
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        extra_data=extra_data
+    )
+    db.add(audit_log)
+    db.commit()
+    db.refresh(audit_log)
+    return audit_log
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP address from request.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        Client IP address
+    """
+    # Check for X-Forwarded-For header (proxy/load balancer)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # Take the first IP in the chain
+        return forwarded_for.split(",")[0].strip()
+    
+    # Check for X-Real-IP header
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+    
+    # Fall back to direct client IP
+    return request.client.host if request.client else "unknown"
+
+
+def get_user_agent(request: Request) -> str:
+    """Extract user agent from request.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        User agent string
+    """
+    return request.headers.get("User-Agent", "unknown")
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
@@ -818,14 +972,26 @@ async def metrics():
 
 
 @app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserRegister, db: Session = Depends(get_db)):
+async def register(user_data: UserRegister, request: Request, db: Session = Depends(get_db)):
     """Register a new user."""
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
     try:
         print(f"DEBUG: Registration request for email: {user_data.email}")
         
         # Check if user already exists
         existing_user = get_user_by_email(db, user_data.email)
         if existing_user:
+            # Log failed registration
+            create_audit_log(
+                db=db,
+                action="registration_failed",
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": user_data.email, "reason": "email_already_exists"}
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
@@ -848,6 +1014,17 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
         db.refresh(new_user)
         
         print(f"DEBUG: User created successfully with ID: {new_user.id}")
+        
+        # Log successful registration
+        create_audit_log(
+            db=db,
+            action="registration_success",
+            user_id=new_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": new_user.email}
+        )
+        
         return new_user
     except HTTPException:
         raise
@@ -856,6 +1033,14 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         db.rollback()
+        # Log registration error
+        create_audit_log(
+            db=db,
+            action="registration_error",
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "error": str(e)}
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
@@ -863,11 +1048,42 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 
 @app.post("/login", response_model=Token)
-async def login(user_data: UserLogin, db: Session = Depends(get_db)):
+async def login(user_data: UserLogin, request: Request, db: Session = Depends(get_db)):
     """Login and get JWT tokens."""
+    # Get client IP and user agent for rate limiting and audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    # Check rate limit
+    is_allowed, attempts_remaining = check_rate_limit(client_ip)
+    if not is_allowed:
+        ttl = get_rate_limit_ttl(client_ip)
+        # Log failed attempt due to rate limit
+        create_audit_log(
+            db=db,
+            action="login_rate_limited",
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "reason": "rate_limit_exceeded"}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts. Please try again in {ttl} seconds."
+        )
+    
     # Verify user exists
     user = get_user_by_email(db, user_data.email)
     if not user:
+        # Record failed login attempt
+        record_failed_login(client_ip)
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "reason": "user_not_found"}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -875,6 +1091,17 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     
     # Verify password
     if not verify_password(user_data.password, user.password_hash):
+        # Record failed login attempt
+        record_failed_login(client_ip)
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "reason": "incorrect_password"}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -882,10 +1109,22 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     
     # Check if user is active
     if not user.is_active:
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "reason": "account_inactive"}
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
+    
+    # Reset rate limit on successful login
+    reset_rate_limit(client_ip)
     
     # Update last login
     user.last_login_at = datetime.utcnow()
@@ -898,6 +1137,16 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
         "role": user.role
     })
     refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
+    
+    # Log successful login
+    create_audit_log(
+        db=db,
+        action="login_success",
+        user_id=user.id,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        extra_data={"email": user.email}
+    )
     
     return {
         "access_token": access_token,
@@ -908,13 +1157,46 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
 
 @app.post("/token", response_model=Token)
 async def login_form(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     """Login with OAuth2 form (for compatibility)."""
+    # Get client IP and user agent for rate limiting and audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    # Check rate limit
+    is_allowed, attempts_remaining = check_rate_limit(client_ip)
+    if not is_allowed:
+        ttl = get_rate_limit_ttl(client_ip)
+        # Log failed attempt due to rate limit
+        create_audit_log(
+            db=db,
+            action="login_rate_limited",
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": form_data.username, "reason": "rate_limit_exceeded"}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts. Please try again in {ttl} seconds.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     # Verify user exists
     user = get_user_by_email(db, form_data.username)  # username is email
     if not user:
+        # Record failed login attempt
+        record_failed_login(client_ip)
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": form_data.username, "reason": "user_not_found"}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -923,6 +1205,17 @@ async def login_form(
     
     # Verify password
     if not verify_password(form_data.password, user.password_hash):
+        # Record failed login attempt
+        record_failed_login(client_ip)
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": form_data.username, "reason": "incorrect_password"}
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -931,10 +1224,22 @@ async def login_form(
     
     # Check if user is active
     if not user.is_active:
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": form_data.username, "reason": "account_inactive"}
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
+    
+    # Reset rate limit on successful login
+    reset_rate_limit(client_ip)
     
     # Update last login
     user.last_login_at = datetime.utcnow()
@@ -947,6 +1252,16 @@ async def login_form(
         "role": user.role
     })
     refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
+    
+    # Log successful login
+    create_audit_log(
+        db=db,
+        action="login_success",
+        user_id=user.id,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        extra_data={"email": form_data.username}
+    )
     
     return {
         "access_token": access_token,
@@ -1055,13 +1370,19 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 @app.post("/logout")
 async def logout(
+    request: Request,
     token: str = Depends(oauth2_scheme),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Logout current session by blacklisting the access token.
     
     The token will be added to Redis blacklist with TTL matching token expiry.
     """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
     try:
         # Decode token to get expiry
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -1083,12 +1404,32 @@ async def logout(
                     ttl=ttl
                 )
                 
+                # Log logout
+                create_audit_log(
+                    db=db,
+                    action="logout",
+                    user_id=current_user.id,
+                    ip_address=client_ip,
+                    user_agent=user_agent,
+                    extra_data={"email": current_user.email}
+                )
+                
                 return {
                     "message": "Successfully logged out",
                     "detail": "Access token has been invalidated"
                 }
         
         # If token already expired or no exp claim, just return success
+        # Log logout anyway
+        create_audit_log(
+            db=db,
+            action="logout",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email, "note": "token_already_expired"}
+        )
+        
         return {
             "message": "Successfully logged out",
             "detail": "Token was already expired"
@@ -1108,6 +1449,7 @@ async def logout(
 
 @app.post("/logout-all")
 async def logout_all(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1116,6 +1458,10 @@ async def logout_all(
     This will invalidate all access tokens for the user across all devices/sessions.
     Also marks all refresh tokens as revoked in the database.
     """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
     try:
         # Blacklist all user tokens in Redis (24 hours TTL to cover max token lifetime)
         blacklist_all_user_tokens(current_user.id, ttl_seconds=86400)
@@ -1135,6 +1481,16 @@ async def logout_all(
             "User logged out from all sessions",
             user_id=current_user.id,
             email=current_user.email
+        )
+        
+        # Log logout-all
+        create_audit_log(
+            db=db,
+            action="logout_all",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email}
         )
         
         return {
@@ -1183,7 +1539,8 @@ class PasswordResetConfirm(BaseModel):
 
 @app.post("/password-reset/request")
 async def request_password_reset(
-    request: PasswordResetRequest,
+    request_data: PasswordResetRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Request a password reset email.
@@ -1196,9 +1553,13 @@ async def request_password_reset(
     
     Always returns success to prevent user enumeration.
     """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
     try:
         # Find user by email
-        user = db.query(User).filter(User.email == request.email).first()
+        user = db.query(User).filter(User.email == request_data.email).first()
         
         if user:
             # Generate secure random token (32 bytes = 64 hex characters)
@@ -1232,6 +1593,16 @@ async def request_password_reset(
                 expires_at=expires_at.isoformat()
             )
             
+            # Log password reset request
+            create_audit_log(
+                db=db,
+                action="password_reset_requested",
+                user_id=user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": user.email}
+            )
+            
             # TODO: Send email with reset link
             # For now, we'll log the token (in production, this would be sent via email)
             logger.info(
@@ -1245,7 +1616,15 @@ async def request_password_reset(
             # User not found, but don't reveal this for security
             logger.info(
                 "Password reset requested for non-existent email",
-                email=request.email
+                email=request_data.email
+            )
+            # Still log the attempt
+            create_audit_log(
+                db=db,
+                action="password_reset_requested",
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": request_data.email, "note": "user_not_found"}
             )
         
         # Always return success to prevent user enumeration
@@ -1257,7 +1636,7 @@ async def request_password_reset(
     except Exception as e:
         logger.error(
             "Error during password reset request",
-            email=request.email,
+            email=request_data.email,
             error=str(e)
         )
         db.rollback()
@@ -1270,7 +1649,8 @@ async def request_password_reset(
 
 @app.post("/password-reset/confirm")
 async def confirm_password_reset(
-    request: PasswordResetConfirm,
+    request_data: PasswordResetConfirm,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Reset password using a valid reset token.
@@ -1282,13 +1662,25 @@ async def confirm_password_reset(
     4. Mark token as used
     5. Invalidate all user sessions
     """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
     try:
         # Find reset token
         reset_token = db.query(PasswordResetToken).filter(
-            PasswordResetToken.token == request.token
+            PasswordResetToken.token == request_data.token
         ).first()
         
         if not reset_token:
+            # Log failed password reset
+            create_audit_log(
+                db=db,
+                action="password_reset_failed",
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"reason": "invalid_token"}
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired reset token"
@@ -1300,6 +1692,15 @@ async def confirm_password_reset(
                 "Attempt to use already-used password reset token",
                 token_id=reset_token.id,
                 user_id=reset_token.user_id
+            )
+            # Log failed password reset
+            create_audit_log(
+                db=db,
+                action="password_reset_failed",
+                user_id=reset_token.user_id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"reason": "token_already_used"}
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1315,6 +1716,15 @@ async def confirm_password_reset(
                 user_id=reset_token.user_id,
                 expired_at=reset_token.expires_at.isoformat()
             )
+            # Log failed password reset
+            create_audit_log(
+                db=db,
+                action="password_reset_failed",
+                user_id=reset_token.user_id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"reason": "token_expired"}
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This reset token has expired. Please request a new one."
@@ -1329,7 +1739,7 @@ async def confirm_password_reset(
             )
         
         # Hash new password
-        hashed_password = pwd_context.hash(request.new_password)
+        hashed_password = pwd_context.hash(request_data.new_password)
         
         # Update user's password
         user.password_hash = hashed_password
@@ -1359,6 +1769,16 @@ async def confirm_password_reset(
             user_id=user.id,
             email=user.email,
             token_id=reset_token.id
+        )
+        
+        # Log successful password reset
+        create_audit_log(
+            db=db,
+            action="password_reset_success",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user.email}
         )
         
         return {
