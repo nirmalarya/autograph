@@ -141,6 +141,7 @@ class File(Base):
     is_deleted = Column(Boolean, default=False)  # Soft delete
     deleted_at = Column(DateTime(timezone=True))
     view_count = Column(Integer, default=0)
+    export_count = Column(Integer, default=0)  # Track number of exports
     
     # Version control
     current_version = Column(Integer, default=1)

@@ -665,6 +665,7 @@ class DiagramResponse(BaseModel):
     is_starred: bool
     is_deleted: bool
     view_count: int
+    export_count: int = 0  # Number of times diagram has been exported
     current_version: int
     last_edited_by: Optional[str] = None
     created_at: datetime
@@ -2030,6 +2031,62 @@ async def star_diagram(
         "id": diagram_id,
         "title": diagram.title,
         "is_starred": diagram.is_starred,
+        "updated_at": diagram.updated_at.isoformat()
+    }
+
+
+@app.post("/{diagram_id}/export")
+async def increment_export_count(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Increment export count for a diagram."""
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    logger.info(
+        "Incrementing export count",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get diagram (only active diagrams)
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Diagram not found or deleted",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    old_count = diagram.export_count if hasattr(diagram, 'export_count') else 0
+    diagram.export_count = old_count + 1
+    diagram.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Export count incremented successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        old_count=old_count,
+        new_count=diagram.export_count,
+        user_id=user_id
+    )
+    
+    return {
+        "message": "Export count incremented successfully",
+        "id": diagram_id,
+        "export_count": diagram.export_count,
         "updated_at": diagram.updated_at.isoformat()
     }
 
