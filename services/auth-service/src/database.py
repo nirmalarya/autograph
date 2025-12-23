@@ -1,9 +1,12 @@
 """Database configuration and session management."""
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 import sys
+import time
+import json
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -55,6 +58,72 @@ def create_database_engine():
 
 # Create engine with retry logic
 engine = create_database_engine()
+
+# Query performance monitoring
+SLOW_QUERY_THRESHOLD_MS = 100  # Log queries slower than 100ms
+
+class QueryPerformanceMonitor:
+    """Monitor database query performance and log slow queries."""
+    
+    @staticmethod
+    def log_slow_query(query_text: str, duration_ms: float, explain_plan: str = None):
+        """Log slow query with details."""
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "auth-service",
+            "level": "WARNING",
+            "message": "Slow database query detected",
+            "query_duration_ms": round(duration_ms, 2),
+            "slow_query_threshold_ms": SLOW_QUERY_THRESHOLD_MS,
+            "query": query_text[:500],  # Truncate long queries
+        }
+        
+        if explain_plan:
+            log_data["explain_plan"] = explain_plan
+        
+        print(json.dumps(log_data))
+    
+    @staticmethod
+    def get_explain_plan(connection, query_text: str) -> str:
+        """Get EXPLAIN plan for a query."""
+        try:
+            # Only get EXPLAIN for SELECT queries (not INSERT, UPDATE, DELETE during transaction)
+            if query_text.strip().upper().startswith('SELECT'):
+                result = connection.execute(text(f"EXPLAIN {query_text}"))
+                return "\n".join([row[0] for row in result])
+        except Exception as e:
+            return f"Error getting EXPLAIN plan: {str(e)}"
+        return None
+
+# SQLAlchemy event listeners for query performance monitoring
+@event.listens_for(engine, "before_cursor_execute")
+def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    """Record query start time."""
+    conn.info.setdefault("query_start_time", []).append(time.time())
+
+@event.listens_for(engine, "after_cursor_execute")
+def after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    """Log query duration and detect slow queries."""
+    # Calculate query duration
+    query_start_times = conn.info.get("query_start_time", [])
+    if query_start_times:
+        start_time = query_start_times.pop()
+        duration_ms = (time.time() - start_time) * 1000
+        
+        # Log slow queries
+        if duration_ms > SLOW_QUERY_THRESHOLD_MS:
+            # Get EXPLAIN plan for slow SELECT queries
+            explain_plan = None
+            if statement.strip().upper().startswith('SELECT'):
+                try:
+                    # Execute EXPLAIN in a new transaction to avoid affecting current one
+                    explain_result = conn.execute(text(f"EXPLAIN {statement}"))
+                    explain_plan = "\n".join([row[0] for row in explain_result])
+                except Exception:
+                    # Ignore errors getting EXPLAIN plan
+                    pass
+            
+            QueryPerformanceMonitor.log_slow_query(statement, duration_ms, explain_plan)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

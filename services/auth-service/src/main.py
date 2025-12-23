@@ -834,6 +834,126 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
         )
 
 
+@app.get("/test/slow-query")
+async def test_slow_query(delay_ms: int = 200, db: Session = Depends(get_db)):
+    """Test endpoint to trigger slow database queries for performance monitoring."""
+    correlation_id = "test-slow-query-" + str(int(time.time()))
+    
+    try:
+        logger.info(
+            "Testing slow query performance monitoring",
+            correlation_id=correlation_id,
+            delay_ms=delay_ms
+        )
+        
+        # Execute a slow query using pg_sleep
+        from sqlalchemy import text
+        query = text(f"SELECT pg_sleep({delay_ms / 1000.0}), 'slow query test' as result")
+        result = db.execute(query)
+        row = result.fetchone()
+        
+        return {
+            "message": "Slow query executed",
+            "correlation_id": correlation_id,
+            "delay_ms": delay_ms,
+            "result": row[1] if row else None,
+            "note": "Check logs for slow query warning if delay_ms > 100"
+        }
+    except Exception as e:
+        logger.exception(
+            "Error executing slow query test",
+            exc=e,
+            correlation_id=correlation_id,
+            delay_ms=delay_ms
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error: {str(e)}"
+        )
+
+
+@app.get("/test/complex-query")
+async def test_complex_query(db: Session = Depends(get_db)):
+    """Test endpoint to trigger complex query that might be slow without indexes."""
+    correlation_id = "test-complex-query-" + str(int(time.time()))
+    
+    try:
+        logger.info(
+            "Testing complex query performance",
+            correlation_id=correlation_id
+        )
+        
+        # Execute a complex query with JOIN and WHERE
+        # This query joins users and files tables
+        from sqlalchemy import text
+        query = text("""
+            SELECT u.id, u.email, u.full_name, u.created_at,
+                   COUNT(*) as file_count
+            FROM users u
+            LEFT JOIN files f ON f.created_by = u.id
+            WHERE u.created_at > NOW() - INTERVAL '30 days'
+            GROUP BY u.id, u.email, u.full_name, u.created_at
+            ORDER BY file_count DESC
+            LIMIT 10
+        """)
+        result = db.execute(query)
+        rows = result.fetchall()
+        
+        return {
+            "message": "Complex query executed",
+            "correlation_id": correlation_id,
+            "user_count": len(rows),
+            "note": "Check logs for query duration and EXPLAIN plan if slow"
+        }
+    except Exception as e:
+        logger.exception(
+            "Error executing complex query test",
+            exc=e,
+            correlation_id=correlation_id
+        )
+        # Don't fail if tables don't exist yet
+        return {
+            "message": "Complex query test failed (tables may not exist yet)",
+            "correlation_id": correlation_id,
+            "error": str(e)
+        }
+
+
+@app.get("/test/fast-query")
+async def test_fast_query(db: Session = Depends(get_db)):
+    """Test endpoint to execute fast query (should not trigger slow query logging)."""
+    correlation_id = "test-fast-query-" + str(int(time.time()))
+    
+    try:
+        logger.info(
+            "Testing fast query (no slow query warning expected)",
+            correlation_id=correlation_id
+        )
+        
+        # Execute a fast query
+        from sqlalchemy import text
+        query = text("SELECT 1 as result")
+        result = db.execute(query)
+        row = result.fetchone()
+        
+        return {
+            "message": "Fast query executed",
+            "correlation_id": correlation_id,
+            "result": row[0] if row else None,
+            "note": "This query should NOT trigger slow query warning"
+        }
+    except Exception as e:
+        logger.exception(
+            "Error executing fast query test",
+            exc=e,
+            correlation_id=correlation_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AUTH_SERVICE_PORT", "8085")))
