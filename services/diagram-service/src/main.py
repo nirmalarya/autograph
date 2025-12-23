@@ -675,8 +675,47 @@ async def update_diagram(
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
     
-    # Check authorization - user must own the diagram
-    if diagram.owner_id != user_id:
+    # Check authorization - user must own the diagram OR have edit permission via share
+    has_permission = False
+    permission_source = None
+    
+    if diagram.owner_id == user_id:
+        has_permission = True
+        permission_source = "owner"
+    else:
+        # Check if user has edit access via a share token
+        # Look for X-Share-Token header
+        share_token = request.headers.get("X-Share-Token")
+        if share_token:
+            share = db.query(Share).filter(
+                Share.token == share_token,
+                Share.file_id == diagram_id
+            ).first()
+            
+            if share and share.permission == "edit":
+                # Check if share is still valid (not expired)
+                from datetime import timezone
+                if share.expires_at is None or share.expires_at > datetime.now(timezone.utc):
+                    has_permission = True
+                    permission_source = "share_edit"
+                else:
+                    logger.warning(
+                        "Share token expired",
+                        correlation_id=correlation_id,
+                        diagram_id=diagram_id,
+                        share_token=share_token[:10] + "..."
+                    )
+            elif share and share.permission == "view":
+                logger.warning(
+                    "Attempt to edit with view-only share",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    user_id=user_id,
+                    share_token=share_token[:10] + "..."
+                )
+                raise HTTPException(status_code=403, detail="You have view-only access to this diagram")
+    
+    if not has_permission:
         logger.warning(
             "Unauthorized update attempt",
             correlation_id=correlation_id,
@@ -685,6 +724,14 @@ async def update_diagram(
             owner_id=diagram.owner_id
         )
         raise HTTPException(status_code=403, detail="You do not have permission to update this diagram")
+    
+    logger.info(
+        "Update authorized",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id,
+        permission_source=permission_source
+    )
     
     # Optimistic locking: Check if expected version matches current version
     if update_data.expected_version is not None:
