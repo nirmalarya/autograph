@@ -1,7 +1,7 @@
 """API Gateway - Routes requests to microservices."""
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -18,6 +18,10 @@ import json
 import signal
 import asyncio
 from contextlib import asynccontextmanager
+import time
+
+# Prometheus metrics
+from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 load_dotenv()
 
@@ -62,6 +66,60 @@ class StructuredLogger:
         self.log("warning", message, correlation_id, **kwargs)
 
 logger = StructuredLogger("api-gateway")
+
+# Prometheus metrics registry
+registry = CollectorRegistry()
+
+# Request metrics
+request_count = Counter(
+    'api_gateway_requests_total',
+    'Total number of requests',
+    ['method', 'path', 'status_code'],
+    registry=registry
+)
+
+request_duration = Histogram(
+    'api_gateway_request_duration_seconds',
+    'Request duration in seconds',
+    ['method', 'path'],
+    registry=registry
+)
+
+active_connections = Gauge(
+    'api_gateway_active_connections',
+    'Number of active connections',
+    registry=registry
+)
+
+# Circuit breaker metrics
+circuit_breaker_state = Gauge(
+    'api_gateway_circuit_breaker_state',
+    'Circuit breaker state (0=closed, 1=open, 2=half_open)',
+    ['service'],
+    registry=registry
+)
+
+circuit_breaker_failures = Counter(
+    'api_gateway_circuit_breaker_failures_total',
+    'Total circuit breaker failures',
+    ['service'],
+    registry=registry
+)
+
+# Redis connection pool metrics
+redis_connections = Gauge(
+    'api_gateway_redis_connections',
+    'Number of Redis connections',
+    registry=registry
+)
+
+# Rate limit metrics
+rate_limit_exceeded = Counter(
+    'api_gateway_rate_limit_exceeded_total',
+    'Total rate limit exceeded events',
+    ['key_type'],
+    registry=registry
+)
 
 # Redis connection with connection pooling
 # Using connection pool with max_connections=50 for high concurrency
@@ -186,6 +244,8 @@ JWT_ALGORITHM = "HS256"
 PUBLIC_ROUTES = [
     "/health",
     "/health/services",
+    "/health/circuit-breakers",
+    "/metrics",
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -290,6 +350,38 @@ def verify_jwt_token(token: str) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
         )
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Middleware to track request metrics."""
+    # Track active connections
+    active_connections.inc()
+    
+    # Track request start time
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        
+        # Track request duration
+        duration = time.time() - start_time
+        request_duration.labels(
+            method=request.method,
+            path=request.url.path
+        ).observe(duration)
+        
+        # Track request count
+        request_count.labels(
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code
+        ).inc()
+        
+        return response
+    finally:
+        # Always decrement active connections
+        active_connections.dec()
 
 
 @app.middleware("http")
@@ -444,6 +536,25 @@ async def health_check(request: Request):
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0"
     }
+
+
+@app.get("/metrics")
+async def metrics(request: Request):
+    """Prometheus metrics endpoint."""
+    # Update circuit breaker state metrics
+    for service_name, breaker in circuit_breakers.items():
+        # Map state to numeric value: CLOSED=0, OPEN=1, HALF_OPEN=2
+        state_value = 0
+        if breaker.state.value == "open":
+            state_value = 1
+        elif breaker.state.value == "half_open":
+            state_value = 2
+        
+        circuit_breaker_state.labels(service=service_name).set(state_value)
+    
+    # Generate Prometheus format metrics
+    metrics_output = generate_latest(registry)
+    return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health/services")

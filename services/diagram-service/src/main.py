@@ -1,6 +1,6 @@
 """Diagram Service - Diagram CRUD and storage."""
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from datetime import datetime
 import os
 import json
@@ -9,6 +9,10 @@ import signal
 import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+import time
+
+# Prometheus metrics
+from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 load_dotenv()
 
@@ -43,8 +47,69 @@ class StructuredLogger:
     
     def error(self, message: str, correlation_id: str = None, **kwargs):
         self.log("error", message, correlation_id, **kwargs)
+    
+    def warning(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("warning", message, correlation_id, **kwargs)
 
 logger = StructuredLogger("diagram-service")
+
+# Prometheus metrics registry
+registry = CollectorRegistry()
+
+# Request metrics
+request_count = Counter(
+    'diagram_service_requests_total',
+    'Total number of requests',
+    ['method', 'path', 'status_code'],
+    registry=registry
+)
+
+request_duration = Histogram(
+    'diagram_service_request_duration_seconds',
+    'Request duration in seconds',
+    ['method', 'path'],
+    registry=registry
+)
+
+active_connections = Gauge(
+    'diagram_service_active_connections',
+    'Number of active connections',
+    registry=registry
+)
+
+# Diagram-specific metrics
+diagrams_created = Counter(
+    'diagram_service_diagrams_created_total',
+    'Total diagrams created',
+    registry=registry
+)
+
+diagrams_updated = Counter(
+    'diagram_service_diagrams_updated_total',
+    'Total diagrams updated',
+    registry=registry
+)
+
+diagrams_deleted = Counter(
+    'diagram_service_diagrams_deleted_total',
+    'Total diagrams deleted',
+    registry=registry
+)
+
+# Storage metrics
+storage_operations = Counter(
+    'diagram_service_storage_operations_total',
+    'Total storage operations',
+    ['operation'],  # upload, download, delete
+    registry=registry
+)
+
+storage_operation_duration = Histogram(
+    'diagram_service_storage_operation_duration_seconds',
+    'Storage operation duration in seconds',
+    ['operation'],
+    registry=registry
+)
 
 # Graceful shutdown state
 class ShutdownState:
@@ -134,6 +199,38 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Middleware to track metrics
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Middleware to track request metrics."""
+    # Track active connections
+    active_connections.inc()
+    
+    # Track request start time
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        
+        # Track request duration
+        duration = time.time() - start_time
+        request_duration.labels(
+            method=request.method,
+            path=request.url.path
+        ).observe(duration)
+        
+        # Track request count
+        request_count.labels(
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code
+        ).inc()
+        
+        return response
+    finally:
+        # Always decrement active connections
+        active_connections.dec()
+
 # Middleware to handle graceful shutdown
 @app.middleware("http")
 async def shutdown_middleware(request: Request, call_next):
@@ -204,6 +301,14 @@ async def health_check(request: Request):
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0"
     }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    # Generate Prometheus format metrics
+    metrics_output = generate_latest(registry)
+    return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/")

@@ -1,6 +1,6 @@
 """Auth Service - User authentication and authorization."""
 from fastapi import FastAPI, Depends, HTTPException, status, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -15,6 +15,10 @@ import signal
 import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+import time
+
+# Prometheus metrics
+from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
 from .models import User
@@ -57,6 +61,67 @@ class StructuredLogger:
         self.log("warning", message, correlation_id, **kwargs)
 
 logger = StructuredLogger("auth-service")
+
+# Prometheus metrics registry
+registry = CollectorRegistry()
+
+# Request metrics
+request_count = Counter(
+    'auth_service_requests_total',
+    'Total number of requests',
+    ['method', 'path', 'status_code'],
+    registry=registry
+)
+
+request_duration = Histogram(
+    'auth_service_request_duration_seconds',
+    'Request duration in seconds',
+    ['method', 'path'],
+    registry=registry
+)
+
+active_connections = Gauge(
+    'auth_service_active_connections',
+    'Number of active connections',
+    registry=registry
+)
+
+# Authentication metrics
+login_attempts = Counter(
+    'auth_service_login_attempts_total',
+    'Total login attempts',
+    ['result'],  # success or failure
+    registry=registry
+)
+
+registration_attempts = Counter(
+    'auth_service_registration_attempts_total',
+    'Total registration attempts',
+    ['result'],  # success or failure
+    registry=registry
+)
+
+token_issued = Counter(
+    'auth_service_tokens_issued_total',
+    'Total tokens issued',
+    ['token_type'],  # access or refresh
+    registry=registry
+)
+
+# Database metrics
+database_queries = Counter(
+    'auth_service_database_queries_total',
+    'Total database queries',
+    ['operation'],  # select, insert, update, delete
+    registry=registry
+)
+
+database_query_duration = Histogram(
+    'auth_service_database_query_duration_seconds',
+    'Database query duration in seconds',
+    ['operation'],
+    registry=registry
+)
 
 # Graceful shutdown state
 class ShutdownState:
@@ -145,6 +210,38 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Middleware to track metrics
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Middleware to track request metrics."""
+    # Track active connections
+    active_connections.inc()
+    
+    # Track request start time
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        
+        # Track request duration
+        duration = time.time() - start_time
+        request_duration.labels(
+            method=request.method,
+            path=request.url.path
+        ).observe(duration)
+        
+        # Track request count
+        request_count.labels(
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code
+        ).inc()
+        
+        return response
+    finally:
+        # Always decrement active connections
+        active_connections.dec()
 
 # Middleware to handle graceful shutdown
 @app.middleware("http")
@@ -348,6 +445,14 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "version": "1.0.0"
     }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    # Generate Prometheus format metrics
+    metrics_output = generate_latest(registry)
+    return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
