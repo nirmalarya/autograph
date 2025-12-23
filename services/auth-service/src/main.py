@@ -23,8 +23,22 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 from .database import get_db
 from .models import User, RefreshToken
+import redis
 
 load_dotenv()
+
+# Redis configuration for token blacklist
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+
+# Initialize Redis client
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    db=REDIS_DB,
+    decode_responses=True
+)
 
 # Configure structured logging
 class StructuredLogger:
@@ -494,6 +508,61 @@ def get_user_by_id(db: Session, user_id: str) -> User | None:
     return db.query(User).filter(User.id == user_id).first()
 
 
+def blacklist_token(token: str, ttl_seconds: int) -> None:
+    """Add token to blacklist in Redis.
+    
+    Args:
+        token: The JWT token to blacklist
+        ttl_seconds: Time to live in seconds (should match token expiry)
+    """
+    # Use token as key, store timestamp when blacklisted
+    redis_client.setex(
+        f"blacklist:{token}",
+        ttl_seconds,
+        datetime.utcnow().isoformat()
+    )
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """Check if token is blacklisted.
+    
+    Args:
+        token: The JWT token to check
+        
+    Returns:
+        True if token is blacklisted, False otherwise
+    """
+    return redis_client.exists(f"blacklist:{token}") > 0
+
+
+def blacklist_all_user_tokens(user_id: str, ttl_seconds: int = 86400) -> None:
+    """Blacklist all tokens for a user (logout all sessions).
+    
+    Args:
+        user_id: The user ID
+        ttl_seconds: Time to live in seconds (default 24 hours)
+    """
+    # Store user ID in a set with TTL
+    # Any token validation will check this
+    redis_client.setex(
+        f"user_blacklist:{user_id}",
+        ttl_seconds,
+        datetime.utcnow().isoformat()
+    )
+
+
+def is_user_blacklisted(user_id: str) -> bool:
+    """Check if all user tokens are blacklisted.
+    
+    Args:
+        user_id: The user ID to check
+        
+    Returns:
+        True if user is blacklisted, False otherwise
+    """
+    return redis_client.exists(f"user_blacklist:{user_id}") > 0
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
@@ -505,12 +574,28 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        # Check if token is blacklisted
+        if is_token_blacklisted(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         token_type: str = payload.get("type")
         
         if user_id is None or token_type != "access":
             raise credentials_exception
+        
+        # Check if all user tokens are blacklisted (logout all)
+        if is_user_blacklisted(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="All user sessions have been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
             
     except JWTError:
         raise credentials_exception
@@ -965,6 +1050,108 @@ async def refresh_tokens(request: RefreshTokenRequest, db: Session = Depends(get
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current user information."""
     return current_user
+
+
+@app.post("/logout")
+async def logout(
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user)
+):
+    """Logout current session by blacklisting the access token.
+    
+    The token will be added to Redis blacklist with TTL matching token expiry.
+    """
+    try:
+        # Decode token to get expiry
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        exp = payload.get("exp")
+        
+        if exp:
+            # Calculate remaining TTL
+            now = datetime.utcnow().timestamp()
+            ttl = int(exp - now)
+            
+            if ttl > 0:
+                # Blacklist token for remaining TTL
+                blacklist_token(token, ttl)
+                
+                logger.info(
+                    "User logged out",
+                    user_id=current_user.id,
+                    email=current_user.email,
+                    ttl=ttl
+                )
+                
+                return {
+                    "message": "Successfully logged out",
+                    "detail": "Access token has been invalidated"
+                }
+        
+        # If token already expired or no exp claim, just return success
+        return {
+            "message": "Successfully logged out",
+            "detail": "Token was already expired"
+        }
+        
+    except JWTError as e:
+        logger.error(
+            "Error during logout",
+            user_id=current_user.id,
+            error=str(e)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid token"
+        )
+
+
+@app.post("/logout-all")
+async def logout_all(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Logout all sessions by blacklisting all user tokens.
+    
+    This will invalidate all access tokens for the user across all devices/sessions.
+    Also marks all refresh tokens as revoked in the database.
+    """
+    try:
+        # Blacklist all user tokens in Redis (24 hours TTL to cover max token lifetime)
+        blacklist_all_user_tokens(current_user.id, ttl_seconds=86400)
+        
+        # Revoke all refresh tokens in database
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.is_used == False,
+            RefreshToken.is_revoked == False
+        ).update({
+            "is_revoked": True,
+            "revoked_at": datetime.now(timezone.utc)
+        })
+        db.commit()
+        
+        logger.info(
+            "User logged out from all sessions",
+            user_id=current_user.id,
+            email=current_user.email
+        )
+        
+        return {
+            "message": "Successfully logged out from all sessions",
+            "detail": "All access tokens and refresh tokens have been invalidated"
+        }
+        
+    except Exception as e:
+        logger.error(
+            "Error during logout-all",
+            user_id=current_user.id,
+            error=str(e)
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to logout from all sessions"
+        )
 
 
 @app.post("/verify")
