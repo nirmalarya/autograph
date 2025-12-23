@@ -5,23 +5,26 @@ import mermaid from 'mermaid';
 
 interface MermaidPreviewProps {
   code: string;
+  theme?: 'default' | 'dark' | 'forest' | 'neutral';
 }
 
-// Initialize mermaid with configuration
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  securityLevel: 'loose',
-  fontFamily: 'Inter, system-ui, sans-serif',
-  themeVariables: {
-    fontSize: '16px',
-  },
-});
-
-export default function MermaidPreview({ code }: MermaidPreviewProps) {
+export default function MermaidPreview({ code, theme = 'default' }: MermaidPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>('');
   const [isRendering, setIsRendering] = useState(false);
+
+  // Reinitialize mermaid when theme changes
+  useEffect(() => {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme,
+      securityLevel: 'loose',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      themeVariables: {
+        fontSize: '16px',
+      },
+    });
+  }, [theme]);
 
   useEffect(() => {
     const renderDiagram = async () => {
@@ -65,10 +68,12 @@ export default function MermaidPreview({ code }: MermaidPreviewProps) {
     return () => {
       clearTimeout(timeoutId);
     };
-  }, [code]);
+  }, [code, theme]);
 
   return (
-    <div className="h-full flex items-center justify-center bg-white overflow-auto">
+    <div className={`h-full flex items-center justify-center overflow-auto ${
+      theme === 'dark' ? 'bg-gray-900' : 'bg-white'
+    }`}>
       {error ? (
         <div className="text-center p-6 max-w-2xl">
           <div className="text-red-600 mb-2 text-xl">⚠️ Syntax Error</div>
@@ -80,13 +85,13 @@ export default function MermaidPreview({ code }: MermaidPreviewProps) {
           </div>
         </div>
       ) : !code.trim() ? (
-        <div className="text-center p-6 text-gray-400">
+        <div className={`text-center p-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-400'}`}>
           <div className="text-6xl mb-4">📊</div>
           <div className="text-lg">Start typing Mermaid code to see preview</div>
           <div className="text-sm mt-2">Try: <code className="bg-gray-100 px-2 py-1 rounded">graph TD</code></div>
         </div>
       ) : isRendering ? (
-        <div className="text-center p-6 text-gray-500">
+        <div className={`text-center p-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
           <div className="text-sm">Rendering diagram...</div>
         </div>

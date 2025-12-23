@@ -51,6 +51,8 @@ export default function MermaidDiagramPage() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [splitPosition, setSplitPosition] = useState(50); // Split percentage
+  const [mermaidTheme, setMermaidTheme] = useState<'default' | 'dark' | 'forest' | 'neutral'>('default');
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
 
   useEffect(() => {
     // Check authentication
@@ -149,6 +151,44 @@ export default function MermaidDiagramPage() {
     router.push('/dashboard');
   };
 
+  const handleExportCode = () => {
+    try {
+      // Create a blob with the Mermaid code
+      const blob = new Blob([code], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create a temporary link element to trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${diagram?.title || 'diagram'}.mmd`;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export code:', err);
+      alert('Failed to export code. Please try again.');
+    }
+  };
+
+  const handleImportCode = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setCode(text);
+      
+      // Clear the input so the same file can be imported again if needed
+      event.target.value = '';
+    } catch (err) {
+      console.error('Failed to import code:', err);
+      alert('Failed to import code. Please try again.');
+    }
+  };
+
   // Add Ctrl+S / Cmd+S keyboard shortcut for manual save
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -187,6 +227,21 @@ export default function MermaidDiagramPage() {
       clearInterval(autoSaveInterval);
     };
   }, [diagram, handleSave]);
+
+  // Close theme menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showThemeMenu && !target.closest('.theme-menu-container')) {
+        setShowThemeMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showThemeMenu]);
 
   if (loading) {
     return (
@@ -249,6 +304,66 @@ export default function MermaidDiagramPage() {
                 </span>
               )}
               <span className="text-sm text-gray-600">{user?.email}</span>
+              
+              {/* Theme selector */}
+              <div className="relative theme-menu-container">
+                <button 
+                  onClick={() => setShowThemeMenu(!showThemeMenu)}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition flex items-center gap-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                  title="Change theme"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                  </svg>
+                  <span className="capitalize">{mermaidTheme}</span>
+                </button>
+                {showThemeMenu && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-10">
+                    {['default', 'dark', 'forest', 'neutral'].map((theme) => (
+                      <button
+                        key={theme}
+                        onClick={() => {
+                          setMermaidTheme(theme as any);
+                          setShowThemeMenu(false);
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 first:rounded-t-md last:rounded-b-md ${
+                          mermaidTheme === theme ? 'bg-blue-50 text-blue-600' : 'text-gray-700'
+                        }`}
+                      >
+                        <span className="capitalize">{theme}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              <button 
+                onClick={handleExportCode}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition flex items-center gap-2"
+                title="Export Mermaid code"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export
+              </button>
+              <button 
+                onClick={() => document.getElementById('import-file-input')?.click()}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition flex items-center gap-2"
+                title="Import Mermaid code"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                Import
+              </button>
+              <input
+                id="import-file-input"
+                type="file"
+                accept=".mmd,.mermaid,.txt"
+                onChange={handleImportCode}
+                style={{ display: 'none' }}
+              />
               <button 
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition"
                 title="Share (coming soon)"
@@ -318,7 +433,7 @@ export default function MermaidDiagramPage() {
             <p className="text-xs text-gray-500">Your diagram updates in real-time</p>
           </div>
           <div className="flex-1 overflow-auto">
-            <MermaidPreview code={code} />
+            <MermaidPreview code={code} theme={mermaidTheme} />
           </div>
         </div>
       </div>
