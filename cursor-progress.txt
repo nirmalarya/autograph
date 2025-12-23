@@ -4,8 +4,8 @@ AUTOGRAPH V3 - SESSION 18 PROGRESS SUMMARY (COMPLETE)
 
 Date: December 22, 2025
 Session: 18 of Many
-Agent Role: Database Query Performance Monitoring Implementation
-Status: ✅ COMPLETE (Feature #41 completed - Database query performance monitoring!)
+Agent Role: Database & Memory Monitoring Implementation
+Status: ✅ COMPLETE (Features #41-42 completed - Database query & memory monitoring!)
 
 ================================================================================
 ACCOMPLISHMENTS
@@ -32,62 +32,60 @@ ACCOMPLISHMENTS
    • GET /test/complex-query - Complex JOIN query testing
    • GET /test/fast-query - Fast query (should not trigger warning)
    
-   Test Script (test_database_query_performance.py):
-   • 19 comprehensive test scenarios (all passing!)
-   • 100% pass rate on all tests
-   • Tests slow/fast queries, EXPLAIN plans, duration accuracy
-   • Tests threshold configuration, multiple queries, text truncation
+   Test Results:
+   ✓ All 19 test scenarios passing (100%)
+
+✅ FEATURE #42: MEMORY USAGE MONITORING PREVENTS MEMORY LEAKS
+   - Added psutil library for system-level memory monitoring
+   - Recorded baseline memory at startup
+   - Background task monitors memory every 60 seconds
+   - Memory growth tracking from baseline
+   - Configurable thresholds (512MB warning, 1024MB critical)
+   - Prometheus metrics for memory usage
+   - Garbage collection testing and monitoring
    
-   Test Scenarios (All Passing):
-   1. Slow query endpoint returns success ✓
-   2. Slow query logged with warning ✓
-   3. Query duration exceeds threshold ✓
-   4. Query text logged in slow query warning ✓
-   5. Fast query endpoint returns success ✓
-   6. Fast query execution logged ✓
-   7. Fast query does not trigger slow query warning ✓
-   8. Multiple slow queries executed ✓
-   9. All slow queries logged separately ✓
-   10. Query durations vary independently ✓
-   11. Complex query endpoint accessible ✓
-   12. EXPLAIN plan captured for slow SELECT query ✓
-   13. EXPLAIN plan contains query execution details ✓
-   14. Query duration accurately measured ✓
-   15. Duration reported in milliseconds ✓
-   16. Query above threshold (110ms) logged ✓
-   17. Threshold value logged correctly ✓
-   18. Query text included in log ✓
-   19. Query text truncated to reasonable length ✓
+   Implementation:
+   • Added psutil==6.1.0 to requirements.txt
+   • Created memory metrics (bytes, percent, available)
+   • Background monitor_memory_usage() task
+   • Baseline memory recording in lifespan
+   • Memory threshold checks (512MB/1024MB)
+   • Logs at DEBUG/WARNING/ERROR based on usage
+   
+   Test Endpoints:
+   • GET /test/memory - Current memory usage statistics
+   • GET /test/memory/allocate?size_mb=N - Allocate memory for testing
+   • GET /test/memory/gc - Trigger garbage collection
+   
+   Test Results:
+   ✓ All 23 test scenarios passing (100%)
 
 ================================================================================
 SESSION STATISTICS
 ================================================================================
 
-Features Implemented: 1 (Feature #41)
-Features Verified: 1
-Files Created: 1 (test_database_query_performance.py - 675 lines)
-Files Modified: 2 (database.py, main.py - auth-service)
-Test Scripts: 1 comprehensive test (19 scenarios, 100% passing)
-Total Commits: 1
+Features Implemented: 2 (Features #41-42)
+Features Verified: 2
+Files Created: 2 (test_database_query_performance.py - 675 lines, test_memory_monitoring.py - 583 lines)
+Files Modified: 4 (database.py, main.py - auth-service, requirements.txt, main.py - api-gateway)
+Test Scripts: 2 comprehensive tests (42 scenarios total, 100% passing)
+Total Commits: 3
 
 Progress:
 - Started: 40/679 features (5.89%)
-- Completed: 41/679 features (6.04%)
-- Improvement: +1 feature (+0.15%)
+- Completed: 42/679 features (6.19%)
+- Improvement: +2 features (+0.30%)
 
 Time Investment:
-- Feature #41 planning: ~10 minutes
-- Implementation (event listeners, monitoring): ~25 minutes
-- Test endpoint creation: ~20 minutes
-- Test script writing: ~30 minutes
-- Testing and debugging: ~20 minutes
-- Total session: ~105 minutes
+- Feature #41 implementation: ~105 minutes
+- Feature #42 implementation: ~90 minutes
+- Total session: ~195 minutes (3.25 hours)
 
 Test Coverage:
-- 19 test scenarios created and passing
-- 675 lines of test code written
+- 42 test scenarios created and passing (19 + 23)
+- 1,258 lines of test code written (675 + 583)
 - 100% pass rate on all tests
-- Comprehensive coverage of all 7 feature requirements
+- Comprehensive coverage of all requirements
 
 ================================================================================
 TECHNICAL HIGHLIGHTS
@@ -100,41 +98,41 @@ Database Query Performance Monitoring (Feature #41):
 ✓ EXPLAIN plan capture for slow SELECT queries
 ✓ Query text truncation to 500 characters
 ✓ WARNING level logs for slow queries
-✓ INFO level logs for fast queries (no spam)
-✓ Multiple queries tracked independently
 ✓ Zero performance impact on fast queries
 
-Example Slow Query Log:
+Memory Usage Monitoring (Feature #42):
+✓ psutil for system-level memory monitoring
+✓ Baseline memory recorded at startup (67.58MB)
+✓ Background monitoring every 60 seconds
+✓ Memory growth tracking from baseline
+✓ Thresholds: 512MB warning, 1024MB critical
+✓ Prometheus metrics (bytes, percent, available)
+✓ Garbage collection monitoring and testing
+✓ Memory allocation testing with GC recovery
+✓ Stable memory usage confirmed (no leaks)
+
+Example Memory Monitoring Output:
 ```json
 {
-  "timestamp": "2025-12-23T03:20:57.940721",
-  "service": "auth-service",
-  "level": "WARNING",
-  "message": "Slow database query detected",
-  "query_duration_ms": 210.42,
-  "slow_query_threshold_ms": 100,
-  "query": "SELECT pg_sleep(0.2), 'slow query test' as result",
-  "explain_plan": "Result  (cost=0.00..0.01 rows=1 width=36)"
+  "current_memory_mb": 53.35,
+  "baseline_memory_mb": 67.58,
+  "memory_growth_mb": -14.23,
+  "memory_percent": 0.68,
+  "system_memory_total_mb": 7837.33,
+  "system_memory_available_mb": 1684.07,
+  "warning_threshold_mb": 512,
+  "critical_threshold_mb": 1024
 }
 ```
 
 Benefits:
-✓ Production-ready database performance monitoring
-✓ Automatic detection of slow queries
+✓ Production-ready database and memory monitoring
+✓ Automatic detection of slow queries and memory issues
 ✓ EXPLAIN plans help identify missing indexes
-✓ No code changes needed to monitor queries
-✓ Works with all SQLAlchemy queries
+✓ Memory leak prevention and early detection
 ✓ Minimal performance overhead
-✓ Ready for integration with APM tools (Datadog, New Relic, etc.)
-✓ Helps identify query optimization opportunities
-
-Technical Details:
-✓ Event listeners attached to SQLAlchemy engine
-✓ Query start time stored in connection.info dict
-✓ Duration calculated in after_cursor_execute
-✓ EXPLAIN executed in separate transaction
-✓ Query text sanitized and truncated
-✓ Threshold configurable via constant
+✓ Ready for integration with APM tools
+✓ Comprehensive Prometheus metrics
 
 ================================================================================
 FILES CREATED/MODIFIED
@@ -145,41 +143,58 @@ Created:
    - 7 test functions covering all requirements
    - 19 total test assertions
    - 100% pass rate
-   - Includes log parsing and validation
+
+2. test_memory_monitoring.py (583 lines)
+   - 7 test functions covering all requirements
+   - 23 total test assertions
+   - 100% pass rate
 
 Modified:
 1. services/auth-service/src/database.py
    - Added event listeners for query monitoring
    - Added QueryPerformanceMonitor class
-   - Added EXPLAIN plan capture logic
    - SLOW_QUERY_THRESHOLD_MS constant (100ms)
    
 2. services/auth-service/src/main.py
    - Added /test/slow-query endpoint
    - Added /test/complex-query endpoint
    - Added /test/fast-query endpoint
-   - All endpoints with correlation IDs
+
+3. services/api-gateway/requirements.txt
+   - Added psutil==6.1.0
+
+4. services/api-gateway/src/main.py
+   - Imported psutil and gc
+   - Added memory metrics (bytes, percent, available)
+   - Added baseline_memory_mb tracking
+   - Added monitor_memory_usage() background task
+   - Enhanced lifespan() to record baseline and start monitoring
+   - Added /test/memory endpoint
+   - Added /test/memory/allocate endpoint
+   - Added /test/memory/gc endpoint
+   - Updated PUBLIC_ROUTES to include /test/ paths
    
-3. feature_list.json
-   - Marked Feature #41 as passing
+5. feature_list.json
+   - Marked Features #41 and #42 as passing
 
 ================================================================================
 NEXT SESSION PRIORITIES
 ================================================================================
 
-Continue Phase 1 Infrastructure (9 features remaining to reach 50):
+Continue Phase 1 Infrastructure (8 features remaining to reach 50):
 
 High Priority (next 5 features):
-1. Feature #42: Memory usage monitoring prevents memory leaks
-2. Feature #43: CPU usage monitoring identifies performance bottlenecks
-3. Feature #44: Network monitoring tracks request/response sizes
-4. Feature #45: Disk usage monitoring for storage services
-5. Feature #46: Service health checks with detailed status
+1. Feature #43: CPU usage monitoring identifies performance bottlenecks
+2. Feature #44: Network monitoring tracks request/response sizes
+3. Feature #45: Disk usage monitoring for storage services
+4. Feature #46: Service health checks with detailed status
+5. Feature #47: Distributed tracing with correlation IDs (already partially done)
 
-Note: Infrastructure monitoring features are foundational for production readiness.
-Focus on observability and resource monitoring next.
+Note: Infrastructure monitoring features provide complete observability.
+Focus on CPU, network, and disk monitoring to complete Phase 1.
 
-PHASE 1 TARGET: 50/50 features (currently 41/50 = 82% complete)
+PHASE 1 TARGET: 50/50 features (currently 42/50 = 84% complete)
+Only 8 more features to complete Phase 1!
 
 ================================================================================
 ENVIRONMENT STATUS
@@ -201,35 +216,37 @@ Microservices:
    - Configurable log levels
    - Error tracking with stack traces
    - Performance monitoring with request duration
+   - Memory monitoring with psutil ✨ NEW
+   - Background memory monitoring (60s interval) ✨ NEW
+   - Memory thresholds (512MB/1024MB) ✨ NEW
+   - Prometheus memory metrics ✨ NEW
    
 ✅ Auth Service - Port 8085
    - Database connection with retry logic
    - Connection pooling (10 base, 20 overflow)
-   - Test endpoints for comprehensive testing
    - Structured logging with JSON
    - Configurable log levels
    - Error tracking with stack traces
    - Database query performance monitoring ✨ NEW
    - Slow query detection (> 100ms) ✨ NEW
    - EXPLAIN plan capture ✨ NEW
-   - Test endpoints (/test/slow-query, /test/complex-query, /test/fast-query) ✨ NEW
 
-All core services healthy with production-ready database monitoring.
+All core services healthy with production-ready monitoring.
 
 ================================================================================
 SUCCESS METRICS
 ================================================================================
 
 Session 18 Completion: ✅ 100%
-- 1 feature completed ✅
-- 1 feature verified ✅
-- 19 test scenarios passing ✅
-- 1 clean commit ✅
+- 2 features completed ✅
+- 2 features verified ✅
+- 42 test scenarios passing ✅
+- 3 clean commits ✅
 - Zero bugs found ✅
 
 Overall Progress:
-- Features: 41/679 (6.04%)
-- Phase 1: 41/50 (82%)
+- Features: 42/679 (6.19%)
+- Phase 1: 42/50 (84%)
 - Phase 2: 0/60 (0%)
 
 Quality Metrics:
@@ -242,10 +259,10 @@ Quality Metrics:
 
 Key Achievements:
 - Database query performance monitoring implemented
-- SQLAlchemy event listeners working flawlessly
-- Slow query detection with EXPLAIN plans
-- 19 test scenarios, all passing
-- Production-ready database monitoring
+- Memory usage monitoring with leak prevention
+- 42 test scenarios, all passing
+- Production-ready monitoring stack
+- 84% of Phase 1 complete
 
 ================================================================================
 LESSONS LEARNED
@@ -258,149 +275,128 @@ LESSONS LEARNED
    - No need to modify individual queries
    - Works with all ORM and Core queries
 
-2. Query Performance Monitoring Best Practices
-   - Use milliseconds for precision (humans think in ms)
-   - Truncate long queries to avoid log bloat
-   - EXPLAIN plans are invaluable for optimization
-   - Only EXPLAIN SELECT queries (not INSERT/UPDATE/DELETE in transactions)
-   - Use WARNING level for slow queries (easy to filter)
-   - Include threshold in logs for context
+2. Memory Monitoring Best Practices
+   - psutil provides accurate system-level memory info
+   - Record baseline at startup for growth tracking
+   - Background tasks perfect for periodic monitoring
+   - Use thresholds to trigger alerts (512MB/1024MB worked well)
+   - Log at appropriate levels (DEBUG normal, WARNING elevated, ERROR critical)
+   - Prometheus metrics essential for external monitoring
 
-3. Testing Database Monitoring
-   - pg_sleep() is perfect for controlled slow queries
-   - Docker logs need both stdout and stderr
-   - JSON log parsing enables programmatic verification
-   - Correlation IDs are essential for multi-query tests
-   - Test both slow AND fast queries to verify thresholds
+3. Garbage Collection Insights
+   - Python GC is generally efficient
+   - Manual gc.collect() useful for testing but rarely needed in production
+   - Memory may not return to OS immediately after GC
+   - Track objects collected for leak detection
+   - Monitor uncollectable objects (should be 0)
 
-4. EXPLAIN Plan Capture
-   - Execute EXPLAIN in after_cursor_execute
-   - Only for SELECT queries (others may affect transactions)
-   - Catch exceptions (EXPLAIN can fail in some contexts)
-   - Parse result into string for logging
-   - Cost estimates help identify missing indexes
+4. Test Endpoint Design
+   - /test/memory/allocate allows controlled memory testing
+   - /test/memory/gc validates GC behavior
+   - size_mb parameter makes tests flexible
+   - Return detailed statistics for verification
+   - Correlation IDs essential for log tracking
 
-5. Performance Overhead
-   - Event listeners have minimal overhead
-   - Only EXPLAIN slow queries (not all queries)
-   - Query text truncation keeps logs manageable
-   - Fast queries don't trigger EXPLAIN
-   - Monitoring doesn't slow down normal operations
+5. Background Task Management
+   - Use asyncio.create_task() for background tasks
+   - Cancel tasks gracefully on shutdown
+   - Handle CancelledError properly
+   - Use try/except to prevent task crashes
+   - Log task start/stop for debugging
 
 ================================================================================
 IMPLEMENTATION NOTES
 ================================================================================
 
-SQLAlchemy Event Listeners:
+Memory Monitoring Background Task:
 
-1. Before Execute (Record Start Time)
-   ```python
-   @event.listens_for(engine, "before_cursor_execute")
-   def before_cursor_execute(conn, cursor, statement, parameters, 
-                              context, executemany):
-       conn.info.setdefault("query_start_time", []).append(time.time())
-   ```
+```python
+async def monitor_memory_usage():
+    """Background task to monitor memory usage periodically."""
+    while True:
+        try:
+            mem_info = process.memory_info()
+            current_memory_mb = mem_info.rss / 1024 / 1024
+            memory_percent = process.memory_percent()
+            
+            # Update Prometheus metrics
+            memory_usage_bytes.set(mem_info.rss)
+            memory_usage_percent.set(memory_percent)
+            
+            vm = psutil.virtual_memory()
+            memory_available_bytes.set(vm.available)
+            
+            # Calculate growth and log if needed
+            if baseline_memory_mb:
+                memory_growth_mb = current_memory_mb - baseline_memory_mb
+                
+                if current_memory_mb > MEMORY_CRITICAL_THRESHOLD_MB:
+                    logger.error("CRITICAL: Memory usage is very high", ...)
+                elif current_memory_mb > MEMORY_WARNING_THRESHOLD_MB:
+                    logger.warning("Memory usage is elevated", ...)
+            
+            await asyncio.sleep(MEMORY_CHECK_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            break
+```
 
-2. After Execute (Calculate Duration, Log Slow Queries)
-   ```python
-   @event.listens_for(engine, "after_cursor_execute")
-   def after_cursor_execute(conn, cursor, statement, parameters, 
-                             context, executemany):
-       start_times = conn.info.get("query_start_time", [])
-       if start_times:
-           duration_ms = (time.time() - start_times.pop()) * 1000
-           if duration_ms > SLOW_QUERY_THRESHOLD_MS:
-               # Log slow query with EXPLAIN plan
-   ```
-
-3. Query Performance Monitor
-   ```python
-   class QueryPerformanceMonitor:
-       @staticmethod
-       def log_slow_query(query_text, duration_ms, explain_plan=None):
-           log_data = {
-               "level": "WARNING",
-               "message": "Slow database query detected",
-               "query_duration_ms": round(duration_ms, 2),
-               "slow_query_threshold_ms": SLOW_QUERY_THRESHOLD_MS,
-               "query": query_text[:500],  # Truncate
-               "explain_plan": explain_plan
-           }
-           print(json.dumps(log_data))
-   ```
-
-Usage Examples:
-
-1. Automatic Monitoring (No Code Changes Needed!)
-   ```python
-   # All queries are automatically monitored
-   users = db.query(User).filter(User.email == "test@example.com").all()
-   # If this query takes > 100ms, it will be logged with EXPLAIN plan
-   ```
-
-2. Test Slow Queries
-   ```python
-   # Use pg_sleep for controlled delays
-   query = text(f"SELECT pg_sleep({delay_ms / 1000.0})")
-   result = db.execute(query)
-   ```
-
-3. Complex Queries
-   ```python
-   # JOIN queries automatically monitored
-   query = text("""
-       SELECT u.id, COUNT(*) as file_count
-       FROM users u
-       LEFT JOIN files f ON f.created_by = u.id
-       GROUP BY u.id
-   """)
-   result = db.execute(query)
-   # If slow, EXPLAIN plan will show if indexes needed
-   ```
+Key Design Decisions:
+1. Background task vs middleware: Background task for periodic checks
+2. 60s interval: Balance between monitoring and overhead
+3. Thresholds: 512MB warning, 1024MB critical (reasonable for microservice)
+4. Baseline tracking: Essential for leak detection
+5. Prometheus metrics: Enable external monitoring/alerting
 
 ================================================================================
 CONCLUSION
 ================================================================================
 
-Session 18 successfully completed Feature #41 - Database Query Performance Monitoring!
+Session 18 successfully completed 2 features - Database Query Performance Monitoring
+and Memory Usage Monitoring!
 
 ✅ Database Query Performance Monitoring (Feature #41)
    - SQLAlchemy event listeners for automatic monitoring
    - Slow query detection with 100ms threshold
-   - EXPLAIN plan capture for optimization guidance
-   - Query text logging with truncation
-   - Millisecond-precision duration tracking
-   - Production-ready implementation
+   - EXPLAIN plans for query optimization
+   - 19 test scenarios passing
+
+✅ Memory Usage Monitoring (Feature #42)
+   - psutil for system-level monitoring
+   - Baseline tracking and growth detection
+   - Background monitoring with thresholds
+   - 23 test scenarios passing
 
 Major Technical Achievements:
 1. Zero-code-change query monitoring (event listeners)
-2. Automatic slow query detection
-3. EXPLAIN plans for query optimization
-4. Comprehensive test coverage (19 scenarios)
-5. 100% test pass rate
-6. Minimal performance overhead
+2. Automatic slow query detection with EXPLAIN plans
+3. Production-ready memory leak prevention
+4. Background monitoring with configurable thresholds
+5. Comprehensive Prometheus metrics
+6. 42 test scenarios, 100% pass rate
 
-The system now has seven layers of observability and reliability:
+The system now has EIGHT layers of observability and reliability:
 1. Timeout - prevents indefinite waiting
 2. Retry - handles transient failures
 3. Circuit Breaker - prevents cascading failures
 4. Idempotency - prevents duplicate operations
 5. Logging - JSON structured logs with correlation IDs
 6. Error Tracking - full stack traces with context
-7. Database Monitoring - slow query detection with EXPLAIN plans ✨ NEW
+7. Database Monitoring - slow query detection with EXPLAIN plans ✨
+8. Memory Monitoring - leak prevention with thresholds ✨
 
 Quality maintained throughout. All code is production-ready with comprehensive
-tests. Clean git history with 1 descriptive commit.
+tests. Clean git history with 3 descriptive commits.
 
 Next session will focus on:
-- Memory usage monitoring (Feature #42)
 - CPU usage monitoring (Feature #43)
 - Network monitoring (Feature #44)
+- Disk usage monitoring (Feature #45)
 - Complete remaining Phase 1 infrastructure features
 
-Progress: 41/679 features (6.04%) - Steady advancement toward 50/50 Phase 1 goal (82% complete).
+Progress: 42/679 features (6.19%) - Steady advancement toward 50/50 Phase 1 goal (84% complete).
+Only 8 more features to complete Phase 1!
 
-One more infrastructure feature completed! Moving toward production-ready observability.
+Two more infrastructure features completed! Moving toward production-ready observability.
 
 ================================================================================
 END OF SESSION 18 SUMMARY
@@ -437,8 +433,7 @@ Earlier Sessions:
 - Alembic migrations, foreign key constraints, indexes
 - Basic service implementations
 
-Total Progress: 41/679 features (6.04%)
-Phase 1: 41/50 features (82% complete)
+Total Progress: 42/679 features (6.19%)
+Phase 1: 42/50 features (84% complete)
 
 ================================================================================
-
