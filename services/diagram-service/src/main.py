@@ -667,6 +667,7 @@ class DiagramResponse(BaseModel):
     view_count: int
     export_count: int = 0  # Number of times diagram has been exported
     collaborator_count: int = 1  # Number of collaborators (owner + shared users)
+    comment_count: int = 0  # Number of comments on diagram
     current_version: int
     last_edited_by: Optional[str] = None
     created_at: datetime
@@ -2538,6 +2539,159 @@ async def revoke_share_link(
     return {
         "message": "Share link revoked successfully",
         "share_id": share_id
+    }
+
+
+@app.post("/{diagram_id}/comments")
+async def add_comment(
+    diagram_id: str,
+    request: Request,
+    content: str = None,
+    db: Session = Depends(get_db)
+):
+    """Add a comment to a diagram and increment comment count."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Adding comment to diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+    
+    # Get the diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    
+    if not diagram:
+        logger.error(
+            "Diagram not found for comment",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check if user has access (owner or shared with)
+    has_access = (
+        diagram.owner_id == user_id or
+        db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first() is not None
+    )
+    
+    if not has_access:
+        logger.error(
+            "User does not have access to add comment",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id
+        )
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Increment comment count
+    old_count = diagram.comment_count if hasattr(diagram, 'comment_count') else 0
+    diagram.comment_count = old_count + 1
+    diagram.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Comment added successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        old_count=old_count,
+        new_count=diagram.comment_count,
+        user_id=user_id
+    )
+    
+    return {
+        "message": "Comment added successfully",
+        "id": diagram_id,
+        "comment_count": diagram.comment_count,
+        "updated_at": diagram.updated_at.isoformat()
+    }
+
+
+@app.delete("/{diagram_id}/comments/{comment_id}")
+async def delete_comment(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Delete a comment from a diagram and decrement comment count."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Deleting comment from diagram",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        comment_id=comment_id,
+        user_id=user_id
+    )
+    
+    # Get the diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    
+    if not diagram:
+        logger.error(
+            "Diagram not found for comment deletion",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check if user has access (owner or shared with)
+    has_access = (
+        diagram.owner_id == user_id or
+        db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first() is not None
+    )
+    
+    if not has_access:
+        logger.error(
+            "User does not have access to delete comment",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id
+        )
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Decrement comment count (but not below 0)
+    old_count = diagram.comment_count if hasattr(diagram, 'comment_count') else 0
+    diagram.comment_count = max(0, old_count - 1)
+    diagram.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(diagram)
+    
+    logger.info(
+        "Comment deleted successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        comment_id=comment_id,
+        old_count=old_count,
+        new_count=diagram.comment_count,
+        user_id=user_id
+    )
+    
+    return {
+        "message": "Comment deleted successfully",
+        "id": diagram_id,
+        "comment_id": comment_id,
+        "comment_count": diagram.comment_count,
+        "updated_at": diagram.updated_at.isoformat()
     }
 
 
