@@ -719,11 +719,17 @@ async def lifespan(app: FastAPI):
     alert_monitor_task = asyncio.create_task(monitor_services_for_alerts())
     
     # Start scheduled backup task if enabled
-    global SCHEDULED_BACKUP_TASK
+    global SCHEDULED_BACKUP_TASK, SCHEDULED_MINIO_BACKUP_TASK
     backup_enabled = os.getenv("BACKUP_ENABLED", "true").lower() == "true"
     if backup_enabled:
         SCHEDULED_BACKUP_TASK = asyncio.create_task(scheduled_backup_task())
-        logger.info("Scheduled backup task started")
+        logger.info("Scheduled database backup task started")
+    
+    # Start scheduled MinIO backup task if enabled
+    minio_backup_enabled = os.getenv("MINIO_BACKUP_ENABLED", "true").lower() == "true"
+    if minio_backup_enabled:
+        SCHEDULED_MINIO_BACKUP_TASK = asyncio.create_task(scheduled_minio_backup_task())
+        logger.info("Scheduled MinIO bucket backup task started")
     
     # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
@@ -742,6 +748,8 @@ async def lifespan(app: FastAPI):
         alert_monitor_task.cancel()
         if SCHEDULED_BACKUP_TASK:
             SCHEDULED_BACKUP_TASK.cancel()
+        if SCHEDULED_MINIO_BACKUP_TASK:
+            SCHEDULED_MINIO_BACKUP_TASK.cancel()
     
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -764,6 +772,8 @@ async def lifespan(app: FastAPI):
     alert_monitor_task.cancel()
     if SCHEDULED_BACKUP_TASK:
         SCHEDULED_BACKUP_TASK.cancel()
+    if SCHEDULED_MINIO_BACKUP_TASK:
+        SCHEDULED_MINIO_BACKUP_TASK.cancel()
     
     try:
         await memory_monitor_task
@@ -784,6 +794,11 @@ async def lifespan(app: FastAPI):
     if SCHEDULED_BACKUP_TASK:
         try:
             await SCHEDULED_BACKUP_TASK
+        except asyncio.CancelledError:
+            pass
+    if SCHEDULED_MINIO_BACKUP_TASK:
+        try:
+            await SCHEDULED_MINIO_BACKUP_TASK
         except asyncio.CancelledError:
             pass
     
@@ -836,6 +851,7 @@ PUBLIC_ROUTES = [
     "/dependencies",  # Service dependency mapping
     "/alerts",  # Alerting system
     "/api/admin/backup/",  # Database backup and restore (for testing)
+    "/api/admin/minio/",  # MinIO bucket backup and restore (for testing)
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
@@ -3273,8 +3289,284 @@ async def delete_database_backup(
         )
 
 
+# ==========================================
+# MinIO Bucket Backup and Restore Endpoints
+# ==========================================
+
+# Global MinIO bucket backup manager instance
+_minio_backup_manager = None
+
+def get_minio_backup_manager():
+    """Get or create MinIO bucket backup manager instance"""
+    global _minio_backup_manager
+    
+    if _minio_backup_manager is None:
+        from shared.python.backup import MinIOBucketBackupManager
+        
+        _minio_backup_manager = MinIOBucketBackupManager(
+            minio_endpoint=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
+            minio_access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
+            minio_secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
+            backup_dir="/tmp/minio_backups",
+            backup_bucket="minio-backups"
+        )
+    return _minio_backup_manager
+
+
+@app.get("/api/admin/minio/buckets")
+@limiter.limit("60/minute")
+async def list_minio_buckets(request: Request):
+    """
+    List all MinIO buckets.
+    
+    Returns:
+    - List of bucket names
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    try:
+        manager = get_minio_backup_manager()
+        buckets = manager.list_buckets()
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "count": len(buckets),
+            "buckets": buckets
+        }
+        
+    except Exception as e:
+        logger.error("Failed to list MinIO buckets", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list buckets: {str(e)}"
+        )
+
+
+@app.post("/api/admin/minio/backup/create")
+@limiter.limit("10/hour")
+async def create_minio_bucket_backup(
+    request: Request,
+    bucket_name: str,
+    backup_name: str = None,
+    include_versions: bool = False
+):
+    """
+    Create a backup of a MinIO bucket.
+    
+    Requires admin authentication.
+    
+    Body Parameters:
+    - bucket_name: Name of the bucket to backup (required)
+    - backup_name: Optional name for the backup (auto-generated if not provided)
+    - include_versions: Whether to include object versions. Default: false
+    
+    Returns:
+    - Backup metadata including archive size and object count
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    logger.info(
+        "MinIO bucket backup requested",
+        correlation_id=correlation_id,
+        bucket_name=bucket_name,
+        backup_name=backup_name
+    )
+    
+    try:
+        manager = get_minio_backup_manager()
+        
+        # Create bucket backup
+        backup_metadata = manager.backup_bucket(
+            bucket_name=bucket_name,
+            backup_name=backup_name,
+            include_versions=include_versions
+        )
+        
+        logger.info(
+            "MinIO bucket backup created successfully",
+            correlation_id=correlation_id,
+            backup_name=backup_metadata["backup_name"],
+            object_count=backup_metadata["object_count"],
+            size_mb=backup_metadata["archive_size_mb"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "backup": backup_metadata
+        }
+        
+    except Exception as e:
+        logger.error("Failed to create MinIO bucket backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Bucket backup failed: {str(e)}"
+        )
+
+
+@app.post("/api/admin/minio/backup/restore")
+@limiter.limit("5/hour")
+async def restore_minio_bucket_backup(
+    request: Request,
+    backup_name: str,
+    target_bucket: str = None,
+    overwrite: bool = False
+):
+    """
+    Restore a MinIO bucket from backup.
+    
+    Requires admin authentication.
+    
+    Body Parameters:
+    - backup_name: Name of the backup to restore (required, without .tar.gz extension)
+    - target_bucket: Target bucket name (uses original if not provided)
+    - overwrite: Whether to overwrite existing objects. Default: false
+    
+    Returns:
+    - Restore metadata including uploaded count and size
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    logger.warning(
+        "MinIO bucket restore requested - THIS WILL MODIFY BUCKET DATA",
+        correlation_id=correlation_id,
+        backup_name=backup_name,
+        target_bucket=target_bucket
+    )
+    
+    try:
+        manager = get_minio_backup_manager()
+        
+        # Restore bucket backup
+        restore_metadata = manager.restore_bucket(
+            backup_name=backup_name,
+            target_bucket=target_bucket,
+            overwrite=overwrite
+        )
+        
+        logger.info(
+            "MinIO bucket restored successfully",
+            correlation_id=correlation_id,
+            backup_name=backup_name,
+            target_bucket=restore_metadata["target_bucket"],
+            uploaded_count=restore_metadata["uploaded_count"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "restore": restore_metadata
+        }
+        
+    except Exception as e:
+        logger.error("Failed to restore MinIO bucket backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Bucket restore failed: {str(e)}"
+        )
+
+
+@app.get("/api/admin/minio/backup/list")
+@limiter.limit("60/minute")
+async def list_minio_bucket_backups(request: Request):
+    """
+    List available MinIO bucket backups.
+    
+    Returns:
+    - List of bucket backups with metadata
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    try:
+        manager = get_minio_backup_manager()
+        backups = manager.list_backups()
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "count": len(backups),
+            "backups": backups
+        }
+        
+    except Exception as e:
+        logger.error("Failed to list MinIO bucket backups", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list bucket backups: {str(e)}"
+        )
+
+
+@app.delete("/api/admin/minio/backup/{backup_name}")
+@limiter.limit("30/minute")
+async def delete_minio_bucket_backup(
+    request: Request,
+    backup_name: str,
+    delete_local: bool = True
+):
+    """
+    Delete a MinIO bucket backup.
+    
+    Path Parameters:
+    - backup_name: Name of the backup to delete (without .tar.gz extension)
+    
+    Query Parameters:
+    - delete_local: Also delete local copy if present. Default: true
+    
+    Returns:
+    - Deletion results
+    """
+    correlation_id = getattr(request.state, 'correlation_id', str(uuid.uuid4()))
+    
+    logger.warning(
+        "MinIO bucket backup deletion requested",
+        correlation_id=correlation_id,
+        backup_name=backup_name
+    )
+    
+    try:
+        manager = get_minio_backup_manager()
+        
+        results = manager.delete_backup(
+            backup_name=backup_name,
+            delete_local=delete_local
+        )
+        
+        logger.info(
+            "MinIO bucket backup deleted",
+            correlation_id=correlation_id,
+            backup_name=backup_name,
+            minio_deleted=results["minio_deleted"],
+            local_deleted=results["local_deleted"]
+        )
+        
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "backup_name": backup_name,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Failed to delete MinIO bucket backup", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete bucket backup: {str(e)}"
+        )
+
+
+# ==========================================
+# Scheduled Backup Tasks
+# ==========================================
+
 # Scheduled backup task
 SCHEDULED_BACKUP_TASK = None
+SCHEDULED_MINIO_BACKUP_TASK = None
 
 async def scheduled_backup_task():
     """Background task to create automated database backups"""
@@ -3310,6 +3602,64 @@ async def scheduled_backup_task():
         except Exception as e:
             logger.error("Scheduled backup failed", exc=e)
             # Continue running even if one backup fails
+            await asyncio.sleep(300)  # Wait 5 minutes before retrying
+
+
+async def scheduled_minio_backup_task():
+    """Background task to create automated MinIO bucket backups"""
+    backup_interval = int(os.getenv("MINIO_BACKUP_INTERVAL_HOURS", "168")) * 3600  # Default 7 days (weekly)
+    buckets_to_backup = os.getenv("MINIO_BACKUP_BUCKETS", "diagrams,exports,uploads").split(",")
+    
+    logger.info(
+        f"Scheduled MinIO backup task started",
+        interval_hours=backup_interval // 3600,
+        buckets=buckets_to_backup
+    )
+    
+    while True:
+        try:
+            await asyncio.sleep(backup_interval)
+            
+            # Create automated backups for specified buckets
+            logger.info("Creating scheduled MinIO bucket backups")
+            manager = get_minio_backup_manager()
+            
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            
+            for bucket_name in buckets_to_backup:
+                bucket_name = bucket_name.strip()
+                if not bucket_name:
+                    continue
+                
+                try:
+                    backup_name = f"scheduled_{bucket_name}_{timestamp}"
+                    
+                    backup_metadata = manager.backup_bucket(
+                        bucket_name=bucket_name,
+                        backup_name=backup_name,
+                        include_versions=False
+                    )
+                    
+                    logger.info(
+                        "Scheduled MinIO bucket backup completed",
+                        bucket=bucket_name,
+                        backup_name=backup_metadata["backup_name"],
+                        objects=backup_metadata["object_count"],
+                        size_mb=backup_metadata["archive_size_mb"]
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Scheduled MinIO bucket backup failed",
+                        bucket=bucket_name,
+                        exc=e
+                    )
+            
+        except asyncio.CancelledError:
+            logger.info("Scheduled MinIO backup task cancelled")
+            break
+        except Exception as e:
+            logger.error("Scheduled MinIO backup task error", exc=e)
+            # Continue running even if one backup cycle fails
             await asyncio.sleep(300)  # Wait 5 minutes before retrying
 
 
