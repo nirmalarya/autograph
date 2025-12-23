@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -835,6 +836,76 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Security headers middleware - applied to all responses
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """
+    Add security headers to all responses to prevent common web vulnerabilities.
+    Headers added:
+    - X-Frame-Options: Prevents clickjacking attacks
+    - X-Content-Type-Options: Prevents MIME-sniffing attacks
+    - X-XSS-Protection: Enables XSS filtering (legacy browsers)
+    - Content-Security-Policy: Controls resource loading
+    - Strict-Transport-Security: Enforces HTTPS connections
+    - Referrer-Policy: Controls referrer information leakage
+    - Permissions-Policy: Controls browser features
+    """
+    response = await call_next(request)
+    
+    # X-Frame-Options: Prevent the page from being embedded in iframes
+    response.headers["X-Frame-Options"] = "DENY"
+    
+    # X-Content-Type-Options: Prevent browsers from MIME-sniffing
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    
+    # X-XSS-Protection: Enable XSS filtering in legacy browsers
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    
+    # Content-Security-Policy: Define allowed sources for resources
+    csp_directives = [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' ws: wss:",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "upgrade-insecure-requests",
+    ]
+    response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
+    
+    # Strict-Transport-Security: Force HTTPS for all connections
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    
+    # Referrer-Policy: Control referrer information
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    
+    # Permissions-Policy: Control browser features
+    permissions_directives = [
+        "geolocation=()",
+        "microphone=()",
+        "camera=()",
+        "payment=()",
+        "usb=()",
+        "magnetometer=()",
+        "gyroscope=()",
+        "accelerometer=()",
+    ]
+    response.headers["Permissions-Policy"] = ", ".join(permissions_directives)
+    
+    return response
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # JWT configuration
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
@@ -862,14 +933,7 @@ PUBLIC_ROUTES = [
     "/test/",  # All test endpoints on gateway
 ]
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS configuration (added after app creation below)
 
 # Circuit breakers for each microservice
 # Protects against cascading failures by failing fast when a service is down
