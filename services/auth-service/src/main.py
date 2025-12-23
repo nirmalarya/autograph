@@ -430,11 +430,16 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """Create JWT access token."""
     to_encode = data.copy()
+    now = datetime.utcnow()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "type": "access"})
+        expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({
+        "exp": expire,
+        "iat": now,
+        "type": "access"
+    })
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -442,8 +447,13 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 def create_refresh_token(data: dict) -> str:
     """Create JWT refresh token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    now = datetime.utcnow()
+    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({
+        "exp": expire,
+        "iat": now,
+        "type": "refresh"
+    })
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -769,8 +779,12 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     user.last_login_at = datetime.utcnow()
     db.commit()
     
-    # Create tokens
-    access_token = create_access_token(data={"sub": user.id})
+    # Create tokens with user claims
+    access_token = create_access_token(data={
+        "sub": user.id,
+        "email": user.email,
+        "role": user.role
+    })
     refresh_token = create_refresh_token(data={"sub": user.id})
     
     return {
@@ -814,8 +828,12 @@ async def login_form(
     user.last_login_at = datetime.utcnow()
     db.commit()
     
-    # Create tokens
-    access_token = create_access_token(data={"sub": user.id})
+    # Create tokens with user claims
+    access_token = create_access_token(data={
+        "sub": user.id,
+        "email": user.email,
+        "role": user.role
+    })
     refresh_token = create_refresh_token(data={"sub": user.id})
     
     return {
