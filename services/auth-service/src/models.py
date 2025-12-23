@@ -142,6 +142,7 @@ class File(Base):
     deleted_at = Column(DateTime(timezone=True))
     view_count = Column(Integer, default=0)
     export_count = Column(Integer, default=0)  # Track number of exports
+    collaborator_count = Column(Integer, default=1)  # Track number of collaborators (owner + shared users)
     
     # Version control
     current_version = Column(Integer, default=1)

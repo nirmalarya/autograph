@@ -14,6 +14,7 @@ interface Diagram {
   owner_email?: string;
   size_bytes?: number;
   export_count?: number;
+  collaborator_count?: number;
 }
 
 interface DiagramsResponse {
@@ -719,6 +720,7 @@ export default function DashboardPage() {
                           <p>Updated: {new Date(diagram.updated_at).toLocaleDateString()}</p>
                           <p>Size: {formatBytes(diagram.size_bytes)}</p>
                           <p>Exports: {diagram.export_count || 0}</p>
+                          <p>Collaborators: {diagram.collaborator_count || 1}</p>
                         </div>
                       </div>
                     </div>
@@ -764,6 +766,9 @@ export default function DashboardPage() {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Exports
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Collaborators
                       </th>
                     </tr>
                   </thead>
@@ -849,6 +854,12 @@ export default function DashboardPage() {
                           className="px-6 py-4 whitespace-nowrap cursor-pointer"
                         >
                           <div className="text-sm text-gray-600">{diagram.export_count || 0}</div>
+                        </td>
+                        <td 
+                          onClick={() => handleDiagramClick(diagram)}
+                          className="px-6 py-4 whitespace-nowrap cursor-pointer"
+                        >
+                          <div className="text-sm text-gray-600">{diagram.collaborator_count || 1}</div>
                         </td>
                       </tr>
                     ))}

@@ -666,6 +666,7 @@ class DiagramResponse(BaseModel):
     is_deleted: bool
     view_count: int
     export_count: int = 0  # Number of times diagram has been exported
+    collaborator_count: int = 1  # Number of collaborators (owner + shared users)
     current_version: int
     last_edited_by: Optional[str] = None
     created_at: datetime
@@ -2278,6 +2279,18 @@ async def create_share_link(
     db.commit()
     db.refresh(share)
     
+    # Increment collaborator count if sharing with a specific user
+    if shared_with_user_id:
+        # Count unique collaborators (owner + shared users)
+        unique_collaborators = db.query(Share.shared_with_user_id).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id.isnot(None)
+        ).distinct().count()
+        
+        # Update collaborator count (owner + shared users)
+        diagram.collaborator_count = 1 + unique_collaborators
+        db.commit()
+    
     # Build share URL
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
     share_url = f"{frontend_url}/shared/{token}"
@@ -2496,9 +2509,24 @@ async def revoke_share_link(
         )
         raise HTTPException(status_code=404, detail="Share link not found")
     
+    # Store shared_with_user_id before deletion
+    shared_with_user_id = share.shared_with_user_id
+    
     # Delete the share
     db.delete(share)
     db.commit()
+    
+    # Decrement collaborator count if this was a user-specific share
+    if shared_with_user_id:
+        # Count remaining unique collaborators (owner + shared users)
+        unique_collaborators = db.query(Share.shared_with_user_id).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id.isnot(None)
+        ).distinct().count()
+        
+        # Update collaborator count (owner + shared users)
+        diagram.collaborator_count = 1 + unique_collaborators
+        db.commit()
     
     logger.info(
         "Share link revoked successfully",
