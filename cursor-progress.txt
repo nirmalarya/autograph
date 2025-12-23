@@ -1,194 +1,182 @@
 ================================================================================
-AUTOGRAPH V3 - SESSION 13 PROGRESS SUMMARY (COMPLETE)
+AUTOGRAPH V3 - SESSION 14 PROGRESS SUMMARY (IN PROGRESS)
 ================================================================================
 
-Date: December 23, 2025
-Session: 13 of Many
-Agent Role: Database & Storage Features
-Status: ✅ COMPLETE (Features #24-28 passing - 5 features completed)
+Date: December 22, 2025
+Session: 14 of Many
+Agent Role: Infrastructure & Configuration Features
+Status: 🚧 IN PROGRESS (Features #29-32 completed - 4 features done)
 
 ================================================================================
-ACCOMPLISHMENTS
+ACCOMPLISHMENTS SO FAR
 ================================================================================
 
-✅ FEATURE #24: POSTGRESQL FOREIGN KEY CONSTRAINTS
-   - Verified all CASCADE constraints work correctly
-   - Verified all SET NULL constraints preserve data
-   - Tested multi-level cascade deletions
-   - All referential integrity working as designed
+✅ FEATURE #29: MINIO BUCKET POLICIES ENFORCE ACCESS CONTROL
+   - Implemented comprehensive bucket policy testing
+   - Tested private bucket (default) with 403 Forbidden
+   - Configured public-read policy for anonymous access
+   - Verified anonymous write still denied
+   - Tested authenticated IAM user access
+   - Policy removal restores private access
    - 8/8 tests passing
 
-✅ FEATURE #25: POSTGRESQL INDEXES OPTIMIZE QUERY PERFORMANCE
-   - Verified 56 indexes across all tables
-   - GIN indexes for JSONB columns working
-   - Unique indexes enforcing constraints
-   - Query performance excellent (< 1ms for 100 rows)
+✅ FEATURE #30: SERVICE DISCOVERY IN DOCKER COMPOSE VIA SERVICE NAMES
+   - Verified DNS resolution for all service names
+   - Tested network connectivity between containers
+   - Confirmed services on same Docker network (autograph-network)
+   - Verified cross-service hostname resolution
+   - All services resolve: postgres (172.21.0.2), minio (172.21.0.3), redis (172.21.0.4)
    - 8/8 tests passing
 
-✅ FEATURE #26: POSTGRESQL FULL-TEXT SEARCH WITH PG_TRGM
-   - Enabled pg_trgm extension
-   - Created trigram GIN indexes
-   - Fuzzy matching with typo tolerance working
-   - Search performance: 2.70ms for 500 files
+✅ FEATURE #31: DOCKER VOLUMES PERSIST DATA ACROSS CONTAINER RESTARTS
+   - PostgreSQL data persistence through container restart
+   - Created 3 test records, destroyed container, verified data survived
+   - MinIO bucket and object persistence tested
+   - Redis key/value persistence (with SAVE command)
+   - Named volumes preserve all data correctly
    - 7/7 tests passing
 
-✅ FEATURE #27: MINIO BUCKET LIFECYCLE RULES
-   - Configured automatic cleanup policies
-   - 30-day expiration for exports
-   - 90-day expiration for deleted diagrams
-   - Lifecycle rules verified and active
-   - 7/7 tests passing
-
-✅ FEATURE #28: MINIO PRESIGNED URLs
-   - Secure temporary access implementation
-   - Download and upload presigned URLs
-   - Presigned POST for browser uploads
-   - URL expiration enforcement (tested 5s)
+✅ FEATURE #32: ENVIRONMENT VARIABLES LOADED FROM .ENV FILE
+   - Verified 4 environment files (.env, .env.docker, .env.kubernetes, .env.local)
+   - Tested DATABASE_URL and POSTGRES_* configuration
+   - Services read environment variables correctly
+   - Secret management validated (passwords masked)
+   - .env files properly excluded from git
+   - Template files tracked for reference
    - 8/8 tests passing
 
 ================================================================================
-SESSION STATISTICS
+SESSION STATISTICS (SO FAR)
 ================================================================================
 
-Features Implemented: 5
-Features Verified: 5
-Files Created: 5 (test scripts)
+Features Implemented: 4
+Features Verified: 4
+Files Created: 4 (test scripts)
 Files Modified: 2 (feature_list.json, cursor-progress.txt)
-Test Scripts: 5 comprehensive tests (38 scenarios total)
-Total Commits: 6
+Test Scripts: 4 comprehensive tests (31 scenarios total)
+Total Commits: 4
 
 Progress:
-- Started: 23/679 features (3.39%)
-- Completed: 28/679 features (4.12%)
-- Improvement: +5 features (+0.74%)
+- Started: 28/679 features (4.12%)
+- Current: 32/679 features (4.71%)
+- Improvement: +4 features (+0.59%)
 
-Time Investment:
-- Feature #24: ~30 minutes (FK constraints)
-- Feature #25: ~20 minutes (indexes)
-- Feature #26: ~30 minutes (full-text search)
-- Feature #27: ~25 minutes (lifecycle rules)
-- Feature #28: ~25 minutes (presigned URLs)
-- Total session: ~2.5 hours
+Time Investment (so far):
+- Feature #29: ~30 minutes (bucket policies)
+- Feature #30: ~25 minutes (service discovery)
+- Feature #31: ~35 minutes (volume persistence)
+- Feature #32: ~25 minutes (environment variables)
+- Total session so far: ~2 hours
 
 Test Coverage:
-- 38 test scenarios created and passing
-- 2,454 lines of test code written
+- 31 test scenarios created and passing
+- 1,581 lines of test code written
 - 100% pass rate on all tests
 
 ================================================================================
 TECHNICAL HIGHLIGHTS
 ================================================================================
 
-Database Integrity:
-✓ Foreign key constraints enforce referential integrity
-✓ CASCADE deletions prevent orphaned records
-✓ SET NULL preserves audit trail
-✓ Multi-level cascades work correctly
+MinIO Access Control:
+✓ Private buckets deny anonymous access (403)
+✓ Public-read policy allows anonymous reads
+✓ Anonymous writes always forbidden
+✓ Authenticated access works correctly
+✓ Policy changes take effect immediately
 
-Query Performance:
-✓ 56 indexes optimize database queries
-✓ GIN indexes for JSONB queries
-✓ Query time: 0.98ms for 100 rows
-✓ Full-text search: 2.70ms for 500 files
+Service Discovery:
+✓ Docker DNS resolution for service names
+✓ All services on autograph-network
+✓ Cross-container communication works
+✓ No hardcoded IP addresses needed
 
-Full-Text Search:
-✓ pg_trgm extension enabled
-✓ Fuzzy matching with typo tolerance
-✓ Similarity-based search
-✓ Trigram GIN indexes
+Data Persistence:
+✓ PostgreSQL data survives container recreation
+✓ MinIO objects persist across restarts
+✓ Redis data persists with SAVE
+✓ Named volumes preserve all state
 
-Storage Management:
-✓ Automatic file cleanup with lifecycle rules
-✓ Presigned URLs for secure access
-✓ Download and upload via presigned URLs
-✓ Time-limited URL expiration
+Configuration Management:
+✓ Multiple environment files for different deployments
+✓ Secrets not hardcoded in source code
+✓ Database credentials via environment
+✓ .env files excluded from version control
 
 ================================================================================
 FILES CREATED
 ================================================================================
 
 Test Scripts:
-1. test_foreign_key_constraints.py (697 lines, 8 tests)
-2. test_postgresql_indexes.py (630 lines, 8 tests)
-3. test_full_text_search.py (530 lines, 7 tests)
-4. test_minio_lifecycle.py (388 lines, 7 tests)
-5. test_presigned_urls.py (409 lines, 8 tests)
+1. test_minio_bucket_policies.py (357 lines, 8 tests)
+2. test_service_discovery.py (320 lines, 8 tests)
+3. test_docker_volumes.py (547 lines, 7 tests)
+4. test_environment_variables.py (357 lines, 8 tests)
 
-Total: 2,654 lines of test code
+Total: 1,581 lines of test code
 
 ================================================================================
 TEST RESULTS (ALL PASSING)
 ================================================================================
 
-Feature #24 - Foreign Key Constraints (8/8):
-✓ CASCADE Delete (user → file → versions)
-✓ SET NULL (versions.created_by)
-✓ Multi-level CASCADE
-✓ Folder SET NULL
-✓ Team SET NULL
-✓ Comments CASCADE
-✓ Shares CASCADE
-✓ Audit Log SET NULL
+Feature #29 - MinIO Bucket Policies (8/8):
+✓ Private bucket with 403 response
+✓ Public-read policy configuration
+✓ Anonymous read access works
+✓ Anonymous write denied
+✓ Authenticated access works
+✓ Policy removal tested
+✓ Bucket creation and deletion
+✓ Access control enforcement
 
-Feature #25 - PostgreSQL Indexes (8/8):
-✓ Index scan for files.owner_id
-✓ Composite indexes
-✓ Partial index for soft deletes
-✓ GIN indexes for JSONB
-✓ Unique indexes
-✓ Indexes on foreign keys
-✓ Index performance
-✓ Full-text search indexes
+Feature #30 - Service Discovery (8/8):
+✓ Docker Compose services running
+✓ DNS resolution for service names
+✓ Network connectivity verified
+✓ Service-to-service communication
+✓ All services on same network
+✓ HTTP communication tested
+✓ Cross-container pinging
+✓ Network isolation verified
 
-Feature #26 - Full-Text Search (7/7):
-✓ Enable pg_trgm extension
-✓ Create trigram indexes
-✓ Similarity search
-✓ Fuzzy matching (typo tolerance)
-✓ Similarity threshold
-✓ Search performance
-✓ Compare with ILIKE
+Feature #31 - Volume Persistence (7/7):
+✓ Named volumes verified
+✓ PostgreSQL data created
+✓ Container stop and remove
+✓ Container restart with same volume
+✓ Data persisted after restart
+✓ MinIO persistence tested
+✓ Redis persistence tested
 
-Feature #27 - MinIO Lifecycle Rules (7/7):
-✓ Verify buckets exist
-✓ Configure lifecycle rules
-✓ Verify lifecycle rules
-✓ Upload and verify files
-✓ List objects in buckets
-✓ Retention policy concepts
-✓ Bucket versioning
+Feature #32 - Environment Variables (8/8):
+✓ .env files exist
+✓ DATABASE_URL in configs
+✓ Services read env vars
+✓ Connections use env vars
+✓ docker-compose integration
+✓ Secret management
+✓ .gitignore exclusions
+✓ Configuration verified
 
-Feature #28 - MinIO Presigned URLs (8/8):
-✓ Upload test file
-✓ Generate download presigned URL
-✓ Access via presigned URL
-✓ Short expiry presigned URL
-✓ Generate upload presigned URL
-✓ Upload via presigned URL
-✓ Presigned POST
-✓ Cleanup test files
-
-Total: 38/38 tests PASSED (100%)
+Total: 31/31 tests PASSED (100%)
 
 ================================================================================
 NEXT SESSION PRIORITIES
 ================================================================================
 
-Continue Phase 1 Infrastructure (22 features remaining):
+Continue Phase 1 Infrastructure (18 features remaining to reach 50):
 
 High Priority:
-1. Feature #29-30: User registration and login endpoints
-2. Feature #31-32: JWT token generation and validation
-3. Feature #33-35: Password reset flow
-4. Feature #36-40: SAML SSO and JIT provisioning
+1. Feature #33: CORS configuration
+2. Feature #34: Request timeout handling
+3. Feature #35: Retry logic with exponential backoff
+4. Feature #36: Request deduplication
+5. Feature #37-40: Logging improvements
 
 Medium Priority:
-5. Feature #41-45: API versioning and documentation
-6. Feature #46-50: Additional infrastructure services
+6. Feature #41-45: Additional infrastructure features
+7. Feature #46-50: Final Phase 1 features
 
-PHASE 1 TARGET: 50/50 features (currently 28/50 = 56% complete)
-PHASE 2: Canvas and drawing features
-PHASE 3: AI and Mermaid diagram generation
+PHASE 1 TARGET: 50/50 features (currently 32/50 = 64% complete)
 
 ================================================================================
 ENVIRONMENT STATUS
@@ -196,42 +184,46 @@ ENVIRONMENT STATUS
 
 Infrastructure:
 ✅ PostgreSQL 16.6 - Fully configured
-   - 12 tables with relationships
-   - 56 indexes for performance
-   - Foreign key constraints verified
-   - GIN indexes for JSONB
-   - pg_trgm for full-text search
-   - Query performance optimized
+   - Data persistence verified
+   - Environment variables working
+   - Named volumes functional
 
 ✅ Redis 7.4.1 - Running and tested
+   - Data persistence with SAVE
+   - Service discovery working
 
 ✅ MinIO S3 - Fully configured
-   - 3 buckets (diagrams, exports, uploads)
-   - Lifecycle rules active
-   - Presigned URLs working
-   - Secure temporary access
+   - Bucket policies enforced
+   - Data persistence verified
+   - Access control tested
+
+✅ Docker Compose - Working perfectly
+   - Service discovery via DNS
+   - Named volumes persist data
+   - Environment variables loaded
 
 Microservices:
 ✅ API Gateway - Port 8080
 ✅ Auth Service - Port 8085
 ✅ Diagram Service - Port 8082
+✅ Frontend - Port 3000
 
 All services healthy and tested.
 
 ================================================================================
-SUCCESS METRICS
+SUCCESS METRICS (SO FAR)
 ================================================================================
 
-Session 13 Completion: ✅ 100%
-- 5 features implemented ✅
-- 5 features verified ✅
-- 38 tests passing ✅
-- 6 clean commits ✅
+Session 14 Progress: 🚧 64% (4 features of estimated 6-8)
+- 4 features implemented ✅
+- 4 features verified ✅
+- 31 tests passing ✅
+- 4 clean commits ✅
 - Zero bugs found ✅
 
 Overall Progress:
-- Features: 28/679 (4.12%)
-- Phase 1: 28/50 (56%)
+- Features: 32/679 (4.71%)
+- Phase 1: 32/50 (64%)
 - Phase 2: 0/60 (0%)
 - Phase 3: 0/60 (0%)
 
@@ -244,82 +236,60 @@ Quality Metrics:
 ✅ Well-documented
 
 Key Achievements:
-- Database integrity verified
-- Query performance optimized
-- Full-text search enabled
-- Storage lifecycle automated
-- Secure file access implemented
+- Infrastructure security verified (bucket policies)
+- Service communication validated (DNS)
+- Data durability confirmed (volumes)
+- Configuration management tested (env vars)
 
 ================================================================================
-LESSONS LEARNED
+LESSONS LEARNED (SO FAR)
 ================================================================================
 
-1. Database Testing
-   - Test with actual database, not mocks
-   - Verify constraints with real data
-   - Measure performance with realistic datasets
-   - Clean up test data thoroughly
+1. MinIO Policies
+   - Policy changes propagate within 2 seconds
+   - Anonymous access properly blocked by default
+   - Public-read allows GET but not PUT
+   - JSON policy format is AWS S3 compatible
 
-2. Storage Management
-   - Lifecycle rules reduce manual cleanup
-   - Presigned URLs enable secure sharing
-   - Test expiration timing carefully
-   - Handle edge cases gracefully
+2. Service Discovery
+   - Docker Compose provides automatic DNS
+   - Service names resolve to container IPs
+   - No need for manual IP configuration
+   - Network isolation within Docker networks
 
-3. Performance Optimization
-   - Indexes critical for query speed
-   - GIN indexes essential for JSONB
-   - Full-text search needs trigram indexes
-   - Monitor query plans with EXPLAIN
+3. Volume Persistence
+   - Named volumes preserve data reliably
+   - Container recreation doesn't lose data
+   - Important for stateful services
+   - PostgreSQL, MinIO, Redis all use volumes
 
-4. Error Handling
-   - Handle exception types carefully
-   - Graceful degradation for missing features
-   - Version compatibility matters
-   - Test edge cases explicitly
+4. Environment Variables
+   - Multiple .env files for different contexts
+   - Secrets should never be hardcoded
+   - Template files tracked, actual .env excluded
+   - docker-compose reads .env.docker by default
 
-5. Test Strategy
-   - Create comprehensive test suites
-   - Test happy path and edge cases
-   - Verify cleanup after tests
-   - Use realistic test data sizes
-
-================================================================================
-CONCLUSION
-================================================================================
-
-Session 13 achieved excellent results:
-
-✅ 5 features completed (24-28)
-✅ 38 tests passing (100% success)
-✅ 2,654 lines of test code
-✅ 6 clean git commits
-✅ Phase 1 now 56% complete
-
-Major Technical Achievements:
-1. Database integrity fully verified
-2. Query performance optimized
-3. Full-text search operational
-4. Storage lifecycle automated
-5. Secure file access implemented
-
-The infrastructure foundation is now:
-- Robust (foreign key constraints)
-- Fast (optimized indexes)
-- Searchable (pg_trgm fuzzy matching)
-- Automated (lifecycle rules)
-- Secure (presigned URLs)
-
-Next session will focus on:
-- User authentication features
-- JWT token management
-- Password reset flows
-- Continuing Phase 1 infrastructure
-
-Quality maintained. Production-ready code delivered. ✅
-
-Progress: 28/679 features (4.12%) - Steady advancement toward 50/50 Phase 1 goal.
+5. Testing Strategy
+   - Test with actual infrastructure, not mocks
+   - Verify end-to-end functionality
+   - Document expected vs actual behavior
+   - Clean up test artifacts after tests
 
 ================================================================================
-END OF SESSION 13 SUMMARY
+SESSION CONTINUATION PLAN
+================================================================================
+
+Next Features to Implement (in order):
+1. Feature #33: CORS configuration (estimated 20 min)
+2. Feature #34: Request timeout (estimated 25 min)
+3. Feature #35: Retry logic (estimated 30 min)
+4. Feature #36: Request deduplication (estimated 25 min)
+
+Target for session completion: 6-8 features total
+Currently at: 4/6+ features (67% to minimum goal)
+
+Quality remains top priority - thorough testing over speed.
+
+================================================================================
+END OF SESSION 14 PROGRESS (IN PROGRESS)
 ================================================================================
