@@ -454,6 +454,7 @@ class UpdateDiagramRequest(BaseModel):
     canvas_data: Optional[Dict[str, Any]] = None
     note_content: Optional[str] = None
     description: Optional[str] = None  # Version description
+    expected_version: Optional[int] = None  # For optimistic locking
     
     @validator('title')
     def validate_title(cls, v):
@@ -479,6 +480,13 @@ class UpdateDiagramRequest(BaseModel):
         """Validate version description has reasonable length."""
         if v is not None and len(v) > 1000:
             raise ValueError('Description must not exceed 1000 characters')
+        return v
+    
+    @validator('expected_version')
+    def validate_expected_version(cls, v):
+        """Validate expected version is positive."""
+        if v is not None and v < 1:
+            raise ValueError('Expected version must be positive')
         return v
 
 
@@ -659,6 +667,32 @@ async def update_diagram(
             diagram_id=diagram_id
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization - user must own the diagram
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized update attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="You do not have permission to update this diagram")
+    
+    # Optimistic locking: Check if expected version matches current version
+    if update_data.expected_version is not None:
+        if diagram.current_version != update_data.expected_version:
+            logger.warning(
+                "Version conflict detected",
+                correlation_id=correlation_id,
+                diagram_id=diagram_id,
+                expected_version=update_data.expected_version,
+                current_version=diagram.current_version
+            )
+            raise HTTPException(
+                status_code=409, 
+                detail=f"Diagram was modified by another user. Expected version {update_data.expected_version}, but current version is {diagram.current_version}. Please refresh and try again."
+            )
     
     # Update diagram fields
     if update_data.title is not None:
