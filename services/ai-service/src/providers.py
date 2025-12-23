@@ -6,6 +6,10 @@ from typing import Optional, Dict, Any, List
 from enum import Enum
 import logging
 
+from .layout_algorithms import LayoutEngine, LayoutAlgorithm
+from .icon_intelligence import IconIntelligence
+from .quality_validation import QualityValidator, QualityReport
+
 logger = logging.getLogger(__name__)
 
 
@@ -511,3 +515,131 @@ class AIProviderFactory:
         
         # All providers failed
         raise Exception(f"All AI providers failed. Last error: {str(last_error)}")
+    
+    @staticmethod
+    async def generate_with_quality_validation(
+        prompt: str,
+        diagram_type: Optional[DiagramType] = None,
+        model: Optional[str] = None,
+        max_retries: int = 2
+    ) -> Dict[str, Any]:
+        """
+        Generate diagram with automatic quality validation and retry.
+        
+        Features:
+        - #327-330: Quality validation (overlaps, spacing, alignment, readability)
+        - Auto-retry if quality score < 80
+        - Up to 2 retries with adjusted parameters
+        """
+        attempt = 0
+        best_result = None
+        best_score = 0.0
+        
+        while attempt <= max_retries:
+            attempt += 1
+            logger.info(f"Generation attempt {attempt}/{max_retries + 1}")
+            
+            try:
+                # Generate diagram
+                result = await AIProviderFactory.generate_with_fallback(
+                    prompt, diagram_type, model
+                )
+                
+                # Validate quality
+                validation = QualityValidator.validate_diagram(
+                    result["mermaid_code"],
+                    context=prompt
+                )
+                
+                result["quality_score"] = validation.score
+                result["quality_passed"] = validation.passed
+                result["quality_issues"] = validation.issues
+                result["quality_metrics"] = validation.metrics
+                
+                logger.info(f"Quality score: {validation.score:.1f}/100")
+                
+                # Track best result
+                if validation.score > best_score:
+                    best_score = validation.score
+                    best_result = result
+                
+                # If quality is good, return immediately
+                if validation.passed:
+                    logger.info("✓ Quality validation passed!")
+                    return result
+                
+                # Check if we should retry
+                if attempt <= max_retries and QualityValidator.should_retry(validation):
+                    logger.info(f"Quality score {validation.score:.1f} below threshold. Retrying...")
+                    
+                    # Add quality feedback to prompt for next attempt
+                    suggestions = QualityValidator.generate_improvement_suggestions(validation)
+                    prompt = f"{prompt}\n\nImprovement requirements: {', '.join(suggestions)}"
+                else:
+                    logger.warning(f"Quality validation failed, but no more retries")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Generation attempt {attempt} failed: {str(e)}")
+                if attempt > max_retries:
+                    raise
+        
+        # Return best result even if not perfect
+        if best_result:
+            logger.info(f"Returning best result with score {best_score:.1f}/100")
+            return best_result
+        else:
+            raise Exception("All generation attempts failed")
+    
+    @staticmethod
+    async def generate_enhanced(
+        prompt: str,
+        diagram_type: Optional[DiagramType] = None,
+        model: Optional[str] = None,
+        layout_algorithm: Optional[LayoutAlgorithm] = None,
+        enable_icon_intelligence: bool = True,
+        enable_quality_validation: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Enhanced diagram generation with all advanced features.
+        
+        Features:
+        - #321-323: Layout algorithms (force-directed, tree, circular)
+        - #324-326: Icon intelligence (AWS, Azure, GCP, databases)
+        - #327-330: Quality validation with auto-retry
+        """
+        # Generate with quality validation
+        if enable_quality_validation:
+            result = await AIProviderFactory.generate_with_quality_validation(
+                prompt, diagram_type, model
+            )
+        else:
+            result = await AIProviderFactory.generate_with_fallback(
+                prompt, diagram_type, model
+            )
+        
+        mermaid_code = result["mermaid_code"]
+        
+        # Apply icon intelligence
+        if enable_icon_intelligence:
+            logger.info("Applying icon intelligence...")
+            icon_suggestions = IconIntelligence.suggest_icons(prompt)
+            result["icon_suggestions"] = [
+                {"service": svc, "icon": icon} 
+                for svc, icon in icon_suggestions
+            ]
+            
+            # Optionally enhance code with icons
+            # (disabled by default to not modify generated code)
+            # mermaid_code = IconIntelligence.enhance_mermaid_with_icons(mermaid_code, prompt)
+        
+        # Apply layout algorithm (if specified)
+        if layout_algorithm:
+            logger.info(f"Applying {layout_algorithm} layout...")
+            mermaid_code = LayoutEngine.apply_layout(mermaid_code, layout_algorithm)
+            result["layout_algorithm"] = layout_algorithm
+        
+        result["mermaid_code"] = mermaid_code
+        result["enhanced"] = True
+        
+        return result

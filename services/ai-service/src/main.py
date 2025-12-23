@@ -3,12 +3,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 import os
 import logging
 from dotenv import load_dotenv
 
 from .providers import AIProviderFactory, DiagramType
+from .layout_algorithms import LayoutAlgorithm
+from .icon_intelligence import IconIntelligence
+from .quality_validation import QualityValidator, QualityReport
 
 load_dotenv()
 
@@ -39,6 +42,9 @@ class GenerateDiagramRequest(BaseModel):
     diagram_type: Optional[str] = Field(None, description="Preferred diagram type (architecture, sequence, erd, flowchart)")
     model: Optional[str] = Field(None, description="Specific AI model to use")
     provider: Optional[str] = Field(None, description="Specific provider (bayer_mga, openai, anthropic, gemini)")
+    layout_algorithm: Optional[str] = Field(None, description="Layout algorithm (force_directed, tree, circular, hierarchical)")
+    enable_quality_validation: bool = Field(True, description="Enable quality validation with auto-retry")
+    enable_icon_intelligence: bool = Field(True, description="Enable icon intelligence")
 
 
 class GenerateDiagramResponse(BaseModel):
@@ -50,6 +56,13 @@ class GenerateDiagramResponse(BaseModel):
     model: str
     tokens_used: int
     timestamp: str
+    quality_score: Optional[float] = None
+    quality_passed: Optional[bool] = None
+    quality_issues: Optional[List[str]] = None
+    quality_metrics: Optional[Dict] = None
+    icon_suggestions: Optional[List[Dict]] = None
+    layout_algorithm: Optional[str] = None
+    enhanced: Optional[bool] = False
 
 
 class ProvidersStatusResponse(BaseModel):
@@ -116,6 +129,12 @@ async def generate_diagram(request: GenerateDiagramRequest):
     
     Uses Bayer MGA as primary provider with automatic fallback chain:
     MGA → OpenAI → Anthropic → Gemini
+    
+    New Features:
+    - Layout algorithms: force-directed, tree, circular (Features #321-323)
+    - Icon intelligence: auto-detect AWS, Azure, GCP services (Features #324-326)
+    - Quality validation: check overlaps, spacing, alignment (Features #327-330)
+    - Auto-retry: regenerate if quality score < 80
     """
     try:
         logger.info(f"Generating diagram for prompt: {request.prompt[:100]}...")
@@ -128,17 +147,31 @@ async def generate_diagram(request: GenerateDiagramRequest):
             except ValueError:
                 logger.warning(f"Invalid diagram type: {request.diagram_type}, will auto-detect")
         
-        # Generate using fallback chain
-        result = await AIProviderFactory.generate_with_fallback(
+        # Convert layout_algorithm string to enum if provided
+        layout_algorithm_enum = None
+        if request.layout_algorithm:
+            try:
+                layout_algorithm_enum = LayoutAlgorithm(request.layout_algorithm.lower())
+            except ValueError:
+                logger.warning(f"Invalid layout algorithm: {request.layout_algorithm}")
+        
+        # Generate using enhanced method
+        result = await AIProviderFactory.generate_enhanced(
             prompt=request.prompt,
             diagram_type=diagram_type_enum,
-            model=request.model
+            model=request.model,
+            layout_algorithm=layout_algorithm_enum,
+            enable_icon_intelligence=request.enable_icon_intelligence,
+            enable_quality_validation=request.enable_quality_validation
         )
         
         # Add timestamp
         result["timestamp"] = datetime.utcnow().isoformat()
         
         logger.info(f"✓ Successfully generated {result['diagram_type']} diagram using {result['provider']}")
+        
+        if result.get('quality_score'):
+            logger.info(f"  Quality score: {result['quality_score']:.1f}/100")
         
         return result
         
@@ -208,6 +241,134 @@ async def get_available_models():
             "models": ["gemini-pro", "gemini-1.5-pro"],
             "default": "gemini-pro"
         }
+    }
+
+
+@app.post("/api/ai/validate")
+async def validate_diagram(mermaid_code: str, context: str = ""):
+    """
+    Validate diagram quality.
+    
+    Features #327-330:
+    - Check overlapping nodes
+    - Check spacing minimum 50px
+    - Check alignment
+    - Calculate readability score 0-100
+    
+    Returns quality score and improvement suggestions.
+    """
+    try:
+        validation = QualityValidator.validate_diagram(mermaid_code, context)
+        report = QualityReport.generate_report(validation)
+        suggestions = QualityValidator.generate_improvement_suggestions(validation)
+        
+        return {
+            "score": validation.score,
+            "passed": validation.passed,
+            "issues": validation.issues,
+            "metrics": validation.metrics,
+            "suggestions": suggestions,
+            "report": report
+        }
+    except Exception as e:
+        logger.error(f"Validation failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to validate diagram: {str(e)}"
+        )
+
+
+@app.get("/api/ai/suggest-icons")
+async def suggest_icons(prompt: str):
+    """
+    Suggest appropriate icons based on prompt.
+    
+    Features #324-326: Icon intelligence
+    - Detects AWS, Azure, GCP services
+    - Maps databases and frameworks
+    - Context-aware suggestions
+    """
+    try:
+        suggestions = IconIntelligence.suggest_icons(prompt)
+        
+        return {
+            "suggestions": [
+                {"service": service, "icon": icon}
+                for service, icon in suggestions
+            ],
+            "count": len(suggestions)
+        }
+    except Exception as e:
+        logger.error(f"Icon suggestion failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to suggest icons: {str(e)}"
+        )
+
+
+@app.get("/api/ai/enhance-with-icons")
+async def enhance_with_icons(mermaid_code: str, context: str = ""):
+    """
+    Enhance Mermaid diagram with icon labels.
+    
+    Feature #326: Context-aware icon selection
+    """
+    try:
+        enhanced_code = IconIntelligence.enhance_mermaid_with_icons(mermaid_code, context)
+        validation = IconIntelligence.validate_icon_usage(enhanced_code)
+        
+        return {
+            "original_code": mermaid_code,
+            "enhanced_code": enhanced_code,
+            "validation": validation
+        }
+    except Exception as e:
+        logger.error(f"Icon enhancement failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enhance with icons: {str(e)}"
+        )
+
+
+@app.get("/api/ai/layout-algorithms")
+async def get_layout_algorithms():
+    """
+    Get available layout algorithms.
+    
+    Features #321-323:
+    - Force-directed layout
+    - Tree layout
+    - Circular layout
+    - Hierarchical layout (default)
+    """
+    return {
+        "algorithms": [
+            {
+                "id": "hierarchical",
+                "name": "Hierarchical (Sugiyama)",
+                "description": "Default Mermaid layout, good for most diagrams",
+                "use_cases": ["architecture", "flowchart", "general"]
+            },
+            {
+                "id": "force_directed",
+                "name": "Force-Directed",
+                "description": "Spring/physics-based layout, nodes repel and edges attract",
+                "use_cases": ["network", "relationship", "graph"]
+            },
+            {
+                "id": "tree",
+                "name": "Tree Layout",
+                "description": "Hierarchical tree structure, good for org charts",
+                "use_cases": ["hierarchy", "org_chart", "file_system"]
+            },
+            {
+                "id": "circular",
+                "name": "Circular Layout",
+                "description": "Nodes arranged in a circle",
+                "use_cases": ["small_graphs", "relationships", "cycles"]
+            }
+        ],
+        "default": "hierarchical"
     }
 
 
