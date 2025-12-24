@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Breadcrumbs from '../components/Breadcrumbs';
 import FolderTree from '../components/FolderTree';
+import CommandPalette from '../components/CommandPalette';
 
 interface Diagram {
   id: string;
@@ -80,6 +81,9 @@ export default function DashboardPage() {
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [deletingBatch, setDeletingBatch] = useState(false);
   const [movingBatch, setMovingBatch] = useState(false);
+  
+  // Command palette state
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   useEffect(() => {
     // Check if user is authenticated
@@ -101,6 +105,19 @@ export default function DashboardPage() {
 
     setLoading(false);
   }, [router]);
+
+  // Command Palette keyboard shortcut (Cmd+K or Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Fetch diagrams when user, page, filterType, searchQuery, sortBy, sortOrder, or activeTab changes
   useEffect(() => {
@@ -1309,6 +1326,17 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        onCreateDiagram={(type) => {
+          setDiagramType(type);
+          setShowCreateModal(true);
+        }}
+        diagrams={diagrams}
+      />
     </main>
   );
 }
