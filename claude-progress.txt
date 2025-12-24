@@ -334,3 +334,54 @@ Remaining: 7 enhancement features
 Next Session: Feature #660 - Save diagram persists changes successfully
 
 Generated: Session 3 - Service Health Fixes Complete
+
+# SESSION 4 - FEATURE #660 COMPLETE + CRITICAL BUG FIX
+
+## CRITICAL BUG FIXED
+
+**SQLAlchemy relationship configuration error in User model blocking all registration!**
+
+### Root Cause
+- User model had relationship to File without specifying foreign_keys
+- File model has TWO foreign keys to users table: `owner_id` and `last_edited_by`
+- SQLAlchemy couldn't determine which FK to use for the relationship
+- Error: "Could not determine join condition between parent/child tables"
+
+### Solution
+1. ✅ Added `foreign_keys="File.owner_id"` to User.files relationship
+2. ✅ Added `foreign_keys=[owner_id]` to File.owner relationship
+3. ✅ Rebuilt auth-service Docker image
+4. ✅ Verified registration now works
+
+## Feature #660: PASSING ✅
+
+**Save diagram persists changes successfully!**
+
+### E2E Test Results
+- ✅ Create test user (registration works!)
+- ✅ Verify email (via direct DB update for testing)
+- ✅ Login and get access token
+- ✅ Create new diagram
+- ✅ Update diagram (add shapes, change title)
+- ✅ Retrieve diagram again
+- ✅ **All changes persisted correctly!**
+
+### Test Script Created
+- `test_save_diagram.py`: Full automated E2E test
+- Tests complete flow: register → login → create → update → verify
+- Can be run repeatedly for regression testing
+
+## Regression Check
+✅ No regressions detected (baseline: 654/654 intact)
+
+## Progress
+**660/666 features passing (99.0%)**
+
+Remaining: 6 enhancement features
+
+## Next Session
+Feature #661 - Duplicate template creates exact copy successfully
+
+---
+
+Generated: Session 4 - Critical Bug Fix + Feature #660 Complete
