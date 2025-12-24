@@ -39,7 +39,7 @@ export function getBrandingConfig(): BrandingConfig {
     return {
       enabled: true,
       logoUrl: process.env.NEXT_PUBLIC_CUSTOM_LOGO_URL || '/icons/icon-192x192.png',
-      productName: process.env.NEXT_PUBLIC_PRODUCT_NAME || 'AutoGraph v3',
+      productName: process.env.NEXT_PUBLIC_PRODUCT_NAME || 'AutoGraph',
       tagline: 'AI-Powered Diagramming Platform',
       primaryColor: process.env.NEXT_PUBLIC_PRIMARY_COLOR || '#3b82f6',
       secondaryColor: process.env.NEXT_PUBLIC_SECONDARY_COLOR || '#2563eb',
@@ -51,7 +51,7 @@ export function getBrandingConfig(): BrandingConfig {
   return {
     enabled: false,
     logoUrl: '/icons/icon-192x192.png',
-    productName: 'AutoGraph v3',
+    productName: 'AutoGraph',
     tagline: 'AI-Powered Diagramming Platform',
     primaryColor: '#3b82f6',
     secondaryColor: '#2563eb',
