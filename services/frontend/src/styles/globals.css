@@ -312,6 +312,110 @@
   }
 }
 
+/* Consistent Spacing System - 8px Grid */
+@layer utilities {
+  /* 
+   * AutoGraph v3 Spacing System
+   * Based on 8px grid (Tailwind's default 0.25rem = 4px)
+   * 
+   * Scale:
+   * 0.5 = 2px  (0.125rem) - Micro spacing
+   * 1   = 4px  (0.25rem)  - Tiny spacing
+   * 2   = 8px  (0.5rem)   - Small spacing ⭐ Base unit
+   * 3   = 12px (0.75rem)  - Medium-small
+   * 4   = 16px (1rem)     - Medium spacing ⭐ Common
+   * 6   = 24px (1.5rem)   - Large spacing ⭐ Common
+   * 8   = 32px (2rem)     - Extra large
+   * 12  = 48px (3rem)     - Huge spacing
+   * 16  = 64px (4rem)     - Massive spacing
+   * 
+   * Usage Guidelines:
+   * - Use even numbers (2, 4, 6, 8) for consistency
+   * - Prefer 4, 6, 8 for most layouts
+   * - Use 2 for tight spacing (buttons, badges)
+   * - Use 12, 16 for section spacing
+   * - Maintain visual rhythm across pages
+   */
+  
+  /* Container Spacing Presets */
+  .container-padding {
+    @apply px-4 py-6 sm:px-6 sm:py-8 md:p-8;
+  }
+  
+  .container-padding-sm {
+    @apply px-3 py-4 sm:px-4 sm:py-6;
+  }
+  
+  .container-padding-lg {
+    @apply px-6 py-8 sm:px-8 sm:py-12 md:p-16;
+  }
+  
+  /* Section Spacing */
+  .section-spacing {
+    @apply mb-8 md:mb-12;
+  }
+  
+  .section-spacing-sm {
+    @apply mb-4 md:mb-6;
+  }
+  
+  .section-spacing-lg {
+    @apply mb-12 md:mb-16;
+  }
+  
+  /* Element Spacing */
+  .element-spacing {
+    @apply space-y-4;
+  }
+  
+  .element-spacing-sm {
+    @apply space-y-2;
+  }
+  
+  .element-spacing-lg {
+    @apply space-y-6;
+  }
+  
+  /* Grid Gaps */
+  .grid-gap {
+    @apply gap-4;
+  }
+  
+  .grid-gap-sm {
+    @apply gap-2;
+  }
+  
+  .grid-gap-lg {
+    @apply gap-6;
+  }
+  
+  /* Form Spacing */
+  .form-spacing {
+    @apply space-y-6;
+  }
+  
+  .form-spacing-sm {
+    @apply space-y-4;
+  }
+  
+  .form-spacing-lg {
+    @apply space-y-8;
+  }
+  
+  /* Card Padding */
+  .card-padding {
+    @apply p-6;
+  }
+  
+  .card-padding-sm {
+    @apply p-4;
+  }
+  
+  .card-padding-lg {
+    @apply p-8;
+  }
+}
+
 /* Touch gesture support */
 @layer utilities {
   /* Enable smooth touch scrolling and gestures */
