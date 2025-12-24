@@ -3,30 +3,42 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 
+interface Frame {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface ExportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   diagramId: string;
   canvasData: any;
   selectedShapes?: string[]; // IDs of selected shapes
+  frames?: Frame[]; // Available frames in the canvas
 }
 
 type BackgroundType = 'transparent' | 'white' | 'custom';
 type ExportFormat = 'png' | 'svg' | 'pdf' | 'json' | 'markdown' | 'html';
 type Resolution = '1x' | '2x' | '3x' | '4x';
 type Quality = 'low' | 'medium' | 'high' | 'ultra';
-type ExportScope = 'full' | 'selection';
+type ExportScope = 'full' | 'selection' | 'frame';
 
-export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, selectedShapes }: ExportDialogProps) {
+export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, selectedShapes, frames }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [backgroundType, setBackgroundType] = useState<BackgroundType>('white');
   const [customColor, setCustomColor] = useState('#f0f0f0');
   const [resolution, setResolution] = useState<Resolution>('2x');
   const [quality, setQuality] = useState<Quality>('high');
   const [exportScope, setExportScope] = useState<ExportScope>('full');
+  const [selectedFrameId, setSelectedFrameId] = useState<string>('');
   const [exporting, setExporting] = useState(false);
   
   const hasSelection = selectedShapes && selectedShapes.length > 0;
+  const hasFrames = frames && frames.length > 0;
 
   if (!isOpen) return null;
 
@@ -61,6 +73,7 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, s
         scale: getScaleValue(),
         export_scope: exportScope,
         selected_shapes: exportScope === 'selection' ? selectedShapes : undefined,
+        frame_id: exportScope === 'frame' ? selectedFrameId : undefined,
       };
 
       const response = await fetch(`http://localhost:8097/export/${format}`, {
@@ -145,13 +158,13 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, s
             </div>
           </div>
 
-          {/* Export Scope - Full Canvas or Selection Only */}
-          {hasSelection && (
+          {/* Export Scope - Full Canvas, Selection, or Frame */}
+          {(hasSelection || hasFrames) && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-3">
                 Export Scope
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid gap-3 ${hasSelection && hasFrames ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <button
                   onClick={() => setExportScope('full')}
                   className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
@@ -163,25 +176,69 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, s
                   <div className="font-semibold">Full Canvas</div>
                   <div className="text-xs text-gray-500 mt-1">Export entire diagram</div>
                 </button>
-                <button
-                  onClick={() => setExportScope('selection')}
-                  className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
-                    exportScope === 'selection'
-                      ? 'border-blue-600 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="font-semibold">Selection Only</div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {selectedShapes?.length || 0} shape{selectedShapes?.length !== 1 ? 's' : ''} selected
-                  </div>
-                </button>
+                {hasSelection && (
+                  <button
+                    onClick={() => setExportScope('selection')}
+                    className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
+                      exportScope === 'selection'
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="font-semibold">Selection Only</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {selectedShapes?.length || 0} shape{selectedShapes?.length !== 1 ? 's' : ''} selected
+                    </div>
+                  </button>
+                )}
+                {hasFrames && (
+                  <button
+                    onClick={() => {
+                      setExportScope('frame');
+                      if (frames && frames.length > 0 && !selectedFrameId) {
+                        setSelectedFrameId(frames[0].id);
+                      }
+                    }}
+                    className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
+                      exportScope === 'frame'
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="font-semibold">Frame Only</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {frames?.length || 0} frame{frames?.length !== 1 ? 's' : ''} available
+                    </div>
+                  </button>
+                )}
               </div>
               <p className="mt-2 text-sm text-gray-500">
-                {exportScope === 'selection' 
-                  ? 'Export will be tightly cropped to selected shapes'
-                  : 'Export will include the entire canvas'
-                }
+                {exportScope === 'selection' && 'Export will be tightly cropped to selected shapes'}
+                {exportScope === 'frame' && 'Export will include only the selected frame and its contents'}
+                {exportScope === 'full' && 'Export will include the entire canvas'}
+              </p>
+            </div>
+          )}
+
+          {/* Frame Selector - shown when frame export is selected */}
+          {exportScope === 'frame' && hasFrames && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Select Frame
+              </label>
+              <select
+                value={selectedFrameId}
+                onChange={(e) => setSelectedFrameId(e.target.value)}
+                className="w-full px-4 py-3 text-sm border-2 border-gray-200 rounded-lg focus:border-blue-600 focus:outline-none"
+              >
+                {frames?.map((frame) => (
+                  <option key={frame.id} value={frame.id}>
+                    {frame.name || `Frame (${Math.round(frame.w)}×${Math.round(frame.h)})`}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-sm text-gray-500">
+                Choose which frame to export
               </p>
             </div>
           )}
@@ -330,7 +387,12 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, s
               <div className="flex justify-between">
                 <span>Scope:</span>
                 <span className="font-medium">
-                  {exportScope === 'full' ? 'Full Canvas' : `Selection (${selectedShapes?.length || 0} shapes)`}
+                  {exportScope === 'full' && 'Full Canvas'}
+                  {exportScope === 'selection' && `Selection (${selectedShapes?.length || 0} shapes)`}
+                  {exportScope === 'frame' && (() => {
+                    const frame = frames?.find(f => f.id === selectedFrameId);
+                    return frame ? (frame.name || `Frame (${Math.round(frame.w)}×${Math.round(frame.h)})`) : 'Frame';
+                  })()}
                 </span>
               </div>
               <div className="flex justify-between">
