@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Button from '../components/Button';
 
 function LoginForm() {
   const router = useRouter();
@@ -208,13 +209,16 @@ function LoginForm() {
                 </label>
               </div>
 
-              <button
+              <Button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-600 text-white py-3 sm:py-4 px-4 rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation text-base sm:text-lg"
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={loading}
               >
-                {loading ? 'Signing In...' : 'Sign In'}
-              </button>
+                Sign In
+              </Button>
             </form>
           ) : (
             <form onSubmit={handleMfaSubmit} className="space-y-6">
@@ -244,15 +248,18 @@ function LoginForm() {
                 </p>
               </div>
 
-              <button
+              <Button
                 type="submit"
                 disabled={loading || mfaCode.length !== 6}
-                className="w-full bg-blue-600 text-white py-3 sm:py-4 px-4 rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation text-base sm:text-lg"
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={loading}
               >
-                {loading ? 'Verifying...' : 'Verify Code'}
-              </button>
+                Verify Code
+              </Button>
 
-              <button
+              <Button
                 type="button"
                 onClick={() => {
                   setMfaRequired(false);
@@ -260,10 +267,12 @@ function LoginForm() {
                   setError('');
                   setSuccess('');
                 }}
-                className="w-full text-sm text-gray-600 hover:text-gray-900 transition"
+                variant="ghost"
+                size="md"
+                fullWidth
               >
                 ← Back to login
-              </button>
+              </Button>
             </form>
           )}
 

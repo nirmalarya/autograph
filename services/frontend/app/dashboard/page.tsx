@@ -7,6 +7,7 @@ import { SkeletonCard, SkeletonListItem } from '../components/SkeletonLoader';
 import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
 import OptimizedImage from '../components/OptimizedImage';
 import Tooltip from '../components/Tooltip';
+import Button from '../components/Button';
 
 // Lazy load heavy components with loading fallbacks
 const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
@@ -757,18 +758,21 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
-            <button 
+            <Button 
               onClick={() => router.push('/ai-generate')}
-              className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-md font-medium hover:from-purple-700 hover:to-blue-700 transition shadow-sm text-sm sm:text-base touch-manipulation"
+              variant="primary"
+              size="md"
+              className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 shadow-sm"
             >
               ✨ AI Generate
-            </button>
-            <button 
+            </Button>
+            <Button 
               onClick={() => setShowCreateModal(true)}
-              className="px-4 sm:px-6 py-2.5 sm:py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition text-sm sm:text-base touch-manipulation"
+              variant="primary"
+              size="md"
             >
               + Create Diagram
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1182,18 +1186,21 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="flex gap-2">
-                <button
+                <Button
                   onClick={() => setShowMoveDialog(true)}
-                  className="px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded-md font-medium hover:bg-blue-50 transition"
+                  variant="outline"
+                  size="md"
+                  className="border-blue-300 text-blue-700 hover:bg-blue-50"
                 >
                   Move Selected
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 transition"
+                  variant="danger"
+                  size="md"
                 >
                   Delete Selected
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -1221,12 +1228,13 @@ export default function DashboardPage() {
                 ? 'No diagrams found matching your criteria' 
                 : 'No diagrams yet'}
             </p>
-            <button 
+            <Button 
               onClick={() => setShowCreateModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+              variant="primary"
+              size="lg"
             >
               Create Your First Diagram
-            </button>
+            </Button>
           </div>
         ) : (
           <>
@@ -1678,25 +1686,30 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex gap-3 mt-6">
-              <button
+              <Button
                 onClick={() => {
                   setShowCreateModal(false);
                   setDiagramTitle('');
                   setDiagramType('canvas');
                   setError('');
                 }}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition"
+                variant="outline"
+                size="md"
+                className="flex-1"
                 disabled={creating}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleCreateDiagram}
                 disabled={creating || !diagramTitle.trim()}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+                variant="primary"
+                size="md"
+                className="flex-1"
+                loading={creating}
               >
-                {creating ? 'Creating...' : 'Create'}
-              </button>
+                Create
+              </Button>
             </div>
           </div>
         </div>
@@ -1712,20 +1725,25 @@ export default function DashboardPage() {
               They will be moved to trash and can be restored within 30 days.
             </p>
             <div className="flex gap-3">
-              <button
+              <Button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md font-medium hover:bg-gray-50 transition"
+                variant="outline"
+                size="md"
+                className="flex-1"
                 disabled={deletingBatch}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleBulkDelete}
                 disabled={deletingBatch}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md font-medium hover:bg-red-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+                variant="danger"
+                size="md"
+                className="flex-1"
+                loading={deletingBatch}
               >
-                {deletingBatch ? 'Deleting...' : 'Delete'}
-              </button>
+                Delete
+              </Button>
             </div>
           </div>
         </div>
