@@ -141,6 +141,7 @@ class File(Base):
     collaborator_count = Column(Integer, default=1)  # Track number of collaborators (owner + shared users)
     comment_count = Column(Integer, default=0)  # Track number of comments
     last_edited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    tags = Column(JSON, default=[])  # Searchable tags
     
     # Version control
     current_version = Column(Integer, default=1)

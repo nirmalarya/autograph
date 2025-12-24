@@ -599,6 +599,14 @@ async def list_diagrams(
                     )
                 ).subquery()
                 query = query.filter(File.owner_id.in_(user_subquery))
+            elif filter_key.lower() == 'tag':
+                # Filter by tag using JSON contains operator
+                # PostgreSQL: tags @> '["value"]' checks if JSON array contains the value
+                from sqlalchemy.dialects.postgresql import JSONB
+                from sqlalchemy import cast
+                query = query.filter(
+                    cast(File.tags, JSONB).op('@>')(f'["{filter_value}"]')
+                )
             elif filter_key.lower() == 'after':
                 # Filter by date (created after)
                 try:
@@ -947,6 +955,7 @@ class CreateDiagramRequest(BaseModel):
     canvas_data: Optional[Dict[str, Any]] = None
     note_content: Optional[str] = None
     folder_id: Optional[str] = None
+    tags: Optional[list[str]] = []
     
     @validator('title')
     def validate_title(cls, v):
@@ -993,6 +1002,7 @@ class DiagramResponse(BaseModel):
     current_version: int
     version_count: int = 1  # Total number of versions
     last_edited_by: Optional[str] = None
+    tags: Optional[list] = []
     created_at: datetime
     updated_at: datetime
     last_accessed_at: Optional[datetime] = None
@@ -1010,6 +1020,7 @@ class UpdateDiagramRequest(BaseModel):
     note_content: Optional[str] = None
     description: Optional[str] = None  # Version description
     expected_version: Optional[int] = None  # For optimistic locking
+    tags: Optional[list[str]] = None
     
     @validator('title')
     def validate_title(cls, v):
@@ -1234,6 +1245,7 @@ async def create_diagram(
         canvas_data=diagram.canvas_data,
         note_content=diagram.note_content,
         folder_id=diagram.folder_id,
+        tags=diagram.tags or [],
         last_activity=datetime.utcnow()  # Set initial last_activity
     )
     
@@ -2458,6 +2470,8 @@ async def update_diagram(
         diagram.canvas_data = update_data.canvas_data
     if update_data.note_content is not None:
         diagram.note_content = update_data.note_content
+    if update_data.tags is not None:
+        diagram.tags = update_data.tags
     
     # Track who last edited the diagram
     diagram.last_edited_by = user_id
