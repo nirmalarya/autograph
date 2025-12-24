@@ -22,7 +22,7 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User, RefreshToken, PasswordResetToken, AuditLog
+from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken
 import redis
 import secrets
 import pyotp
@@ -1123,6 +1123,7 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
             password_hash=hashed_password,
             full_name=user_data.full_name,
             is_active=True,
+            is_verified=False,  # Email not verified yet
             role="user"
         )
         
@@ -1133,6 +1134,29 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
         
         print(f"DEBUG: User created successfully with ID: {new_user.id}")
         
+        # Create email verification token (valid for 24 hours)
+        verification_token = secrets.token_urlsafe(32)
+        verification_token_record = EmailVerificationToken(
+            user_id=new_user.id,
+            token=verification_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
+        )
+        db.add(verification_token_record)
+        db.commit()
+        
+        print(f"DEBUG: Verification token created: {verification_token}")
+        
+        # TODO: Send verification email
+        # For now, we'll just log it
+        verification_url = f"http://localhost:3000/verify-email?token={verification_token}"
+        print(f"DEBUG: Verification URL: {verification_url}")
+        logger.info(
+            "User registered - email verification required",
+            user_id=new_user.id,
+            email=new_user.email,
+            verification_url=verification_url
+        )
+        
         # Log successful registration
         create_audit_log(
             db=db,
@@ -1140,7 +1164,7 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
             user_id=new_user.id,
             ip_address=client_ip,
             user_agent=user_agent,
-            extra_data={"email": new_user.email}
+            extra_data={"email": new_user.email, "email_verified": False}
         )
         
         return new_user
@@ -1239,6 +1263,22 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
+        )
+    
+    # Check if email is verified
+    if not user.is_verified:
+        # Log failed login
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user_data.email, "reason": "email_not_verified"}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before logging in"
         )
     
     # Reset rate limit on successful password authentication
@@ -2240,6 +2280,206 @@ async def verify_mfa(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify MFA"
+        )
+
+
+# Email Verification Endpoints
+
+
+class EmailVerificationRequest(BaseModel):
+    """Request model for email verification."""
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    """Request model for resending verification email."""
+    email: EmailStr
+
+
+@app.post("/email/verify")
+async def verify_email(
+    verification_data: EmailVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Verify user's email address with verification token."""
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Find the verification token
+        token_record = db.query(EmailVerificationToken).filter(
+            EmailVerificationToken.token == verification_data.token
+        ).first()
+        
+        if not token_record:
+            logger.warning(
+                "Email verification failed - token not found",
+                token=verification_data.token[:10] + "...",
+                ip_address=client_ip
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification token"
+            )
+        
+        # Check if token is already used
+        if token_record.is_used:
+            logger.warning(
+                "Email verification failed - token already used",
+                user_id=token_record.user_id,
+                ip_address=client_ip
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification token has already been used"
+            )
+        
+        # Check if token is expired
+        if datetime.now(timezone.utc) > token_record.expires_at:
+            logger.warning(
+                "Email verification failed - token expired",
+                user_id=token_record.user_id,
+                expired_at=token_record.expires_at.isoformat(),
+                ip_address=client_ip
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification link expired. Please request a new verification email."
+            )
+        
+        # Get user
+        user = db.query(User).filter(User.id == token_record.user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Mark email as verified
+        user.is_verified = True
+        
+        # Mark token as used
+        token_record.is_used = True
+        token_record.used_at = datetime.now(timezone.utc)
+        
+        db.commit()
+        
+        # Log successful verification
+        create_audit_log(
+            db=db,
+            action="email_verified",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user.email}
+        )
+        
+        logger.info(
+            "Email verified successfully",
+            user_id=user.id,
+            email=user.email
+        )
+        
+        return {
+            "message": "Email verified successfully. You can now log in.",
+            "email": user.email
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Email verification error",
+            error=str(e),
+            exc=e
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Email verification failed: {str(e)}"
+        )
+
+
+@app.post("/email/resend-verification")
+async def resend_verification_email(
+    resend_data: ResendVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Resend verification email to user."""
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Get user
+        user = db.query(User).filter(User.email == resend_data.email).first()
+        if not user:
+            # Don't reveal if email exists or not
+            return {
+                "message": "If this email is registered, a verification email has been sent."
+            }
+        
+        # Check if already verified
+        if user.is_verified:
+            return {
+                "message": "Email is already verified. You can log in now."
+            }
+        
+        # Invalidate old tokens for this user
+        old_tokens = db.query(EmailVerificationToken).filter(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.is_used == False
+        ).all()
+        
+        for old_token in old_tokens:
+            old_token.is_used = True
+            old_token.used_at = datetime.now(timezone.utc)
+        
+        # Create new verification token
+        verification_token = secrets.token_urlsafe(32)
+        verification_token_record = EmailVerificationToken(
+            user_id=user.id,
+            token=verification_token,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
+        )
+        db.add(verification_token_record)
+        db.commit()
+        
+        # TODO: Send verification email
+        # For now, we'll just log it
+        verification_url = f"http://localhost:3000/verify-email?token={verification_token}"
+        logger.info(
+            "Verification email resent",
+            user_id=user.id,
+            email=user.email,
+            verification_url=verification_url
+        )
+        
+        # Log resend action
+        create_audit_log(
+            db=db,
+            action="verification_email_resent",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": user.email}
+        )
+        
+        return {
+            "message": "Verification email has been sent. Please check your inbox."
+        }
+        
+    except Exception as e:
+        logger.error(
+            "Resend verification email error",
+            error=str(e),
+            exc=e
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resend verification email: {str(e)}"
         )
 
 

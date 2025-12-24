@@ -513,3 +513,30 @@ class PasswordResetToken(Base):
         Index('idx_password_reset_tokens_token', 'token'),
         Index('idx_password_reset_tokens_expires', 'expires_at'),
     )
+
+
+class EmailVerificationToken(Base):
+    """Email verification tokens table."""
+    __tablename__ = "email_verification_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Token details
+    token = Column(String(255), unique=True, nullable=False, index=True)
+    
+    # Status
+    is_used = Column(Boolean, default=False, nullable=False)
+    used_at = Column(DateTime(timezone=True))
+    
+    # Expiration (24 hours from creation)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    __table_args__ = (
+        Index('idx_email_verification_tokens_user', 'user_id'),
+        Index('idx_email_verification_tokens_token', 'token'),
+        Index('idx_email_verification_tokens_expires', 'expires_at'),
+    )
