@@ -73,6 +73,12 @@ export default function VersionComparePage({
   const [descriptionValue, setDescriptionValue] = useState<string>("");
   const [savingDescription, setSavingDescription] = useState(false);
   
+  // Share state
+  const [sharingVersion, setSharingVersion] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string>("");
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+  
   // Search/filter state
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [authorFilter, setAuthorFilter] = useState<string>("");
@@ -333,6 +339,50 @@ export default function VersionComparePage({
     setAuthorFilter("");
     setDateFromFilter("");
     setDateToFilter("");
+  };
+  
+  const handleShareVersion = async (versionId: string, versionNumber: number) => {
+    setSharingVersion(versionId);
+    try {
+      const token = localStorage.getItem("access_token");
+      const userId = localStorage.getItem("user_id");
+      
+      const response = await fetch(
+        `http://localhost:8082/${diagramId}/versions/${versionId}/share`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "X-User-ID": userId || "",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({})
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setShareUrl(data.share_url);
+        setShowShareModal(true);
+      } else {
+        alert("Failed to create share link");
+      }
+    } catch (error) {
+      console.error("Error creating share link:", error);
+      alert("Failed to create share link");
+    } finally {
+      setSharingVersion(null);
+    }
+  };
+  
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
   };
 
   if (loading && !comparison) {
@@ -691,6 +741,24 @@ export default function VersionComparePage({
                     className="w-full border rounded mb-4"
                   />
                 )}
+                
+                {/* Share Button */}
+                <button
+                  onClick={() => handleShareVersion(comparison.version1.id, comparison.version1.version_number)}
+                  disabled={sharingVersion === comparison.version1.id}
+                  className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {sharingVersion === comparison.version1.id ? (
+                    <>Creating link...</>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                      </svg>
+                      Share Version
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* Version 2 */}
@@ -815,6 +883,24 @@ export default function VersionComparePage({
                     className="w-full border rounded mb-4"
                   />
                 )}
+                
+                {/* Share Button */}
+                <button
+                  onClick={() => handleShareVersion(comparison.version2.id, comparison.version2.version_number)}
+                  disabled={sharingVersion === comparison.version2.id}
+                  className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {sharingVersion === comparison.version2.id ? (
+                    <>Creating link...</>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                      </svg>
+                      Share Version
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           ) : (
@@ -933,6 +1019,44 @@ export default function VersionComparePage({
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      
+      {/* Share Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Share Version</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Anyone with this link can view this specific version (read-only)
+            </p>
+            <div className="flex gap-2 mb-4">
+              <input
+                type="text"
+                value={shareUrl}
+                readOnly
+                className="flex-1 border rounded px-3 py-2 text-sm bg-gray-50"
+              />
+              <button
+                onClick={copyToClipboard}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                {copySuccess ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  setShowShareModal(false);
+                  setShareUrl("");
+                  setCopySuccess(false);
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
