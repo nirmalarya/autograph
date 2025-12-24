@@ -1567,6 +1567,634 @@ async def delete_template(
         raise HTTPException(status_code=500, detail=f"Failed to delete template: {str(e)}")
 
 
+# ============================================================================
+# FOLDER ENDPOINTS
+# ============================================================================
+
+class CreateFolderRequest(BaseModel):
+    """Request model for creating a folder."""
+    name: str
+    parent_id: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+
+class UpdateFolderRequest(BaseModel):
+    """Request model for updating a folder."""
+    name: Optional[str] = None
+    parent_id: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+
+class FolderResponse(BaseModel):
+    """Response model for folder."""
+    id: str
+    name: str
+    owner_id: str
+    parent_id: Optional[str]
+    color: Optional[str]
+    icon: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    subfolders: Optional[list] = []
+    file_count: Optional[int] = 0
+
+    class Config:
+        from_attributes = True
+
+
+@app.post("/folders", status_code=201)
+async def create_folder(
+    request: Request,
+    folder_request: CreateFolderRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new folder."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating folder",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        folder_name=folder_request.name
+    )
+    
+    try:
+        # Validate parent folder exists if provided
+        if folder_request.parent_id:
+            parent = db.query(Folder).filter(
+                Folder.id == folder_request.parent_id,
+                Folder.owner_id == user_id
+            ).first()
+            if not parent:
+                raise HTTPException(status_code=404, detail="Parent folder not found")
+        
+        # Create folder
+        folder = Folder(
+            id=str(uuid.uuid4()),
+            name=folder_request.name,
+            owner_id=user_id,
+            parent_id=folder_request.parent_id,
+            color=folder_request.color,
+            icon=folder_request.icon
+        )
+        
+        db.add(folder)
+        db.commit()
+        db.refresh(folder)
+        
+        # Get file count
+        file_count = db.query(File).filter(
+            File.folder_id == folder.id,
+            File.is_deleted == False
+        ).count()
+        
+        # Metrics
+        request_duration.labels(method="POST", path="/folders").observe(time.time() - start_time)
+        request_count.labels(method="POST", path="/folders", status_code=201).inc()
+        
+        logger.info(
+            "Folder created successfully",
+            correlation_id=correlation_id,
+            folder_id=folder.id
+        )
+        
+        return {
+            "id": folder.id,
+            "name": folder.name,
+            "owner_id": folder.owner_id,
+            "parent_id": folder.parent_id,
+            "color": folder.color,
+            "icon": folder.icon,
+            "created_at": folder.created_at,
+            "updated_at": folder.updated_at,
+            "subfolders": [],
+            "file_count": file_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to create folder",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to create folder: {str(e)}")
+
+
+@app.get("/folders")
+async def list_folders(
+    request: Request,
+    parent_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List folders for the current user."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing folders",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        parent_id=parent_id
+    )
+    
+    try:
+        # Query folders
+        query = db.query(Folder).filter(Folder.owner_id == user_id)
+        
+        # Filter by parent
+        if parent_id:
+            query = query.filter(Folder.parent_id == parent_id)
+        else:
+            # Root folders only
+            query = query.filter(Folder.parent_id == None)
+        
+        folders = query.order_by(Folder.name).all()
+        
+        # Build response with subfolder counts and file counts
+        result = []
+        for folder in folders:
+            subfolder_count = db.query(Folder).filter(Folder.parent_id == folder.id).count()
+            file_count = db.query(File).filter(
+                File.folder_id == folder.id,
+                File.is_deleted == False
+            ).count()
+            
+            result.append({
+                "id": folder.id,
+                "name": folder.name,
+                "owner_id": folder.owner_id,
+                "parent_id": folder.parent_id,
+                "color": folder.color,
+                "icon": folder.icon,
+                "created_at": folder.created_at,
+                "updated_at": folder.updated_at,
+                "subfolder_count": subfolder_count,
+                "file_count": file_count
+            })
+        
+        # Metrics
+        request_duration.labels(method="GET", path="/folders").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/folders", status_code=200).inc()
+        
+        logger.info(
+            "Folders listed successfully",
+            correlation_id=correlation_id,
+            count=len(result)
+        )
+        
+        return {"folders": result, "total": len(result)}
+        
+    except Exception as e:
+        logger.error(
+            "Failed to list folders",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to list folders: {str(e)}")
+
+
+@app.get("/folders/{folder_id}")
+async def get_folder(
+    request: Request,
+    folder_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get a folder by ID with its contents."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Getting folder",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get folder
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == user_id
+        ).first()
+        
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Get subfolders
+        subfolders = db.query(Folder).filter(Folder.parent_id == folder_id).all()
+        subfolder_list = [{
+            "id": sf.id,
+            "name": sf.name,
+            "color": sf.color,
+            "icon": sf.icon,
+            "created_at": sf.created_at,
+            "updated_at": sf.updated_at
+        } for sf in subfolders]
+        
+        # Get files in folder
+        files = db.query(File).filter(
+            File.folder_id == folder_id,
+            File.is_deleted == False
+        ).order_by(File.updated_at.desc()).all()
+        
+        file_list = [{
+            "id": f.id,
+            "title": f.title,
+            "file_type": f.file_type,
+            "is_starred": f.is_starred,
+            "created_at": f.created_at,
+            "updated_at": f.updated_at,
+            "last_accessed_at": f.last_accessed_at
+        } for f in files]
+        
+        # Metrics
+        request_duration.labels(method="GET", path="/folders/{id}").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/folders/{id}", status_code=200).inc()
+        
+        logger.info(
+            "Folder retrieved successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id,
+            subfolder_count=len(subfolder_list),
+            file_count=len(file_list)
+        )
+        
+        return {
+            "id": folder.id,
+            "name": folder.name,
+            "owner_id": folder.owner_id,
+            "parent_id": folder.parent_id,
+            "color": folder.color,
+            "icon": folder.icon,
+            "created_at": folder.created_at,
+            "updated_at": folder.updated_at,
+            "subfolders": subfolder_list,
+            "files": file_list
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get folder",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to get folder: {str(e)}")
+
+
+@app.put("/folders/{folder_id}")
+async def update_folder(
+    request: Request,
+    folder_id: str,
+    folder_request: UpdateFolderRequest,
+    db: Session = Depends(get_db)
+):
+    """Update a folder."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Updating folder",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get folder
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == user_id
+        ).first()
+        
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Validate parent folder if provided
+        if folder_request.parent_id:
+            # Can't be its own parent
+            if folder_request.parent_id == folder_id:
+                raise HTTPException(status_code=400, detail="Folder cannot be its own parent")
+            
+            # Check parent exists and owned by user
+            parent = db.query(Folder).filter(
+                Folder.id == folder_request.parent_id,
+                Folder.owner_id == user_id
+            ).first()
+            if not parent:
+                raise HTTPException(status_code=404, detail="Parent folder not found")
+            
+            # Check for circular reference (parent can't be a child of this folder)
+            def is_descendant(folder_id, potential_ancestor_id, db):
+                """Check if potential_ancestor_id is a descendant of folder_id."""
+                if potential_ancestor_id == folder_id:
+                    return True
+                parent = db.query(Folder).filter(Folder.id == potential_ancestor_id).first()
+                if parent and parent.parent_id:
+                    return is_descendant(folder_id, parent.parent_id, db)
+                return False
+            
+            if is_descendant(folder_id, folder_request.parent_id, db):
+                raise HTTPException(status_code=400, detail="Cannot create circular folder reference")
+        
+        # Update fields
+        if folder_request.name is not None:
+            folder.name = folder_request.name
+        if folder_request.parent_id is not None:
+            folder.parent_id = folder_request.parent_id
+        if folder_request.color is not None:
+            folder.color = folder_request.color
+        if folder_request.icon is not None:
+            folder.icon = folder_request.icon
+        
+        db.commit()
+        db.refresh(folder)
+        
+        # Get file count
+        file_count = db.query(File).filter(
+            File.folder_id == folder.id,
+            File.is_deleted == False
+        ).count()
+        
+        # Metrics
+        request_duration.labels(method="PUT", path="/folders/{id}").observe(time.time() - start_time)
+        request_count.labels(method="PUT", path="/folders/{id}", status_code=200).inc()
+        
+        logger.info(
+            "Folder updated successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id
+        )
+        
+        return {
+            "id": folder.id,
+            "name": folder.name,
+            "owner_id": folder.owner_id,
+            "parent_id": folder.parent_id,
+            "color": folder.color,
+            "icon": folder.icon,
+            "created_at": folder.created_at,
+            "updated_at": folder.updated_at,
+            "file_count": file_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to update folder",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to update folder: {str(e)}")
+
+
+@app.delete("/folders/{folder_id}")
+async def delete_folder(
+    request: Request,
+    folder_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a folder (must be empty)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Deleting folder",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get folder
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == user_id
+        ).first()
+        
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Check if folder has subfolders
+        subfolder_count = db.query(Folder).filter(Folder.parent_id == folder_id).count()
+        if subfolder_count > 0:
+            raise HTTPException(status_code=400, detail="Cannot delete folder with subfolders")
+        
+        # Check if folder has files
+        file_count = db.query(File).filter(
+            File.folder_id == folder_id,
+            File.is_deleted == False
+        ).count()
+        if file_count > 0:
+            raise HTTPException(status_code=400, detail="Cannot delete folder with files")
+        
+        # Delete folder
+        db.delete(folder)
+        db.commit()
+        
+        # Metrics
+        request_duration.labels(method="DELETE", path="/folders/{id}").observe(time.time() - start_time)
+        request_count.labels(method="DELETE", path="/folders/{id}", status_code=200).inc()
+        
+        logger.info(
+            "Folder deleted successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id
+        )
+        
+        return {"message": "Folder deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to delete folder",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to delete folder: {str(e)}")
+
+
+@app.get("/folders/{folder_id}/breadcrumbs")
+async def get_folder_breadcrumbs(
+    request: Request,
+    folder_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get breadcrumb path for a folder (from root to current folder)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Getting folder breadcrumbs",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get folder
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == user_id
+        ).first()
+        
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Build breadcrumb path
+        breadcrumbs = []
+        current = folder
+        
+        while current:
+            breadcrumbs.insert(0, {
+                "id": current.id,
+                "name": current.name,
+                "color": current.color,
+                "icon": current.icon
+            })
+            
+            # Get parent
+            if current.parent_id:
+                current = db.query(Folder).filter(Folder.id == current.parent_id).first()
+            else:
+                current = None
+        
+        # Metrics
+        request_duration.labels(method="GET", path="/folders/{id}/breadcrumbs").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/folders/{id}/breadcrumbs", status_code=200).inc()
+        
+        logger.info(
+            "Folder breadcrumbs retrieved successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id,
+            depth=len(breadcrumbs)
+        )
+        
+        return {"breadcrumbs": breadcrumbs}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to get folder breadcrumbs",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to get folder breadcrumbs: {str(e)}")
+
+
+@app.put("/{diagram_id}/folder")
+async def move_diagram_to_folder(
+    request: Request,
+    diagram_id: str,
+    folder_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Move a diagram to a folder (or remove from folder if folder_id is None)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+    
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Moving diagram to folder",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+    
+    try:
+        # Get diagram
+        diagram = db.query(File).filter(
+            File.id == diagram_id,
+            File.owner_id == user_id,
+            File.is_deleted == False
+        ).first()
+        
+        if not diagram:
+            raise HTTPException(status_code=404, detail="Diagram not found")
+        
+        # Validate folder if provided
+        if folder_id:
+            folder = db.query(Folder).filter(
+                Folder.id == folder_id,
+                Folder.owner_id == user_id
+            ).first()
+            if not folder:
+                raise HTTPException(status_code=404, detail="Folder not found")
+        
+        # Update diagram folder
+        diagram.folder_id = folder_id
+        db.commit()
+        
+        # Metrics
+        request_duration.labels(method="PUT", path="/{id}/folder").observe(time.time() - start_time)
+        request_count.labels(method="PUT", path="/{id}/folder", status_code=200).inc()
+        
+        logger.info(
+            "Diagram moved to folder successfully",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            folder_id=folder_id
+        )
+        
+        return {"message": "Diagram moved successfully", "folder_id": folder_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to move diagram to folder",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to move diagram to folder: {str(e)}")
+
+
 @app.get("/{diagram_id}")
 async def get_diagram(
     diagram_id: str,
