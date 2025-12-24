@@ -166,8 +166,7 @@ Feature breakdown:
 - Enterprise Features: 40 features
 - Organization & Discovery: 30 features
 - UX & Performance: 35 features
-- Bayer-Specific Features: 25 features
-- Style & Polish: 30 features
+- Style & Polish: 55 features
 
 Track progress in `feature_list.json`
 
