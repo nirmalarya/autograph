@@ -4,7 +4,7 @@
  * Feature #668: Onboarding - Welcome Tour
  * 
  * A comprehensive guided tour for new users that highlights key features
- * and helps them get started with AutoGraph v3.
+ * and helps them get started with AutoGraph.
  * 
  * Features:
  * - Multi-step interactive tour
@@ -36,7 +36,7 @@ interface TourStep {
 const TOUR_STEPS: TourStep[] = [
   {
     id: 'welcome',
-    title: 'Welcome to AutoGraph v3! 🎉',
+    title: 'Welcome to AutoGraph! 🎉',
     description: 'Let\'s take a quick tour to help you get started with our AI-powered diagramming platform. This will only take a minute.',
     position: 'center',
   },

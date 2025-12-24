@@ -137,7 +137,7 @@ function LoginForm() {
               {mfaRequired ? 'Two-Factor Authentication' : 'Welcome Back'}
             </h1>
             <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-              {mfaRequired ? 'Enter your 6-digit code' : 'Sign in to AutoGraph v3'}
+              {mfaRequired ? 'Enter your 6-digit code' : 'Sign in to AutoGraph'}
             </p>
           </header>
 

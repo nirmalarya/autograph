@@ -139,7 +139,7 @@ export default function SecuritySettingsPage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <a href="/dashboard" className="text-xl font-bold text-gray-900 hover:text-gray-700 transition">
-                AutoGraph v3
+                AutoGraph
               </a>
               <span className="text-gray-400">→</span>
               <span className="text-sm text-gray-600">Security Settings</span>
