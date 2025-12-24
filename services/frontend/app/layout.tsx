@@ -11,6 +11,7 @@ import WelcomeTour from './components/WelcomeTour';
 import InteractiveTutorial from './components/InteractiveTutorial';
 import GlobalHelpCenter from './components/GlobalHelpCenter';
 import { ContextualTooltipsProvider, ContextualTooltipsSettings, ContextualTooltipsToggle } from './components/ContextualTooltips';
+import { NotificationProvider, NotificationCenter } from './components/NotificationSystem';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -63,19 +64,22 @@ export default function RootLayout({
         </a>
         <ErrorBoundary>
           <ThemeProvider>
-            <ContextualTooltipsProvider defaultEnabled={true}>
-              <OfflineStatusBanner />
-              <PWAInstaller />
-              <PushNotifications />
-              <WelcomeTour />
-              <InteractiveTutorial />
-              <GlobalHelpCenter />
-              <ContextualTooltipsToggle />
-              <ContextualTooltipsSettings />
-              <PageTransition>
-                {children}
-              </PageTransition>
-            </ContextualTooltipsProvider>
+            <NotificationProvider>
+              <ContextualTooltipsProvider defaultEnabled={true}>
+                <OfflineStatusBanner />
+                <PWAInstaller />
+                <PushNotifications />
+                <WelcomeTour />
+                <InteractiveTutorial />
+                <GlobalHelpCenter />
+                <ContextualTooltipsToggle />
+                <ContextualTooltipsSettings />
+                <NotificationCenter />
+                <PageTransition>
+                  {children}
+                </PageTransition>
+              </ContextualTooltipsProvider>
+            </NotificationProvider>
           </ThemeProvider>
         </ErrorBoundary>
       </body>

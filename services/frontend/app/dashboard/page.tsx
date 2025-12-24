@@ -10,6 +10,7 @@ import OptimizedImage from '../components/OptimizedImage';
 import Tooltip from '../components/Tooltip';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import { NotificationBellIcon } from '../components/NotificationSystem';
 
 // Lazy load heavy components with loading fallbacks
 const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
@@ -753,6 +754,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
               {/* Hide email on mobile */}
               <span className="hidden sm:inline text-xs sm:text-sm text-gray-600 dark:text-gray-300">{user?.email}</span>
+              <NotificationBellIcon />
               <ThemeToggle />
               <HighContrastToggle />
               {/* Hide keyboard shortcuts button on mobile */}
