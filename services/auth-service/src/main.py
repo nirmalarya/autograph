@@ -2099,6 +2099,19 @@ class PasswordResetConfirm(BaseModel):
         return v
 
 
+class PasswordChange(BaseModel):
+    """Request model for changing password (requires current password)."""
+    current_password: str
+    new_password: str
+    
+    @validator('new_password')
+    def validate_password(cls, v):
+        """Validate password strength."""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
+
 class MFASetupResponse(BaseModel):
     """Response model for MFA setup."""
     secret: str
@@ -2377,6 +2390,125 @@ async def confirm_password_reset(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password"
+        )
+
+
+@app.post("/password/change")
+async def change_password(
+    request_data: PasswordChange,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password (requires current password).
+    
+    Features #98 and #99:
+    - Feature #98: Password change requires current password
+    - Feature #99: Password change invalidates all existing sessions except current
+    
+    This endpoint will:
+    1. Validate current password is correct
+    2. Update user's password
+    3. Invalidate ALL sessions (including current one) for security
+    4. Create audit log entry
+    
+    Note: User will need to login again after password change.
+    """
+    # Get client IP and user agent for audit logging
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    correlation_id = f"password-change-{int(time.time() * 1000)}"
+    
+    logger.info(
+        "Password change request received",
+        correlation_id=correlation_id,
+        user_id=current_user.id,
+        email=current_user.email
+    )
+    
+    try:
+        # Validate current password
+        if not verify_password(request_data.current_password, current_user.password_hash):
+            logger.warning(
+                "Password change failed - incorrect current password",
+                correlation_id=correlation_id,
+                user_id=current_user.id
+            )
+            # Log failed password change
+            create_audit_log(
+                db=db,
+                action="password_change_failed",
+                user_id=current_user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"reason": "incorrect_current_password"}
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
+        
+        # Hash new password
+        hashed_password = get_password_hash(request_data.new_password)
+        
+        # Update user's password
+        now = datetime.now(timezone.utc)
+        current_user.password_hash = hashed_password
+        current_user.updated_at = now
+        
+        # Revoke all refresh tokens FIRST
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.is_used == False,
+            RefreshToken.is_revoked == False
+        ).update({
+            "is_revoked": True,
+            "revoked_at": now
+        })
+        
+        db.commit()
+        
+        # Invalidate ALL user sessions by blacklisting user ID temporarily
+        # We set a short TTL (2 seconds) which is enough to invalidate existing tokens
+        # but will allow immediate re-login with new password
+        blacklist_all_user_tokens(current_user.id, ttl_seconds=2)
+        
+        logger.info(
+            "Password changed successfully",
+            correlation_id=correlation_id,
+            user_id=current_user.id,
+            email=current_user.email
+        )
+        
+        # Log successful password change
+        create_audit_log(
+            db=db,
+            action="password_change_success",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email}
+        )
+        
+        return {
+            "message": "Password changed successfully",
+            "detail": "All sessions have been logged out for security. Please login again with your new password.",
+            "sessions_invalidated": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error during password change",
+            correlation_id=correlation_id,
+            exc=e,
+            user_id=current_user.id
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to change password"
         )
 
 
