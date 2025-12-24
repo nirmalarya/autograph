@@ -387,6 +387,7 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str
     full_name: str | None = None
+    role: str = "viewer"  # Default role is viewer
     
     @validator('password')
     def validate_password_strength(cls, v):
@@ -409,6 +410,14 @@ class UserRegister(BaseModel):
             v = v.strip()
             if len(v) == 0:
                 return None
+        return v
+    
+    @validator('role')
+    def validate_role(cls, v):
+        """Validate role is one of the allowed values."""
+        allowed_roles = ["admin", "editor", "viewer"]
+        if v not in allowed_roles:
+            raise ValueError(f'Role must be one of: {", ".join(allowed_roles)}')
         return v
 
 
@@ -1099,6 +1108,31 @@ async def get_current_admin_user(
     return current_user
 
 
+async def get_current_editor_or_above(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """Get current authenticated user and verify they have editor or admin role."""
+    if current_user.role not in ["admin", "editor"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Editor privileges or above required"
+        )
+    return current_user
+
+
+async def get_current_viewer_or_above(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """Get current authenticated user and verify they have at least viewer role (any authenticated user)."""
+    # All authenticated users can view
+    if current_user.role not in ["admin", "editor", "viewer"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Valid role required"
+        )
+    return current_user
+
+
 # API endpoints
 @app.get("/health")
 async def health_check():
@@ -1343,7 +1377,7 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
             full_name=user_data.full_name,
             is_active=True,
             is_verified=False,  # Email not verified yet
-            role="user"
+            role=user_data.role  # Use role from request (defaults to "viewer")
         )
         
         print(f"DEBUG: Adding user to database...")
@@ -3053,6 +3087,55 @@ async def admin_unlock_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to unlock user account"
         )
+
+
+# Permission check endpoints for Feature #104
+@app.get("/permissions/admin")
+async def check_admin_permission(
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    Test endpoint to verify admin permissions.
+    Only users with 'admin' role can access this endpoint.
+    """
+    return {
+        "message": "Admin access granted",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role
+    }
+
+
+@app.get("/permissions/editor")
+async def check_editor_permission(
+    current_user: User = Depends(get_current_editor_or_above)
+):
+    """
+    Test endpoint to verify editor permissions.
+    Users with 'admin' or 'editor' role can access this endpoint.
+    """
+    return {
+        "message": "Editor access granted",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role
+    }
+
+
+@app.get("/permissions/viewer")
+async def check_viewer_permission(
+    current_user: User = Depends(get_current_viewer_or_above)
+):
+    """
+    Test endpoint to verify viewer permissions.
+    All authenticated users can access this endpoint.
+    """
+    return {
+        "message": "Viewer access granted",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role
+    }
 
 
 if __name__ == "__main__":
