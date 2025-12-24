@@ -33,6 +33,7 @@ export default function CanvasEditorPage() {
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectedShapes, setSelectedShapes] = useState<string[]>([]);
+  const [frames, setFrames] = useState<Array<{ id: string; name: string; x: number; y: number; w: number; h: number }>>([]);
   
   // Offline storage hook
   const {
@@ -395,6 +396,19 @@ export default function CanvasEditorPage() {
                   if (editor) {
                     const selected = editor.getSelectedShapeIds();
                     setSelectedShapes(selected);
+                    
+                    // Get all frames from the canvas
+                    const allShapes = editor.getCurrentPageShapes();
+                    const frameShapes = allShapes.filter((shape: any) => shape.type === 'frame');
+                    const extractedFrames = frameShapes.map((frame: any) => ({
+                      id: frame.id,
+                      name: frame.props?.name || '',
+                      x: frame.x,
+                      y: frame.y,
+                      w: frame.props?.w || 0,
+                      h: frame.props?.h || 0,
+                    }));
+                    setFrames(extractedFrames);
                   }
                   setShowExportDialog(true);
                 }}
@@ -436,6 +450,7 @@ export default function CanvasEditorPage() {
         diagramId={diagramId}
         canvasData={diagram?.canvas_data}
         selectedShapes={selectedShapes}
+        frames={frames}
       />
     </main>
   );

@@ -71,6 +71,68 @@ def filter_canvas_data_by_selection(canvas_data: Dict[str, Any], selected_shapes
     return filtered_data, (min_x, min_y, max_x, max_y)
 
 
+def filter_canvas_data_by_frame(canvas_data: Dict[str, Any], frame_id: str) -> tuple[Dict[str, Any], tuple[int, int, int, int], Dict[str, Any]]:
+    """
+    Filter canvas data to only include a specific frame and its contents, with tight crop bounds.
+    
+    Args:
+        canvas_data: The full canvas data
+        frame_id: The ID of the frame to export
+    
+    Returns:
+        tuple: (filtered_canvas_data, crop_bounds, frame_info)
+        crop_bounds: (min_x, min_y, max_x, max_y)
+        frame_info: {name, x, y, w, h}
+    """
+    if not frame_id or not canvas_data:
+        # Return full canvas if no frame specified
+        return canvas_data, (0, 0, 1920, 1080), {}
+    
+    # For now, create a placeholder implementation
+    # In production, this would:
+    # 1. Find the frame shape by ID
+    # 2. Get frame bounds (x, y, w, h)
+    # 3. Find all shapes within frame bounds
+    # 4. Filter canvas data to only those shapes
+    
+    # Placeholder frame bounds (would come from actual frame shape)
+    frame_x, frame_y = 200, 150
+    frame_w, frame_h = 600, 400
+    frame_name = "Untitled Frame"
+    
+    # Add padding around frame (20px on each side)
+    padding = 20
+    min_x = max(0, frame_x - padding)
+    min_y = max(0, frame_y - padding)
+    max_x = frame_x + frame_w + padding
+    max_y = frame_y + frame_h + padding
+    
+    # Filtered canvas data would include:
+    # 1. The frame itself
+    # 2. All shapes within the frame bounds
+    filtered_data = {
+        "frame_id": frame_id,
+        "frame_name": frame_name,
+        "shapes": canvas_data.get("shapes", []),  # In production, filter to frame children
+        "bounds": {
+            "x": min_x,
+            "y": min_y,
+            "width": max_x - min_x,
+            "height": max_y - min_y
+        }
+    }
+    
+    frame_info = {
+        "name": frame_name,
+        "x": frame_x,
+        "y": frame_y,
+        "w": frame_w,
+        "h": frame_h
+    }
+    
+    return filtered_data, (min_x, min_y, max_x, max_y), frame_info
+
+
 class ThumbnailRequest(BaseModel):
     """Request model for thumbnail generation."""
     diagram_id: str
@@ -89,8 +151,9 @@ class ExportRequest(BaseModel):
     quality: Optional[str] = "high"  # low, medium, high, ultra
     background: Optional[str] = "white"  # transparent, white, custom
     scale: Optional[int] = 2  # 1x, 2x, 4x for retina
-    export_scope: Optional[str] = "full"  # full or selection
+    export_scope: Optional[str] = "full"  # full, selection, or frame
     selected_shapes: Optional[list] = None  # IDs of selected shapes
+    frame_id: Optional[str] = None  # ID of frame to export
 
 
 @app.get("/health")
@@ -238,6 +301,7 @@ async def export_png(request: ExportRequest):
         # Handle selection export with tight cropping
         canvas_data = request.canvas_data
         crop_bounds = None
+        frame_info = None
         
         if request.export_scope == "selection" and request.selected_shapes:
             logger.info(f"Exporting selection: {len(request.selected_shapes)} shapes")
@@ -246,6 +310,16 @@ async def export_png(request: ExportRequest):
                 request.selected_shapes
             )
             # Update dimensions to match cropped area
+            min_x, min_y, max_x, max_y = crop_bounds
+            width = max_x - min_x
+            height = max_y - min_y
+        elif request.export_scope == "frame" and request.frame_id:
+            logger.info(f"Exporting frame: {request.frame_id}")
+            canvas_data, crop_bounds, frame_info = filter_canvas_data_by_frame(
+                request.canvas_data,
+                request.frame_id
+            )
+            # Update dimensions to match frame bounds
             min_x, min_y, max_x, max_y = crop_bounds
             width = max_x - min_x
             height = max_y - min_y
@@ -294,10 +368,12 @@ async def export_png(request: ExportRequest):
         )
         
         # Add text with anti-aliasing (PIL uses anti-aliasing for text by default)
-        export_label = "Selection Export" if request.export_scope == "selection" else "PNG Export"
+        export_label = "Frame Export" if request.export_scope == "frame" else ("Selection Export" if request.export_scope == "selection" else "PNG Export")
         text = f"{export_label}\nAnti-aliased\n{request.quality} quality"
         if request.export_scope == "selection" and request.selected_shapes:
             text += f"\n{len(request.selected_shapes)} shapes"
+        elif request.export_scope == "frame" and frame_info:
+            text += f"\n{frame_info.get('name', 'Frame')}"
         
         bbox = draw.textbbox((0, 0), text)
         text_width = bbox[2] - bbox[0]
@@ -323,7 +399,7 @@ async def export_png(request: ExportRequest):
         )
         img_byte_arr.seek(0)
         
-        scope_label = "_selection" if request.export_scope == "selection" else ""
+        scope_label = "_frame" if request.export_scope == "frame" else ("_selection" if request.export_scope == "selection" else "")
         logger.info(f"PNG export{scope_label} with anti-aliasing generated successfully for diagram {request.diagram_id}")
         
         return Response(
@@ -364,6 +440,7 @@ async def export_svg(request: ExportRequest):
         # Handle selection export with tight cropping
         canvas_data = request.canvas_data
         crop_bounds = None
+        frame_info = None
         
         if request.export_scope == "selection" and request.selected_shapes:
             logger.info(f"Exporting selection: {len(request.selected_shapes)} shapes")
@@ -372,6 +449,16 @@ async def export_svg(request: ExportRequest):
                 request.selected_shapes
             )
             # Update dimensions to match cropped area
+            min_x, min_y, max_x, max_y = crop_bounds
+            width = max_x - min_x
+            height = max_y - min_y
+        elif request.export_scope == "frame" and request.frame_id:
+            logger.info(f"Exporting frame: {request.frame_id}")
+            canvas_data, crop_bounds, frame_info = filter_canvas_data_by_frame(
+                request.canvas_data,
+                request.frame_id
+            )
+            # Update dimensions to match frame bounds
             min_x, min_y, max_x, max_y = crop_bounds
             width = max_x - min_x
             height = max_y - min_y
@@ -385,8 +472,12 @@ async def export_svg(request: ExportRequest):
         background_color = request.background if request.background != "transparent" else "none"
         
         # Create a professional SVG with proper structure for Illustrator/Figma compatibility
-        export_label = "Selection Export" if request.export_scope == "selection" else "SVG Export"
-        shape_count = f" - {len(request.selected_shapes)} shapes" if request.export_scope == "selection" and request.selected_shapes else ""
+        export_label = "Frame Export" if request.export_scope == "frame" else ("Selection Export" if request.export_scope == "selection" else "SVG Export")
+        shape_count = ""
+        if request.export_scope == "selection" and request.selected_shapes:
+            shape_count = f" - {len(request.selected_shapes)} shapes"
+        elif request.export_scope == "frame" and frame_info:
+            shape_count = f" - {frame_info.get('name', 'Frame')}"
         
         svg_content = f'''<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg width="{width}" height="{height}" 
@@ -655,7 +746,8 @@ async def export_json(request: ExportRequest):
                 "format": "json",
                 "exporter": "AutoGraph v3 Export Service",
                 "export_scope": request.export_scope or "full",
-                "selected_shapes": request.selected_shapes if request.export_scope == "selection" else None
+                "selected_shapes": request.selected_shapes if request.export_scope == "selection" else None,
+                "frame_id": request.frame_id if request.export_scope == "frame" else None
             },
             "dimensions": {
                 "width": request.width,
