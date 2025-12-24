@@ -721,6 +721,7 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
     user_sessions = get_user_sessions(user_id)
     
     print(f"DEBUG: Creating session for user {user_id}, current sessions: {len(user_sessions)}, max: {MAX_CONCURRENT_SESSIONS}")
+    print(f"DEBUG: Current session tokens: {[s['token'][:10] + '...' for s in user_sessions]}")
     
     logger.debug(
         "Creating session - checking concurrent limit",
@@ -734,7 +735,7 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
         oldest_session = user_sessions[0]
         oldest_token = oldest_session["token"]
         
-        print(f"DEBUG: Deleting oldest session: {oldest_session['key']}")
+        print(f"DEBUG: At limit! Deleting oldest session: {oldest_session['key']}")
         
         # Delete session data
         redis_client.delete(oldest_session["key"])
@@ -759,12 +760,15 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
         "last_activity": now.isoformat()
     }
     
-    # Store session data as JSON string
+    # Store session data FIRST before adding to set
     redis_client.setex(key, ttl_seconds, json.dumps(session_data))
     
-    # Add token to user sessions set (also with TTL)
+    # Then add token to user sessions set
     redis_client.sadd(user_sessions_key, access_token)
-    redis_client.expire(user_sessions_key, ttl_seconds)
+    
+    # Remove any TTL on the set (in case old code set one)
+    redis_client.persist(user_sessions_key)
+    # The set will be cleaned up when sessions expire via get_user_sessions()
     
     print(f"DEBUG: Session created: {key[:30]}...")
 
