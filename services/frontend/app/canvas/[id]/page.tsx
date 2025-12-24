@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { useOfflineStorage } from '@/hooks/useOfflineStorage';
 
 // Dynamically import TLDraw to avoid SSR issues
 const TLDrawCanvas = dynamic(() => import('./TLDrawCanvas'), {
@@ -28,6 +29,16 @@ export default function CanvasEditorPage() {
   const [user, setUser] = useState<{ email?: string; sub?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  
+  // Offline storage hook
+  const {
+    isOnline,
+    isSyncing,
+    cacheDiagram,
+    getCachedDiagram,
+    addPendingEdit,
+    syncError,
+  } = useOfflineStorage();
 
   useEffect(() => {
     // Check authentication
@@ -56,23 +67,62 @@ export default function CanvasEditorPage() {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
       
-      const response = await fetch(`http://localhost:8082/${diagramId}`, {
-        headers: {
-          'X-User-ID': payload.sub,
-        },
-      });
+      // Try to fetch from server first
+      if (isOnline) {
+        try {
+          const response = await fetch(`http://localhost:8082/${diagramId}`, {
+            headers: {
+              'X-User-ID': payload.sub,
+            },
+          });
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error('Diagram not found');
-        } else if (response.status === 403) {
-          throw new Error('You do not have permission to access this diagram');
+          if (!response.ok) {
+            if (response.status === 404) {
+              throw new Error('Diagram not found');
+            } else if (response.status === 403) {
+              throw new Error('You do not have permission to access this diagram');
+            }
+            throw new Error('Failed to load diagram');
+          }
+
+          const data = await response.json();
+          setDiagram(data);
+          
+          // Cache the diagram for offline access
+          await cacheDiagram({
+            id: data.id,
+            title: data.title,
+            type: data.type,
+            canvas_data: data.canvas_data,
+            note_content: data.note_content,
+            thumbnail_url: data.thumbnail_url,
+            updated_at: data.updated_at,
+            cached_at: Date.now(),
+          });
+          
+          return;
+        } catch (fetchError) {
+          console.warn('Failed to fetch from server, trying cache...', fetchError);
         }
-        throw new Error('Failed to load diagram');
       }
-
-      const data = await response.json();
-      setDiagram(data);
+      
+      // If offline or fetch failed, try to load from cache
+      const cachedDiagram = await getCachedDiagram(diagramId);
+      if (cachedDiagram) {
+        console.log('Loading diagram from offline cache');
+        setDiagram({
+          id: cachedDiagram.id,
+          title: cachedDiagram.title,
+          type: cachedDiagram.type,
+          canvas_data: cachedDiagram.canvas_data,
+          note_content: cachedDiagram.note_content,
+          thumbnail_url: cachedDiagram.thumbnail_url,
+          updated_at: cachedDiagram.updated_at,
+          current_version: 1, // Default version for cached diagrams
+        });
+      } else {
+        throw new Error('Diagram not available offline');
+      }
     } catch (err: any) {
       console.error('Failed to fetch diagram:', err);
       setError(err.message || 'Failed to load diagram');
@@ -90,33 +140,113 @@ export default function CanvasEditorPage() {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
 
-      const response = await fetch(`http://localhost:8082/${diagramId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-ID': payload.sub,
-        },
-        body: JSON.stringify({
-          title: diagram.title,
-          canvas_data: snapshot,
-          note_content: diagram.note_content,
-        }),
-      });
+      const updateData = {
+        title: diagram.title,
+        canvas_data: snapshot,
+        note_content: diagram.note_content,
+      };
 
-      if (!response.ok) {
-        throw new Error('Failed to save diagram');
+      if (isOnline) {
+        // Try to save to server
+        try {
+          const response = await fetch(`http://localhost:8082/${diagramId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-User-ID': payload.sub,
+            },
+            body: JSON.stringify(updateData),
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to save diagram');
+          }
+
+          const updated = await response.json();
+          setDiagram(updated);
+          setLastSaved(new Date());
+          
+          // Update cache with latest data
+          await cacheDiagram({
+            id: updated.id,
+            title: updated.title,
+            type: updated.type,
+            canvas_data: updated.canvas_data,
+            note_content: updated.note_content,
+            thumbnail_url: updated.thumbnail_url,
+            updated_at: updated.updated_at,
+            cached_at: Date.now(),
+          });
+        } catch (saveError) {
+          console.warn('Failed to save to server, queuing for later...', saveError);
+          // Queue the edit for later sync
+          await addPendingEdit({
+            diagram_id: diagramId,
+            type: 'update',
+            data: updateData,
+          });
+          
+          // Update local diagram state
+          const updatedDiagram = {
+            ...diagram,
+            ...updateData,
+            updated_at: new Date().toISOString(),
+          };
+          setDiagram(updatedDiagram);
+          setLastSaved(new Date());
+          
+          // Update cache
+          await cacheDiagram({
+            id: updatedDiagram.id,
+            title: updatedDiagram.title,
+            type: updatedDiagram.type,
+            canvas_data: updatedDiagram.canvas_data,
+            note_content: updatedDiagram.note_content,
+            thumbnail_url: updatedDiagram.thumbnail_url,
+            updated_at: updatedDiagram.updated_at,
+            cached_at: Date.now(),
+          });
+          
+          alert('Saved offline. Changes will sync when you\'re back online.');
+        }
+      } else {
+        // Offline - queue the edit for later sync
+        await addPendingEdit({
+          diagram_id: diagramId,
+          type: 'update',
+          data: updateData,
+        });
+        
+        // Update local diagram state
+        const updatedDiagram = {
+          ...diagram,
+          ...updateData,
+          updated_at: new Date().toISOString(),
+        };
+        setDiagram(updatedDiagram);
+        setLastSaved(new Date());
+        
+        // Update cache
+        await cacheDiagram({
+          id: updatedDiagram.id,
+          title: updatedDiagram.title,
+          type: updatedDiagram.type,
+          canvas_data: updatedDiagram.canvas_data,
+          note_content: updatedDiagram.note_content,
+          thumbnail_url: updatedDiagram.thumbnail_url,
+          updated_at: updatedDiagram.updated_at,
+          cached_at: Date.now(),
+        });
+        
+        console.log('Saved offline. Changes will sync when you\'re back online.');
       }
-
-      const updated = await response.json();
-      setDiagram(updated);
-      setLastSaved(new Date());
     } catch (err) {
       console.error('Failed to save diagram:', err);
       alert('Failed to save diagram. Please try again.');
     } finally {
       setSaving(false);
     }
-  }, [diagram, diagramId]);
+  }, [diagram, diagramId, isOnline, cacheDiagram, addPendingEdit]);
 
   const handleBackToDashboard = () => {
     router.push('/dashboard');
@@ -194,6 +324,25 @@ export default function CanvasEditorPage() {
               </span>
             </div>
             <div className="flex items-center gap-4">
+              {/* Offline/Sync Status */}
+              {!isOnline && (
+                <span className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+                  <span className="w-2 h-2 bg-amber-600 rounded-full animate-pulse"></span>
+                  Offline
+                </span>
+              )}
+              {isSyncing && (
+                <span className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+                  <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></span>
+                  Syncing...
+                </span>
+              )}
+              {syncError && (
+                <span className="flex items-center gap-2 text-xs text-red-600 bg-red-50 px-3 py-1 rounded-full" title={syncError}>
+                  <span className="w-2 h-2 bg-red-600 rounded-full"></span>
+                  Sync Error
+                </span>
+              )}
               {lastSaved && (
                 <span className="text-xs text-gray-500">
                   Saved at {lastSaved.toLocaleTimeString()}
