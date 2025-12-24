@@ -137,6 +137,19 @@ export default function DashboardPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Instant search: debounce search input to trigger search automatically
+  useEffect(() => {
+    // Debounce search to avoid too many API calls
+    const timeoutId = setTimeout(() => {
+      if (searchInput !== searchQuery) {
+        setSearchQuery(searchInput);
+        setPage(1); // Reset to first page on new search
+      }
+    }, 300); // 300ms debounce - fast enough to feel instant, slow enough to avoid excessive API calls
+
+    return () => clearTimeout(timeoutId);
+  }, [searchInput, searchQuery]);
+
   // Fetch diagrams when user, page, filterType, searchQuery, sortBy, sortOrder, or activeTab changes
   useEffect(() => {
     if (user?.sub) {
@@ -642,27 +655,42 @@ export default function DashboardPage() {
         {activeTab === 'all' && (
           <div className="mb-6 bg-white rounded-lg shadow-sm p-4 border border-gray-200">
             <div className="flex flex-col gap-4">
-              {/* Search Bar */}
-              <form onSubmit={handleSearch} className="flex-1">
+              {/* Search Bar - Instant Search */}
+              <div className="flex-1">
               <div className="flex gap-2">
-                <div className="flex-1">
+                <div className="flex-1 relative">
                   <input
                     type="text"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
-                    placeholder="Search diagrams... (try: type:canvas database, author:john aws)"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Search diagrams... (instant results as you type)"
+                    className="w-full px-4 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                  {/* Search icon */}
+                  <svg
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
                   <p className="mt-1 text-xs text-gray-500">
-                    Tip: Use <code className="px-1 bg-gray-100 rounded">type:</code> or <code className="px-1 bg-gray-100 rounded">author:</code> to filter
+                    <span className="inline-flex items-center gap-1">
+                      <svg className="w-3 h-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      Instant search
+                    </span>
+                    {' • '}
+                    Use <code className="px-1 bg-gray-100 rounded">type:</code> or <code className="px-1 bg-gray-100 rounded">author:</code> to filter
                   </p>
                 </div>
-                <button
-                  type="submit"
-                  className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
-                >
-                  Search
-                </button>
                 {searchQuery && (
                   <button
                     type="button"
@@ -677,7 +705,7 @@ export default function DashboardPage() {
                   </button>
                 )}
               </div>
-            </form>
+            </div>
             
             {/* Filter and Sort Controls */}
             <div className="flex flex-col md:flex-row gap-4 items-start md:items-center">
