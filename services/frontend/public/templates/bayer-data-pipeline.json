@@ -1,0 +1,26 @@
+{
+  "name": "Bayer Data Processing Pipeline",
+  "description": "Secure ETL pipeline for processing sensitive data with encryption and compliance",
+  "category": "data-pipeline",
+  "tags": ["bayer", "etl", "data", "gdpr", "encryption"],
+  "bayer_approved": true,
+  "compliance_level": "GxP",
+  "mermaid_code": "graph LR\n    subgraph \"Data Sources (Encrypted)\"\n        SAP[SAP System<br/>Production Data]\n        LAB[Lab Systems<br/>Test Results]\n        AZURE_DB[(Azure SQL<br/>Historical Data)]\n    end\n    \n    subgraph \"Ingestion Layer\"\n        KAFKA[Apache Kafka<br/>Event Streaming]\n        API[REST API<br/>Batch Upload]\n    end\n    \n    subgraph \"Processing Layer (Private Subnet)\"\n        ETL[Azure Data Factory<br/>ETL Jobs]\n        TRANSFORM[Data Transformation<br/>PII Masking, Validation]\n        QUALITY[Data Quality Check<br/>Schema Validation]\n    end\n    \n    subgraph \"Storage Layer (Encrypted at Rest)\"\n        RAW[Raw Data Lake<br/>Azure Data Lake Gen2]\n        PROCESSED[Processed Data<br/>Parquet Files]\n        DW[(Data Warehouse<br/>Azure Synapse)]\n    end\n    \n    subgraph \"Security & Compliance\"\n        KMS[Key Management<br/>Azure Key Vault]\n        AUDIT[Audit Logs<br/>Azure Monitor]\n        DLP[Data Loss Prevention<br/>Azure Purview]\n    end\n    \n    subgraph \"Consumption Layer\"\n        BI[Power BI<br/>Analytics]\n        ML[ML Models<br/>Azure ML]\n        API_OUT[Data API<br/>REST/GraphQL]\n    end\n    \n    SAP -->|TLS 1.3| KAFKA\n    LAB -->|TLS 1.3| KAFKA\n    AZURE_DB -->|Private Link| API\n    \n    KAFKA --> ETL\n    API --> ETL\n    \n    ETL --> TRANSFORM\n    TRANSFORM --> QUALITY\n    \n    QUALITY -->|Valid| RAW\n    QUALITY -->|Invalid| AUDIT\n    \n    RAW --> PROCESSED\n    PROCESSED --> DW\n    \n    KMS -.->|Encryption Keys| RAW\n    KMS -.->|Encryption Keys| PROCESSED\n    KMS -.->|Encryption Keys| DW\n    \n    ETL -.->|Logs| AUDIT\n    TRANSFORM -.->|Logs| AUDIT\n    QUALITY -.->|Logs| AUDIT\n    \n    DLP -.->|Monitor| RAW\n    DLP -.->|Monitor| PROCESSED\n    DLP -.->|Monitor| DW\n    \n    DW --> BI\n    DW --> ML\n    DW --> API_OUT\n    \n    style SAP fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style LAB fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style AZURE_DB fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style KMS fill:#ff6b6b,stroke:#c92a2a,stroke-width:2px,color:#fff\n    style AUDIT fill:#ff6b6b,stroke:#c92a2a,stroke-width:2px,color:#fff\n    style DLP fill:#ff6b6b,stroke:#c92a2a,stroke-width:2px,color:#fff",
+  "security_notes": [
+    "All data encrypted at rest (AES-256)",
+    "All data encrypted in transit (TLS 1.3)",
+    "PII data masked in non-production environments",
+    "Keys managed in Azure Key Vault",
+    "Network isolation via Private Link",
+    "No internet-facing endpoints",
+    "Access via Bayer VPN only"
+  ],
+  "compliance_notes": [
+    "GDPR compliant (EU data residency)",
+    "GxP compliant (pharmaceutical data)",
+    "21 CFR Part 11 compliant (electronic records)",
+    "ISO 27001 certified infrastructure",
+    "Audit logs retained for 10 years",
+    "Data lineage tracked in Azure Purview"
+  ]
+}

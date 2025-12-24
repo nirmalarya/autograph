@@ -11,6 +11,7 @@ import Tooltip from '../components/Tooltip';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import { NotificationBellIcon } from '../components/NotificationSystem';
+import Logo from '../components/Logo';
 
 // Lazy load heavy components with loading fallbacks
 const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
@@ -848,7 +849,7 @@ export default function DashboardPage() {
                 </svg>
               </button>
               </Tooltip>
-              <h1 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 dark:text-gray-100">AutoGraph v3</h1>
+              <Logo size="md" showText={true} />
             </div>
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
               {/* Hide email on mobile */}

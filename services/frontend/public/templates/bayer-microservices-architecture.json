@@ -1,0 +1,24 @@
+{
+  "name": "Bayer Microservices Architecture",
+  "description": "Standard Bayer microservices architecture with API Gateway, service mesh, and observability",
+  "category": "architecture",
+  "tags": ["bayer", "microservices", "enterprise", "security"],
+  "bayer_approved": true,
+  "compliance_level": "SOC2",
+  "mermaid_code": "graph TB\n    subgraph \"Client Layer\"\n        WEB[Web App]\n        MOBILE[Mobile App]\n        API_CLIENT[API Client]\n    end\n    \n    subgraph \"Bayer Network DMZ\"\n        LB[Load Balancer<br/>Azure Front Door]\n        WAF[WAF<br/>ModSecurity]\n    end\n    \n    subgraph \"API Gateway Layer\"\n        APIGW[API Gateway<br/>Kong/Azure APIM]\n        AUTH[Auth Service<br/>Azure AD B2C]\n    end\n    \n    subgraph \"Service Mesh (Istio)\"\n        USER_SVC[User Service]\n        ORDER_SVC[Order Service]\n        PRODUCT_SVC[Product Service]\n        NOTIFICATION_SVC[Notification Service]\n    end\n    \n    subgraph \"Data Layer\"\n        PG[(PostgreSQL<br/>Azure DB)]\n        REDIS[(Redis Cache)]\n        BLOB[Azure Blob Storage]\n    end\n    \n    subgraph \"Observability\"\n        PROM[Prometheus]\n        GRAFANA[Grafana]\n        ELK[ELK Stack]\n    end\n    \n    WEB --> LB\n    MOBILE --> LB\n    API_CLIENT --> LB\n    LB --> WAF\n    WAF --> APIGW\n    APIGW --> AUTH\n    AUTH --> USER_SVC\n    AUTH --> ORDER_SVC\n    AUTH --> PRODUCT_SVC\n    AUTH --> NOTIFICATION_SVC\n    \n    USER_SVC --> PG\n    ORDER_SVC --> PG\n    PRODUCT_SVC --> PG\n    \n    USER_SVC --> REDIS\n    ORDER_SVC --> REDIS\n    \n    NOTIFICATION_SVC --> BLOB\n    \n    USER_SVC -.-> PROM\n    ORDER_SVC -.-> PROM\n    PRODUCT_SVC -.-> PROM\n    PROM --> GRAFANA\n    \n    USER_SVC -.-> ELK\n    ORDER_SVC -.-> ELK\n    PRODUCT_SVC -.-> ELK\n    \n    style LB fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style WAF fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style APIGW fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff\n    style AUTH fill:#00A0E3,stroke:#0066B2,stroke-width:2px,color:#fff",
+  "security_notes": [
+    "All services must use mTLS",
+    "API Gateway enforces rate limiting (100 req/min per user)",
+    "Authentication via Azure AD B2C (Bayer SSO)",
+    "Data encrypted at rest (AES-256)",
+    "Data encrypted in transit (TLS 1.3)",
+    "Network policies enforce least privilege",
+    "All logs sent to Bayer SIEM"
+  ],
+  "compliance_notes": [
+    "Meets Bayer IT Security Standards v3.2",
+    "SOC 2 Type II compliant",
+    "GDPR compliant (EU data residency)",
+    "Audit logs retention: 7 years"
+  ]
+}
