@@ -275,6 +275,60 @@ def get_version_content(version: Version) -> tuple[Any, Optional[str]]:
     
     return canvas_data, note_content
 
+
+def calculate_version_size(version: Version) -> int:
+    """Calculate the size of a version in bytes.
+    
+    Args:
+        version: Version object
+        
+    Returns:
+        Size in bytes
+    """
+    if version.is_compressed and version.original_size:
+        # For compressed versions, use the stored original_size
+        return version.original_size
+    
+    # Get the actual content
+    canvas_data, note_content = get_version_content(version)
+    
+    # Calculate size by JSON-encoding the data
+    size = 0
+    if canvas_data:
+        size += len(json.dumps(canvas_data, separators=(',', ':')).encode('utf-8'))
+    if note_content:
+        size += len(note_content.encode('utf-8'))
+    
+    return size
+
+
+def format_size_human_readable(size_bytes: int) -> dict:
+    """Format size in bytes to human-readable format.
+    
+    Args:
+        size_bytes: Size in bytes
+        
+    Returns:
+        Dict with size_bytes, size_kb, size_mb, and display_size
+    """
+    size_kb = size_bytes / 1024
+    size_mb = size_kb / 1024
+    
+    if size_mb >= 1:
+        display_size = f"{size_mb:.2f} MB"
+    elif size_kb >= 1:
+        display_size = f"{size_kb:.2f} KB"
+    else:
+        display_size = f"{size_bytes} B"
+    
+    return {
+        "size_bytes": size_bytes,
+        "size_kb": round(size_kb, 2),
+        "size_mb": round(size_mb, 2),
+        "display_size": display_size
+    }
+
+
 shutdown_state = ShutdownState()
 
 @asynccontextmanager
@@ -2383,20 +2437,26 @@ async def get_versions(
         version_count=len(versions)
     )
     
-    # Return versions in paginated format with metadata
+    # Return versions in paginated format with metadata and size info
+    enriched_versions = []
+    for v in versions:
+        # Calculate version size
+        version_size_bytes = calculate_version_size(v)
+        size_info = format_size_human_readable(version_size_bytes)
+        
+        enriched_versions.append({
+            "id": v.id,
+            "version_number": v.version_number,
+            "description": v.description,
+            "label": v.label,
+            "thumbnail_url": v.thumbnail_url,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "created_by": v.created_by,
+            "size": size_info
+        })
+    
     return {
-        "versions": [
-            {
-                "id": v.id,
-                "version_number": v.version_number,
-                "description": v.description,
-                "label": v.label,
-                "thumbnail_url": v.thumbnail_url,
-                "created_at": v.created_at.isoformat() if v.created_at else None,
-                "created_by": v.created_by
-            }
-            for v in versions
-        ],
+        "versions": enriched_versions,
         "total": len(versions)
     }
 
@@ -3641,10 +3701,14 @@ async def get_versions(
         Version.version_number.desc()
     ).offset(offset).limit(limit).all()
     
-    # Enrich versions with user info
+    # Enrich versions with user info and size
     enriched_versions = []
     for version in versions:
         user = db.query(User).filter(User.id == version.created_by).first()
+        
+        # Calculate version size
+        version_size_bytes = calculate_version_size(version)
+        size_info = format_size_human_readable(version_size_bytes)
         
         version_dict = {
             "id": version.id,
@@ -3655,6 +3719,7 @@ async def get_versions(
             "thumbnail_url": version.thumbnail_url,
             "created_by": version.created_by,
             "created_at": version.created_at.isoformat(),
+            "size": size_info,  # Add size information
             "user": {
                 "id": user.id if user else None,
                 "full_name": user.full_name if user else "Unknown",
@@ -3940,6 +4005,10 @@ async def get_version(
     # Get user info
     user = db.query(User).filter(User.id == version.created_by).first()
     
+    # Calculate version size
+    version_size_bytes = calculate_version_size(version)
+    size_info = format_size_human_readable(version_size_bytes)
+    
     response_data = {
         "id": version.id,
         "file_id": version.file_id,
@@ -3952,6 +4021,7 @@ async def get_version(
         "is_locked": is_locked,  # Always true - versions are immutable
         "is_latest": is_latest,
         "is_read_only": True,  # Historical versions are always read-only
+        "size": size_info,  # Add size information
         "user": {
             "id": user.id if user else None,
             "full_name": user.full_name if user else "Unknown",
