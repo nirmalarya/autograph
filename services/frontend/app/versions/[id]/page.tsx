@@ -72,6 +72,13 @@ export default function VersionComparePage({
   const [editingDescription, setEditingDescription] = useState<string | null>(null);
   const [descriptionValue, setDescriptionValue] = useState<string>("");
   const [savingDescription, setSavingDescription] = useState(false);
+  
+  // Search/filter state
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [authorFilter, setAuthorFilter] = useState<string>("");
+  const [dateFromFilter, setDateFromFilter] = useState<string>("");
+  const [dateToFilter, setDateToFilter] = useState<string>("");
+  const [showFilters, setShowFilters] = useState(false);
 
   const diagramId = unwrappedParams.id;
 
@@ -85,15 +92,22 @@ export default function VersionComparePage({
           return;
         }
 
-        const response = await fetch(
-          `http://localhost:8082/${diagramId}/versions`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "X-User-ID": localStorage.getItem("user_id") || "",
-            },
-          }
-        );
+        // Build query parameters
+        const params = new URLSearchParams();
+        if (searchQuery) params.append("search", searchQuery);
+        if (authorFilter) params.append("author", authorFilter);
+        if (dateFromFilter) params.append("date_from", dateFromFilter);
+        if (dateToFilter) params.append("date_to", dateToFilter);
+        
+        const queryString = params.toString();
+        const url = `http://localhost:8082/${diagramId}/versions${queryString ? `?${queryString}` : ""}`;
+
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+        });
 
         if (!response.ok) throw new Error("Failed to fetch versions");
 
@@ -106,7 +120,7 @@ export default function VersionComparePage({
     };
 
     fetchVersions();
-  }, [diagramId]);
+  }, [diagramId, searchQuery, authorFilter, dateFromFilter, dateToFilter]);
 
   // Fetch comparison
   useEffect(() => {
@@ -313,6 +327,13 @@ export default function VersionComparePage({
     setEditingDescription(null);
     setDescriptionValue("");
   };
+  
+  const handleClearFilters = () => {
+    setSearchQuery("");
+    setAuthorFilter("");
+    setDateFromFilter("");
+    setDateToFilter("");
+  };
 
   if (loading && !comparison) {
     return (
@@ -356,6 +377,82 @@ export default function VersionComparePage({
                 ← Back
               </button>
               <h1 className="text-2xl font-bold">Version Comparison</h1>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="flex-1 mx-8">
+              <div className="flex gap-2 items-center">
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    placeholder="Search versions by content..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full border rounded px-3 py-2"
+                  />
+                </div>
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`px-3 py-2 rounded border ${
+                    showFilters ? "bg-blue-50 border-blue-500" : "border-gray-300"
+                  }`}
+                >
+                  🔍 Filters
+                </button>
+                {(searchQuery || authorFilter || dateFromFilter || dateToFilter) && (
+                  <button
+                    onClick={handleClearFilters}
+                    className="px-3 py-2 rounded border border-gray-300 hover:bg-gray-50"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              
+              {/* Advanced Filters */}
+              {showFilters && (
+                <div className="mt-2 p-4 border rounded bg-white shadow-sm">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Author
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Search by author name..."
+                        value={authorFilter}
+                        onChange={(e) => setAuthorFilter(e.target.value)}
+                        className="w-full border rounded px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        From Date
+                      </label>
+                      <input
+                        type="date"
+                        value={dateFromFilter}
+                        onChange={(e) => setDateFromFilter(e.target.value)}
+                        className="w-full border rounded px-3 py-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        To Date
+                      </label>
+                      <input
+                        type="date"
+                        value={dateToFilter}
+                        onChange={(e) => setDateToFilter(e.target.value)}
+                        className="w-full border rounded px-3 py-2"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    {versions.length} version(s) found
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Version Selectors */}

@@ -1,7 +1,7 @@
 """Diagram Service - Diagram CRUD and storage."""
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, validator
 from typing import Optional, Dict, Any
 import os
@@ -3417,9 +3417,13 @@ async def get_versions(
     request: Request,
     limit: Optional[int] = 50,
     offset: Optional[int] = 0,
+    search: Optional[str] = None,
+    author: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all versions for a diagram."""
+    """Get all versions for a diagram with optional search/filter."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -3430,7 +3434,11 @@ async def get_versions(
         "Getting versions for diagram",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
-        user_id=user_id
+        user_id=user_id,
+        search=search,
+        author=author,
+        date_from=date_from,
+        date_to=date_to
     )
     
     # Verify diagram exists
@@ -3438,8 +3446,62 @@ async def get_versions(
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
-    # Get versions ordered by version_number descending (newest first)
+    # Build query with filters
     query = db.query(Version).filter(Version.file_id == diagram_id)
+    
+    # Search by content (in description, label, canvas_data, note_content)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                Version.description.ilike(search_term),
+                Version.label.ilike(search_term),
+                cast(Version.canvas_data, String).ilike(search_term),
+                Version.note_content.ilike(search_term)
+            )
+        )
+    
+    # Filter by author (by user ID or name/email)
+    if author:
+        # Try to find user by name or email
+        author_search = f"%{author}%"
+        matching_users = db.query(User).filter(
+            or_(
+                User.full_name.ilike(author_search),
+                User.email.ilike(author_search),
+                User.id == author
+            )
+        ).all()
+        
+        if matching_users:
+            user_ids = [u.id for u in matching_users]
+            query = query.filter(Version.created_by.in_(user_ids))
+        else:
+            # No matching users, return empty result
+            return {
+                "versions": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset
+            }
+    
+    # Filter by date range
+    if date_from:
+        try:
+            from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Version.created_at >= from_date)
+        except ValueError:
+            pass  # Ignore invalid dates
+    
+    if date_to:
+        try:
+            to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            # Add one day to include the entire date_to
+            to_date = to_date + timedelta(days=1)
+            query = query.filter(Version.created_at < to_date)
+        except ValueError:
+            pass  # Ignore invalid dates
+    
     total = query.count()
     
     versions = query.order_by(
