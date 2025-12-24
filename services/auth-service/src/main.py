@@ -8681,6 +8681,812 @@ async def set_quota_limits(
         )
 
 
+# ============================================================================
+# FEATURE #531: CUSTOM ROLES - DEFINE GRANULAR PERMISSIONS
+# ============================================================================
+
+class CustomRoleCreate(BaseModel):
+    """Schema for creating custom role."""
+    name: str
+    description: str
+    permissions: dict  # {action: bool} e.g., {"view": True, "edit": False}
+
+class CustomRoleUpdate(BaseModel):
+    """Schema for updating custom role."""
+    name: str = None
+    description: str = None
+    permissions: dict = None
+
+
+@app.post("/admin/roles/custom")
+async def create_custom_role(
+    role: CustomRoleCreate,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #531: Create custom role with granular permissions
+    
+    Example permissions:
+    {
+        "view_diagrams": true,
+        "edit_diagrams": false,
+        "delete_diagrams": false,
+        "comment": true,
+        "share": false,
+        "export": true,
+        "admin": false
+    }
+    """
+    try:
+        # Validate role name
+        if not role.name or len(role.name) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Role name must be at least 3 characters"
+            )
+        
+        # Check if role already exists
+        existing_role = redis_client.get(f"custom_role:{role.name}")
+        if existing_role:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Role '{role.name}' already exists"
+            )
+        
+        # Define standard permissions
+        standard_permissions = [
+            "view_diagrams",
+            "edit_diagrams",
+            "delete_diagrams",
+            "comment",
+            "share",
+            "export",
+            "admin",
+            "manage_users",
+            "manage_teams",
+            "view_audit_logs"
+        ]
+        
+        # Validate permissions
+        for perm in role.permissions.keys():
+            if perm not in standard_permissions:
+                logger.warning(f"Unknown permission: {perm}")
+        
+        # Create role data
+        role_data = {
+            "id": str(uuid.uuid4()),
+            "name": role.name,
+            "description": role.description,
+            "permissions": role.permissions,
+            "created_by": admin_user.id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "is_system_role": False
+        }
+        
+        # Store in Redis
+        redis_client.set(
+            f"custom_role:{role.name}",
+            json.dumps(role_data),
+            ex=None  # No expiration
+        )
+        
+        # Also add to index of all custom roles
+        all_roles = redis_client.get("custom_roles:index")
+        if all_roles:
+            roles_list = json.loads(all_roles)
+        else:
+            roles_list = []
+        
+        roles_list.append(role.name)
+        redis_client.set("custom_roles:index", json.dumps(roles_list))
+        
+        # Audit log
+        audit_entry = AuditLog(
+            id=generate_uuid(),
+            user_id=admin_user.id,
+            action="custom_role_created",
+            resource_type="role",
+            resource_id=role_data["id"],
+            extra_data={
+                "role_name": role.name,
+                "permissions": role.permissions
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        logger.info(f"Custom role created: {role.name}", correlation_id=role_data["id"])
+        
+        return {
+            "id": role_data["id"],
+            "name": role.name,
+            "description": role.description,
+            "permissions": role.permissions,
+            "created_at": role_data["created_at"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to create custom role", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create custom role"
+        )
+
+
+@app.get("/admin/roles/custom")
+async def list_custom_roles(
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Feature #531: List all custom roles
+    """
+    try:
+        # Get index of all custom roles
+        all_roles_json = redis_client.get("custom_roles:index")
+        if not all_roles_json:
+            return {"roles": []}
+        
+        role_names = json.loads(all_roles_json)
+        roles = []
+        
+        for role_name in role_names:
+            role_data = redis_client.get(f"custom_role:{role_name}")
+            if role_data:
+                roles.append(json.loads(role_data))
+        
+        return {"roles": roles}
+        
+    except Exception as e:
+        logger.error("Failed to list custom roles", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list custom roles"
+        )
+
+
+@app.get("/admin/roles/custom/{role_name}")
+async def get_custom_role(
+    role_name: str,
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Feature #531: Get custom role details
+    """
+    try:
+        role_data = redis_client.get(f"custom_role:{role_name}")
+        if not role_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role '{role_name}' not found"
+            )
+        
+        return json.loads(role_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get custom role", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get custom role"
+        )
+
+
+@app.put("/admin/roles/custom/{role_name}")
+async def update_custom_role(
+    role_name: str,
+    role_update: CustomRoleUpdate,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #531: Update custom role
+    """
+    try:
+        # Get existing role
+        role_data_json = redis_client.get(f"custom_role:{role_name}")
+        if not role_data_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role '{role_name}' not found"
+            )
+        
+        role_data = json.loads(role_data_json)
+        
+        # Update fields
+        if role_update.name:
+            # If renaming, check new name doesn't exist
+            if role_update.name != role_name:
+                existing = redis_client.get(f"custom_role:{role_update.name}")
+                if existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Role '{role_update.name}' already exists"
+                    )
+                role_data["name"] = role_update.name
+        
+        if role_update.description:
+            role_data["description"] = role_update.description
+        
+        if role_update.permissions:
+            role_data["permissions"] = role_update.permissions
+        
+        role_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        role_data["updated_by"] = admin_user.id
+        
+        # Save updated role
+        redis_client.set(
+            f"custom_role:{role_data['name']}",
+            json.dumps(role_data)
+        )
+        
+        # If renamed, delete old key and update index
+        if role_update.name and role_update.name != role_name:
+            redis_client.delete(f"custom_role:{role_name}")
+            
+            # Update index
+            all_roles = redis_client.get("custom_roles:index")
+            if all_roles:
+                roles_list = json.loads(all_roles)
+                roles_list = [r if r != role_name else role_update.name for r in roles_list]
+                redis_client.set("custom_roles:index", json.dumps(roles_list))
+        
+        # Audit log
+        audit_entry = AuditLog(
+            id=generate_uuid(),
+            user_id=admin_user.id,
+            action="custom_role_updated",
+            resource_type="role",
+            resource_id=role_data["id"],
+            extra_data={
+                "role_name": role_data["name"],
+                "changes": role_update.dict(exclude_unset=True)
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return role_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update custom role", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update custom role"
+        )
+
+
+@app.delete("/admin/roles/custom/{role_name}")
+async def delete_custom_role(
+    role_name: str,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #531: Delete custom role
+    """
+    try:
+        # Check if role exists
+        role_data = redis_client.get(f"custom_role:{role_name}")
+        if not role_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role '{role_name}' not found"
+            )
+        
+        role_info = json.loads(role_data)
+        
+        # Delete role
+        redis_client.delete(f"custom_role:{role_name}")
+        
+        # Update index
+        all_roles = redis_client.get("custom_roles:index")
+        if all_roles:
+            roles_list = json.loads(all_roles)
+            roles_list = [r for r in roles_list if r != role_name]
+            redis_client.set("custom_roles:index", json.dumps(roles_list))
+        
+        # Audit log
+        audit_entry = AuditLog(
+            id=generate_uuid(),
+            user_id=admin_user.id,
+            action="custom_role_deleted",
+            resource_type="role",
+            resource_id=role_info["id"],
+            extra_data={"role_name": role_name},
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return {"message": f"Role '{role_name}' deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete custom role", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete custom role"
+        )
+
+
+# ============================================================================
+# FEATURE #532: PERMISSION TEMPLATES - PRE-CONFIGURED ROLE SETS
+# ============================================================================
+
+@app.get("/admin/roles/templates")
+async def get_permission_templates(
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Feature #532: Get pre-configured permission templates
+    
+    Templates for common use cases:
+    - External Consultant
+    - Read-Only Auditor
+    - Content Creator
+    - Team Lead
+    - etc.
+    """
+    try:
+        templates = {
+            "external_consultant": {
+                "name": "External Consultant",
+                "description": "View and comment only, no download or export",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": False,
+                    "delete_diagrams": False,
+                    "comment": True,
+                    "share": False,
+                    "export": False,
+                    "admin": False,
+                    "manage_users": False,
+                    "manage_teams": False,
+                    "view_audit_logs": False
+                },
+                "use_case": "Third-party consultants who need to review and provide feedback"
+            },
+            "read_only_auditor": {
+                "name": "Read-Only Auditor",
+                "description": "View everything including audit logs, no modifications",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": False,
+                    "delete_diagrams": False,
+                    "comment": False,
+                    "share": False,
+                    "export": True,
+                    "admin": False,
+                    "manage_users": False,
+                    "manage_teams": False,
+                    "view_audit_logs": True
+                },
+                "use_case": "Compliance auditors who need read-only access to everything"
+            },
+            "content_creator": {
+                "name": "Content Creator",
+                "description": "Create and edit diagrams, no administrative access",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": True,
+                    "delete_diagrams": False,
+                    "comment": True,
+                    "share": True,
+                    "export": True,
+                    "admin": False,
+                    "manage_users": False,
+                    "manage_teams": False,
+                    "view_audit_logs": False
+                },
+                "use_case": "Regular users who create content but don't manage teams"
+            },
+            "team_lead": {
+                "name": "Team Lead",
+                "description": "Full diagram access plus team management",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": True,
+                    "delete_diagrams": True,
+                    "comment": True,
+                    "share": True,
+                    "export": True,
+                    "admin": False,
+                    "manage_users": True,
+                    "manage_teams": True,
+                    "view_audit_logs": False
+                },
+                "use_case": "Team leaders who manage their teams"
+            },
+            "viewer_plus": {
+                "name": "Viewer Plus",
+                "description": "View, comment, and export",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": False,
+                    "delete_diagrams": False,
+                    "comment": True,
+                    "share": False,
+                    "export": True,
+                    "admin": False,
+                    "manage_users": False,
+                    "manage_teams": False,
+                    "view_audit_logs": False
+                },
+                "use_case": "Users who need to review and export diagrams"
+            },
+            "power_user": {
+                "name": "Power User",
+                "description": "Everything except admin and user management",
+                "permissions": {
+                    "view_diagrams": True,
+                    "edit_diagrams": True,
+                    "delete_diagrams": True,
+                    "comment": True,
+                    "share": True,
+                    "export": True,
+                    "admin": False,
+                    "manage_users": False,
+                    "manage_teams": False,
+                    "view_audit_logs": False
+                },
+                "use_case": "Advanced users who need full diagram access"
+            }
+        }
+        
+        return {"templates": templates}
+        
+    except Exception as e:
+        logger.error("Failed to get permission templates", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get permission templates"
+        )
+
+
+@app.post("/admin/roles/templates/{template_id}/apply")
+async def apply_permission_template(
+    template_id: str,
+    role_name: str,
+    description: str = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #532: Apply permission template to create new role
+    """
+    try:
+        # Get templates
+        templates_response = await get_permission_templates(admin_user)
+        templates = templates_response["templates"]
+        
+        if template_id not in templates:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Template '{template_id}' not found"
+            )
+        
+        template = templates[template_id]
+        
+        # Create role from template
+        role_create = CustomRoleCreate(
+            name=role_name,
+            description=description or template["description"],
+            permissions=template["permissions"]
+        )
+        
+        return await create_custom_role(role_create, admin_user, db)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to apply permission template", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to apply permission template"
+        )
+
+
+# ============================================================================
+# FEATURE #584: FOLDER PERMISSIONS - CONTROL ACCESS PER FOLDER
+# ============================================================================
+
+class FolderPermission(BaseModel):
+    """Schema for folder permission."""
+    user_id: str
+    permission: str  # view, edit, admin
+
+
+@app.post("/folders/{folder_id}/permissions")
+async def add_folder_permission(
+    folder_id: str,
+    permission: FolderPermission,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #584: Add permission to folder
+    
+    Permissions:
+    - view: Can see folder and contents
+    - edit: Can modify folder contents
+    - admin: Can manage folder permissions
+    """
+    try:
+        from .models import Folder
+        
+        # Get folder
+        folder = db.query(Folder).filter(Folder.id == folder_id).first()
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found"
+            )
+        
+        # Check if current user has admin permission on folder
+        is_owner = folder.user_id == current_user.id
+        is_admin = current_user.role == "admin"
+        
+        # Check existing permissions
+        folder_perms = redis_client.get(f"folder_perms:{folder_id}")
+        if folder_perms:
+            perms_data = json.loads(folder_perms)
+            user_perm = perms_data.get(current_user.id, {}).get("permission")
+            has_admin_perm = user_perm == "admin"
+        else:
+            perms_data = {}
+            has_admin_perm = False
+        
+        if not (is_owner or is_admin or has_admin_perm):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only folder owner or admins can manage permissions"
+            )
+        
+        # Validate permission level
+        valid_permissions = ["view", "edit", "admin"]
+        if permission.permission not in valid_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid permission. Must be one of: {', '.join(valid_permissions)}"
+            )
+        
+        # Verify target user exists
+        target_user = db.query(User).filter(User.id == permission.user_id).first()
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target user not found"
+            )
+        
+        # Add permission
+        perms_data[permission.user_id] = {
+            "permission": permission.permission,
+            "granted_by": current_user.id,
+            "granted_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Save to Redis
+        redis_client.set(
+            f"folder_perms:{folder_id}",
+            json.dumps(perms_data),
+            ex=None  # No expiration
+        )
+        
+        # Audit log
+        audit_entry = AuditLog(
+            id=generate_uuid(),
+            user_id=current_user.id,
+            action="folder_permission_added",
+            resource_type="folder",
+            resource_id=folder_id,
+            extra_data={
+                "target_user_id": permission.user_id,
+                "target_user_email": target_user.email,
+                "permission": permission.permission
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        logger.info(
+            f"Folder permission added",
+            correlation_id=folder_id,
+            user_id=permission.user_id,
+            permission=permission.permission
+        )
+        
+        return {
+            "folder_id": folder_id,
+            "user_id": permission.user_id,
+            "permission": permission.permission,
+            "granted_at": perms_data[permission.user_id]["granted_at"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to add folder permission", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add folder permission"
+        )
+
+
+@app.get("/folders/{folder_id}/permissions")
+async def get_folder_permissions(
+    folder_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #584: Get folder permissions
+    """
+    try:
+        from .models import Folder
+        
+        # Get folder
+        folder = db.query(Folder).filter(Folder.id == folder_id).first()
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found"
+            )
+        
+        # Check if user has access to view permissions
+        is_owner = folder.user_id == current_user.id
+        is_admin = current_user.role == "admin"
+        
+        if not (is_owner or is_admin):
+            # Check if user has any permission on this folder
+            folder_perms = redis_client.get(f"folder_perms:{folder_id}")
+            if folder_perms:
+                perms_data = json.loads(folder_perms)
+                if current_user.id not in perms_data:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied"
+                )
+        
+        # Get permissions
+        folder_perms = redis_client.get(f"folder_perms:{folder_id}")
+        if not folder_perms:
+            return {
+                "folder_id": folder_id,
+                "owner_id": folder.user_id,
+                "permissions": []
+            }
+        
+        perms_data = json.loads(folder_perms)
+        
+        # Enrich with user details
+        permissions = []
+        for user_id, perm_info in perms_data.items():
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                permissions.append({
+                    "user_id": user_id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "permission": perm_info["permission"],
+                    "granted_by": perm_info.get("granted_by"),
+                    "granted_at": perm_info.get("granted_at")
+                })
+        
+        return {
+            "folder_id": folder_id,
+            "owner_id": folder.user_id,
+            "permissions": permissions
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get folder permissions", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get folder permissions"
+        )
+
+
+@app.delete("/folders/{folder_id}/permissions/{user_id}")
+async def remove_folder_permission(
+    folder_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Feature #584: Remove folder permission
+    """
+    try:
+        from .models import Folder
+        
+        # Get folder
+        folder = db.query(Folder).filter(Folder.id == folder_id).first()
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found"
+            )
+        
+        # Check if current user has admin permission
+        is_owner = folder.user_id == current_user.id
+        is_admin = current_user.role == "admin"
+        
+        folder_perms = redis_client.get(f"folder_perms:{folder_id}")
+        if folder_perms:
+            perms_data = json.loads(folder_perms)
+            user_perm = perms_data.get(current_user.id, {}).get("permission")
+            has_admin_perm = user_perm == "admin"
+        else:
+            perms_data = {}
+            has_admin_perm = False
+        
+        if not (is_owner or is_admin or has_admin_perm):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only folder owner or admins can manage permissions"
+            )
+        
+        # Remove permission
+        if user_id in perms_data:
+            removed_perm = perms_data[user_id]["permission"]
+            del perms_data[user_id]
+            
+            # Save updated permissions
+            if perms_data:
+                redis_client.set(f"folder_perms:{folder_id}", json.dumps(perms_data))
+            else:
+                redis_client.delete(f"folder_perms:{folder_id}")
+            
+            # Audit log
+            audit_entry = AuditLog(
+                id=generate_uuid(),
+                user_id=current_user.id,
+                action="folder_permission_removed",
+                resource_type="folder",
+                resource_id=folder_id,
+                extra_data={
+                    "target_user_id": user_id,
+                    "removed_permission": removed_perm
+                },
+                ip_address="system"
+            )
+            db.add(audit_entry)
+            db.commit()
+            
+            return {"message": "Permission removed successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Permission not found"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to remove folder permission", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remove folder permission"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AUTH_SERVICE_PORT", "8085")))
