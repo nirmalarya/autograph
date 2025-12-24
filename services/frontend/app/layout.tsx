@@ -5,6 +5,7 @@ import { ThemeProvider } from './components/ThemeProvider';
 import PWAInstaller from './components/PWAInstaller';
 import PushNotifications from './components/PushNotifications';
 import OfflineStatusBanner from './components/OfflineStatusBanner';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -48,12 +49,14 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
       </head>
       <body className={inter.className}>
-        <ThemeProvider>
-          <OfflineStatusBanner />
-          <PWAInstaller />
-          <PushNotifications />
-          {children}
-        </ThemeProvider>
+        <ErrorBoundary>
+          <ThemeProvider>
+            <OfflineStatusBanner />
+            <PWAInstaller />
+            <PushNotifications />
+            {children}
+          </ThemeProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );
