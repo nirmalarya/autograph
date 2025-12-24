@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from './ThemeProvider';
+import Tooltip from './Tooltip';
 
 /**
  * HighContrastToggle Component
@@ -21,7 +22,17 @@ export default function HighContrastToggle() {
     setHighContrast(!highContrast);
   };
 
+  const tooltipContent = (
+    <div className="text-center">
+      <div className="font-semibold">High Contrast: {highContrast ? 'On' : 'Off'}</div>
+      <div className="text-xs mt-1 opacity-80">
+        {highContrast ? 'Enhanced contrast for accessibility' : 'Click to enable'}
+      </div>
+    </div>
+  );
+
   return (
+    <Tooltip content={tooltipContent} position="bottom">
     <button
       onClick={toggleHighContrast}
       className={`p-2 rounded-lg transition-colors ${
@@ -29,7 +40,6 @@ export default function HighContrastToggle() {
           ? 'bg-blue-600 text-white hover:bg-blue-700'
           : 'hover:bg-gray-200 dark:hover:bg-gray-700'
       }`}
-      title={`High Contrast: ${highContrast ? 'On' : 'Off'}`}
       aria-label="Toggle high contrast mode"
       aria-pressed={highContrast}
     >
@@ -63,5 +73,6 @@ export default function HighContrastToggle() {
         <span className="ml-1 text-xs font-semibold">HC</span>
       )}
     </button>
+    </Tooltip>
   );
 }
