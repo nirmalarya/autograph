@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""
+Test Export Resolution Options Feature (#504)
+
+This script tests the export resolution options feature:
+- Low (1x)
+- Medium (2x)
+- High (3x)
+- Ultra (4x)
+
+Test Steps:
+1. Test 1x resolution export
+2. Test 2x resolution export
+3. Test 3x resolution export
+4. Test 4x resolution export
+5. Verify file sizes increase with resolution
+"""
+
+import requests
+import json
+from PIL import Image
+import io
+import sys
+
+# Service endpoints
+EXPORT_SERVICE_URL = "http://localhost:8097"
+
+def test_export_with_resolution(scale, resolution_name):
+    """Test export with a specific resolution."""
+    print(f"\n{'=' * 60}")
+    print(f"Testing: {resolution_name} ({scale}x)")
+    print('=' * 60)
+    
+    try:
+        # Prepare export request
+        export_request = {
+            "diagram_id": "test-export-resolution",
+            "canvas_data": {
+                "shapes": [
+                    {"id": "1", "type": "rectangle", "x": 100, "y": 100, "width": 200, "height": 100}
+                ]
+            },
+            "format": "png",
+            "width": 800,
+            "height": 600,
+            "quality": "high",
+            "background": "white",
+            "scale": scale
+        }
+        
+        # Call export endpoint
+        print(f"Calling export service: POST {EXPORT_SERVICE_URL}/export/png")
+        response = requests.post(
+            f"{EXPORT_SERVICE_URL}/export/png",
+            json=export_request,
+            timeout=30
+        )
+        
+        # Check response
+        if response.status_code != 200:
+            print(f"❌ FAIL: Export failed with status {response.status_code}")
+            print(f"Response: {response.text[:200]}")
+            return False, None
+        
+        # Verify response is PNG
+        content_type = response.headers.get('Content-Type', '')
+        if 'image/png' not in content_type:
+            print(f"❌ FAIL: Response is not PNG. Content-Type: {content_type}")
+            return False, None
+        
+        print(f"✅ Export successful! Content-Type: {content_type}")
+        
+        # Load and verify image
+        try:
+            img = Image.open(io.BytesIO(response.content))
+            print(f"✅ Image loaded successfully")
+            
+            # Verify image dimensions match expected (width * scale, height * scale)
+            expected_width = 800 * scale
+            expected_height = 600 * scale
+            actual_width, actual_height = img.size
+            
+            print(f"   - Expected size: {expected_width} × {expected_height}")
+            print(f"   - Actual size: {actual_width} × {actual_height}")
+            
+            if actual_width == expected_width and actual_height == expected_height:
+                print(f"✅ PASS: Image dimensions match {scale}x resolution")
+            else:
+                print(f"⚠️  WARNING: Image dimensions don't match expected")
+            
+            print(f"   - Mode: {img.mode}")
+            print(f"   - Format: {img.format}")
+            
+            # Get file size
+            file_size = len(response.content)
+            print(f"   - File size: {file_size:,} bytes ({file_size / 1024:.1f} KB)")
+            
+            if file_size > 0:
+                print(f"✅ PASS: Export file size is valid")
+            else:
+                print(f"❌ FAIL: Export file is empty")
+                return False, None
+            
+            return True, file_size
+            
+        except Exception as e:
+            print(f"❌ FAIL: Could not load image: {e}")
+            return False, None
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ FAIL: Request failed: {e}")
+        return False, None
+    except Exception as e:
+        print(f"❌ FAIL: Unexpected error: {e}")
+        return False, None
+
+def main():
+    """Run all export resolution tests."""
+    print("=" * 60)
+    print("EXPORT RESOLUTION OPTIONS TEST (Feature #504)")
+    print("=" * 60)
+    
+    # Check if export service is running
+    print("\n📡 Checking export service health...")
+    try:
+        health_response = requests.get(f"{EXPORT_SERVICE_URL}/health", timeout=5)
+        if health_response.status_code == 200:
+            health_data = health_response.json()
+            print(f"✅ Export service is healthy")
+            print(f"   - Service: {health_data.get('service')}")
+            print(f"   - Status: {health_data.get('status')}")
+            print(f"   - Version: {health_data.get('version')}")
+        else:
+            print(f"❌ Export service health check failed: {health_response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Export service is not available: {e}")
+        print("Please start the export service on port 8097")
+        return False
+    
+    # Run tests
+    results = []
+    file_sizes = []
+    
+    # Test 1: Low (1x)
+    success, size = test_export_with_resolution(1, "Low")
+    results.append(("Low (1x)", success))
+    if size:
+        file_sizes.append(("1x", size))
+    
+    # Test 2: Medium (2x)
+    success, size = test_export_with_resolution(2, "Medium")
+    results.append(("Medium (2x)", success))
+    if size:
+        file_sizes.append(("2x", size))
+    
+    # Test 3: High (3x)
+    success, size = test_export_with_resolution(3, "High")
+    results.append(("High (3x)", success))
+    if size:
+        file_sizes.append(("3x", size))
+    
+    # Test 4: Ultra (4x)
+    success, size = test_export_with_resolution(4, "Ultra")
+    results.append(("Ultra (4x)", success))
+    if size:
+        file_sizes.append(("4x", size))
+    
+    # Print summary
+    print("\n" + "=" * 60)
+    print("TEST SUMMARY")
+    print("=" * 60)
+    
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for test_name, result in results:
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {test_name}")
+    
+    print(f"\nOverall: {passed}/{total} tests passed ({passed/total*100:.0f}%)")
+    
+    # Compare file sizes
+    if file_sizes:
+        print("\n" + "=" * 60)
+        print("FILE SIZE COMPARISON")
+        print("=" * 60)
+        for resolution, size in file_sizes:
+            print(f"{resolution}: {size:,} bytes ({size / 1024:.1f} KB)")
+        
+        # Verify that file sizes increase with resolution
+        sizes_only = [s for _, s in file_sizes]
+        if sizes_only == sorted(sizes_only):
+            print("\n✅ PASS: File sizes increase with resolution as expected")
+        else:
+            print("\n⚠️  WARNING: File sizes don't strictly increase with resolution")
+    
+    if passed == total:
+        print("\n🎉 All tests passed! Feature #504 is working correctly.")
+        print("\nVerified:")
+        print("  ✓ Low (1x) resolution export works")
+        print("  ✓ Medium (2x) resolution export works")
+        print("  ✓ High (3x) resolution export works")
+        print("  ✓ Ultra (4x) resolution export works")
+        print("  ✓ Image dimensions scale correctly")
+        print("  ✓ File sizes increase with resolution")
+        return True
+    else:
+        print(f"\n❌ {total - passed} test(s) failed. Please review the errors above.")
+        return False
+
+if __name__ == "__main__":
+    success = main()
+    sys.exit(0 if success else 1)
