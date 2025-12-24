@@ -655,22 +655,118 @@ def get_rate_limit_ttl(ip_address: str) -> int:
     return redis_client.ttl(key)
 
 
+# Session Management Constants
+SESSION_INACTIVITY_TIMEOUT = 1800  # 30 minutes in seconds
+MAX_CONCURRENT_SESSIONS = 5  # Maximum active sessions per user
+
 # Session Management Functions
+def get_user_sessions(user_id: str) -> list[dict]:
+    """Get all active sessions for a user.
+    
+    Uses a Redis Set to track sessions per user for better performance.
+    
+    Args:
+        user_id: The user ID
+        
+    Returns:
+        List of session dictionaries with token and metadata
+    """
+    # Use a Redis Set to track session tokens for this user
+    user_sessions_key = f"user_sessions:{user_id}"
+    
+    # Get all session tokens for this user from the set
+    session_tokens = redis_client.smembers(user_sessions_key)
+    
+    sessions = []
+    for token in session_tokens:
+        # Ensure token is a string
+        if isinstance(token, bytes):
+            token = token.decode('utf-8')
+        
+        # Get session data
+        session_key = f"session:{token}"
+        session_data_str = redis_client.get(session_key)
+        
+        if session_data_str:
+            session_data = json.loads(session_data_str)
+            sessions.append({
+                "token": token,
+                "data": session_data,
+                "key": session_key
+            })
+        else:
+            # Session expired or deleted, remove from set
+            redis_client.srem(user_sessions_key, token)
+    
+    # Sort by created_at (oldest first)
+    sessions.sort(key=lambda x: x["data"].get("created_at", ""))
+    
+    return sessions
+
+
 def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) -> None:
     """Create a session in Redis with 24-hour TTL.
+    
+    Enforces maximum concurrent sessions limit. If user already has
+    MAX_CONCURRENT_SESSIONS sessions, the oldest session is deleted.
     
     Args:
         access_token: The access token to use as session key
         user_id: The user ID
         ttl_seconds: Time to live in seconds (default: 86400 = 24 hours)
     """
+    user_sessions_key = f"user_sessions:{user_id}"
+    
+    # Check existing session count for this user
+    user_sessions = get_user_sessions(user_id)
+    
+    print(f"DEBUG: Creating session for user {user_id}, current sessions: {len(user_sessions)}, max: {MAX_CONCURRENT_SESSIONS}")
+    
+    logger.debug(
+        "Creating session - checking concurrent limit",
+        user_id=user_id,
+        current_sessions=len(user_sessions),
+        max_sessions=MAX_CONCURRENT_SESSIONS
+    )
+    
+    # If at limit, delete oldest session
+    if len(user_sessions) >= MAX_CONCURRENT_SESSIONS:
+        oldest_session = user_sessions[0]
+        oldest_token = oldest_session["token"]
+        
+        print(f"DEBUG: Deleting oldest session: {oldest_session['key']}")
+        
+        # Delete session data
+        redis_client.delete(oldest_session["key"])
+        
+        # Remove from user sessions set
+        redis_client.srem(user_sessions_key, oldest_token)
+        
+        logger.info(
+            "Oldest session deleted due to concurrent session limit",
+            user_id=user_id,
+            sessions_count=len(user_sessions),
+            max_sessions=MAX_CONCURRENT_SESSIONS,
+            deleted_token_prefix=oldest_token[:10]
+        )
+    
+    # Create new session
     key = f"session:{access_token}"
+    now = datetime.utcnow()
     session_data = {
         "user_id": user_id,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": now.isoformat(),
+        "last_activity": now.isoformat()
     }
+    
     # Store session data as JSON string
     redis_client.setex(key, ttl_seconds, json.dumps(session_data))
+    
+    # Add token to user sessions set (also with TTL)
+    redis_client.sadd(user_sessions_key, access_token)
+    redis_client.expire(user_sessions_key, ttl_seconds)
+    
+    print(f"DEBUG: Session created: {key[:30]}...")
 
 
 def validate_session(access_token: str) -> bool:
@@ -703,17 +799,31 @@ def get_session(access_token: str) -> dict | None:
 
 
 def delete_session(access_token: str) -> None:
-    """Delete a session from Redis.
+    """Delete a session from Redis and remove from user sessions set.
     
     Args:
         access_token: The access token
     """
     key = f"session:{access_token}"
+    
+    # Get session data to find user_id
+    session_data = get_session(access_token)
+    
+    # Delete session data
     redis_client.delete(key)
+    
+    # Remove from user sessions set if we have user_id
+    if session_data:
+        user_id = session_data.get("user_id")
+        if user_id:
+            user_sessions_key = f"user_sessions:{user_id}"
+            redis_client.srem(user_sessions_key, access_token)
 
 
 def delete_all_user_sessions(user_id: str) -> int:
     """Delete all sessions for a user.
+    
+    Uses the user sessions set for efficient deletion.
     
     Args:
         user_id: The user ID
@@ -721,19 +831,24 @@ def delete_all_user_sessions(user_id: str) -> int:
     Returns:
         Number of sessions deleted
     """
-    # Find all session keys for this user
-    # This is not efficient for large scale, but works for our use case
-    # In production, you might want to maintain a separate index
-    pattern = "session:*"
-    deleted = 0
+    user_sessions_key = f"user_sessions:{user_id}"
     
-    for key in redis_client.scan_iter(match=pattern):
-        session_data = redis_client.get(key)
-        if session_data:
-            data = json.loads(session_data)
-            if data.get("user_id") == user_id:
-                redis_client.delete(key)
-                deleted += 1
+    # Get all session tokens for this user
+    session_tokens = redis_client.smembers(user_sessions_key)
+    
+    deleted = 0
+    for token in session_tokens:
+        # Ensure token is a string
+        if isinstance(token, bytes):
+            token = token.decode('utf-8')
+        
+        # Delete session
+        session_key = f"session:{token}"
+        if redis_client.delete(session_key) > 0:
+            deleted += 1
+    
+    # Delete the user sessions set
+    redis_client.delete(user_sessions_key)
     
     return deleted
 
@@ -749,6 +864,72 @@ def get_session_ttl(access_token: str) -> int:
     """
     key = f"session:{access_token}"
     return redis_client.ttl(key)
+
+
+def update_session_activity(access_token: str) -> bool:
+    """Update the last_activity timestamp for a session.
+    
+    Args:
+        access_token: The access token
+        
+    Returns:
+        True if session was updated, False if session doesn't exist
+    """
+    key = f"session:{access_token}"
+    session_data = get_session(access_token)
+    
+    if not session_data:
+        return False
+    
+    # Update last_activity timestamp
+    session_data["last_activity"] = datetime.utcnow().isoformat()
+    
+    # Get current TTL to preserve it
+    ttl = redis_client.ttl(key)
+    if ttl > 0:
+        # Update session data while preserving TTL
+        redis_client.setex(key, ttl, json.dumps(session_data))
+        return True
+    
+    return False
+
+
+def check_session_inactivity(access_token: str, timeout_seconds: int = SESSION_INACTIVITY_TIMEOUT) -> tuple[bool, int]:
+    """Check if a session has exceeded the inactivity timeout.
+    
+    Args:
+        access_token: The access token
+        timeout_seconds: Inactivity timeout in seconds (default: 1800 = 30 minutes)
+        
+    Returns:
+        Tuple of (is_expired, seconds_since_last_activity)
+        is_expired: True if session exceeded timeout, False otherwise
+        seconds_since_last_activity: Seconds since last activity, or -1 if session not found
+    """
+    session_data = get_session(access_token)
+    
+    if not session_data:
+        return (True, -1)
+    
+    last_activity_str = session_data.get("last_activity")
+    if not last_activity_str:
+        # Legacy session without last_activity, treat as inactive
+        return (True, -1)
+    
+    try:
+        last_activity = datetime.fromisoformat(last_activity_str)
+        now = datetime.utcnow()
+        
+        # Calculate seconds since last activity
+        seconds_inactive = int((now - last_activity).total_seconds())
+        
+        # Check if exceeded timeout
+        is_expired = seconds_inactive > timeout_seconds
+        
+        return (is_expired, seconds_inactive)
+    except (ValueError, AttributeError):
+        # Invalid timestamp format
+        return (True, -1)
 
 
 # Audit Logging Functions
@@ -855,6 +1036,25 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
+        # Check for inactivity timeout (30 minutes)
+        is_expired, seconds_inactive = check_session_inactivity(token, SESSION_INACTIVITY_TIMEOUT)
+        if is_expired:
+            # Delete expired session
+            delete_session(token)
+            
+            # Log the inactivity timeout
+            logger.info(
+                "Session expired due to inactivity",
+                token_prefix=token[:10],
+                seconds_inactive=seconds_inactive
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired due to inactivity",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         token_type: str = payload.get("type")
@@ -869,6 +1069,9 @@ async def get_current_user(
                 detail="All user sessions have been revoked",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        
+        # Update last activity timestamp for this session
+        update_session_activity(token)
             
     except JWTError:
         raise credentials_exception
@@ -878,6 +1081,18 @@ async def get_current_user(
         raise credentials_exception
     
     return user
+
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """Get current authenticated user and verify they have admin role."""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
 
 
 # API endpoints
@@ -2717,6 +2932,122 @@ async def test_fast_query(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error: {str(e)}"
+        )
+
+
+# Admin endpoints
+@app.post("/admin/users/{user_id}/unlock")
+async def admin_unlock_user(
+    user_id: str,
+    current_admin: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Admin endpoint to manually unlock a user account.
+    
+    Feature #102: Account lockout can be manually unlocked by admin
+    
+    Only users with admin role can access this endpoint.
+    """
+    correlation_id = f"admin-unlock-{int(time.time() * 1000)}"
+    
+    logger.info(
+        "Admin unlock request received",
+        correlation_id=correlation_id,
+        admin_id=current_admin.id,
+        admin_email=current_admin.email,
+        target_user_id=user_id
+    )
+    
+    try:
+        # Find the user to unlock
+        target_user = get_user_by_id(db, user_id)
+        
+        if not target_user:
+            logger.warning(
+                "Admin unlock failed - user not found",
+                correlation_id=correlation_id,
+                target_user_id=user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user is actually locked
+        was_locked = False
+        if target_user.locked_until and target_user.locked_until > datetime.now(timezone.utc):
+            was_locked = True
+            logger.info(
+                "User is locked, proceeding with unlock",
+                correlation_id=correlation_id,
+                target_user_id=user_id,
+                locked_until=target_user.locked_until.isoformat()
+            )
+        else:
+            logger.info(
+                "User is not locked, but resetting failed attempts anyway",
+                correlation_id=correlation_id,
+                target_user_id=user_id,
+                failed_attempts=target_user.failed_login_attempts
+            )
+        
+        # Unlock the account by:
+        # 1. Setting locked_until to None
+        # 2. Resetting failed_login_attempts to 0
+        target_user.locked_until = None
+        target_user.failed_login_attempts = 0
+        db.commit()
+        
+        logger.info(
+            "Account unlocked successfully by admin",
+            correlation_id=correlation_id,
+            admin_id=current_admin.id,
+            target_user_id=user_id,
+            target_user_email=target_user.email,
+            was_locked=was_locked
+        )
+        
+        # Create audit log entry
+        audit_log = AuditLog(
+            user_id=current_admin.id,
+            action="admin_unlock_user",
+            resource_type="user",
+            resource_id=user_id,
+            ip_address=request.client.host if request else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+            extra_data={
+                "target_user_email": target_user.email,
+                "was_locked": was_locked,
+                "unlocked_by_admin": current_admin.email
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+        
+        return {
+            "message": "Account unlocked successfully",
+            "user_id": user_id,
+            "email": target_user.email,
+            "was_locked": was_locked,
+            "unlocked_by": current_admin.email,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error unlocking user account",
+            correlation_id=correlation_id,
+            exc=e,
+            admin_id=current_admin.id,
+            target_user_id=user_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to unlock user account"
         )
 
 
