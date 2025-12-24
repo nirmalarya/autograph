@@ -42,6 +42,16 @@ const MobileBottomNav = dynamic(() => import('../components/MobileBottomNav'), {
   loading: () => <div className="h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700" />,
 });
 
+const VirtualGrid = dynamic(() => import('../components/VirtualGrid'), {
+  loading: () => <div className="h-96 bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />,
+  ssr: false,
+});
+
+const VirtualList = dynamic(() => import('../components/VirtualList'), {
+  loading: () => <div className="h-96 bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />,
+  ssr: false,
+});
+
 interface Diagram {
   id: string;
   title: string;
@@ -1214,11 +1224,23 @@ export default function DashboardPage() {
                     onChange={toggleSelectAll}
                     className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
-                  <label className="text-sm text-gray-700 font-medium">
+                  <label className="text-sm text-gray-700 dark:text-gray-300 font-medium">
                     Select All
                   </label>
                 </div>
 
+                {/* Use virtual scrolling for large lists (100+ items) */}
+                {diagrams.length >= 100 ? (
+                  <VirtualGrid
+                    diagrams={diagrams}
+                    onDiagramClick={handleDiagramClick}
+                    selectedDiagrams={selectedDiagrams}
+                    onToggleSelect={toggleSelectDiagram}
+                    searchQuery={searchQuery}
+                    formatBytes={formatBytes}
+                    highlightSearchTerm={highlightSearchTerm}
+                  />
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                   {diagrams.map((diagram) => {
                     const isPending = diagram.id.startsWith('temp-');
@@ -1306,11 +1328,26 @@ export default function DashboardPage() {
                     </div>
                   )})}
                 </div>
+                )}
               </>
             )}
 
             {/* List View */}
             {viewMode === 'list' && (
+              <>
+                {/* Use virtual scrolling for large lists (100+ items) */}
+                {diagrams.length >= 100 ? (
+                  <VirtualList
+                    diagrams={diagrams}
+                    onDiagramClick={handleDiagramClick}
+                    selectedDiagrams={selectedDiagrams}
+                    onToggleSelect={toggleSelectDiagram}
+                    searchQuery={searchQuery}
+                    formatBytes={formatBytes}
+                    highlightSearchTerm={highlightSearchTerm}
+                    userEmail={user?.email}
+                  />
+                ) : (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -1488,6 +1525,8 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               </div>
+                )}
+              </>
             )}
 
             {/* Pagination - Only show for "All" tab */}
