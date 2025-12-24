@@ -57,3 +57,53 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Touch gesture support */
+@layer utilities {
+  /* Enable smooth touch scrolling and gestures */
+  .touch-enabled {
+    -webkit-overflow-scrolling: touch;
+    touch-action: manipulation;
+  }
+
+  /* Prevent double-tap zoom on touch devices */
+  .no-double-tap-zoom {
+    touch-action: manipulation;
+  }
+
+  /* Touch-friendly context menu */
+  .tl-context-menu {
+    min-width: 200px;
+  }
+
+  .tl-context-menu button,
+  .tl-context-menu [role="menuitem"] {
+    min-height: 44px !important;
+    padding: 12px 16px !important;
+    font-size: 16px !important;
+  }
+
+  /* Touch-friendly toolbar buttons */
+  .tl-toolbar button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  /* Improve touch target sizes for TLDraw UI */
+  .tl-button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  /* Enable pinch zoom and two-finger pan */
+  .tl-container {
+    touch-action: none; /* Let TLDraw handle all touch gestures */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Smooth animations for touch gestures */
+  .tl-canvas {
+    transition: transform 0.1s ease-out;
+  }
+}

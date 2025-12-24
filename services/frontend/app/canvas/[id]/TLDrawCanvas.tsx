@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Tldraw, Editor } from '@tldraw/tldraw';
+import { useEffect, useState, useCallback } from 'react';
+import { Tldraw, Editor, TLUiOverrides } from '@tldraw/tldraw';
 import '@tldraw/tldraw/tldraw.css';
 
 interface TLDrawCanvasProps {
@@ -11,6 +11,7 @@ interface TLDrawCanvasProps {
 
 export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps) {
   const [mounted, setMounted] = useState(false);
+  const [editor, setEditor] = useState<Editor | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -32,6 +33,62 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
     };
   }, [onSave, mounted]);
 
+  // Touch gesture handling
+  useEffect(() => {
+    if (!editor || !mounted) return;
+
+    // Enable touch gestures
+    const handleTouchStart = (e: TouchEvent) => {
+      // Long-press detection for context menu
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const longPressTimer = setTimeout(() => {
+          // Trigger context menu on long press
+          const event = new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          });
+          e.target?.dispatchEvent(event);
+        }, 500); // 500ms for long press
+
+        const handleTouchEnd = () => {
+          clearTimeout(longPressTimer);
+          document.removeEventListener('touchend', handleTouchEnd);
+          document.removeEventListener('touchmove', handleTouchMove);
+        };
+
+        const handleTouchMove = () => {
+          clearTimeout(longPressTimer);
+          document.removeEventListener('touchend', handleTouchEnd);
+          document.removeEventListener('touchmove', handleTouchMove);
+        };
+
+        document.addEventListener('touchend', handleTouchEnd);
+        document.addEventListener('touchmove', handleTouchMove);
+      }
+    };
+
+    // Add touch event listeners
+    const canvasElement = document.querySelector('.tl-container');
+    if (canvasElement) {
+      canvasElement.addEventListener('touchstart', handleTouchStart as any);
+    }
+
+    return () => {
+      if (canvasElement) {
+        canvasElement.removeEventListener('touchstart', handleTouchStart as any);
+      }
+    };
+  }, [editor, mounted]);
+
+  // Custom UI overrides for touch-friendly interface
+  const uiOverrides: TLUiOverrides = {
+    // TLDraw handles touch gestures natively
+    // Context menu styling is handled via CSS
+  };
+
   if (!mounted) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-50">
@@ -46,9 +103,11 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
   return (
     <Tldraw
       snapshot={initialData}
+      overrides={uiOverrides}
       onMount={(editor: Editor) => {
         // Store editor reference globally for save button
         (window as any).tldrawEditor = editor;
+        setEditor(editor);
         
         // Load existing canvas data if available
         if (initialData) {
@@ -58,6 +117,13 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
             console.error('Failed to load canvas snapshot:', err);
           }
         }
+
+        // Configure touch-friendly settings
+        // TLDraw 2.4.0 has built-in touch gesture support:
+        // - Pinch to zoom (2 fingers pinch in/out)
+        // - Two-finger pan (2 fingers drag)
+        // - Single finger to draw/select
+        // These are enabled by default in TLDraw
       }}
     />
   );
