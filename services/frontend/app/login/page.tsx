@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Button from '../components/Button';
+import Input from '../components/Input';
 
 function LoginForm() {
   const router = useRouter();
@@ -154,43 +155,29 @@ function LoginForm() {
 
           {!mfaRequired ? (
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div>
-                <label
-                  htmlFor="email"
-                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                >
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  required
-                  value={formData.email}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                  placeholder="you@example.com"
-                />
-              </div>
+              <Input
+                type="email"
+                id="email"
+                name="email"
+                label="Email Address"
+                required
+                value={formData.email}
+                onChange={handleChange}
+                placeholder="you@example.com"
+                fullWidth
+              />
 
-              <div>
-                <label
-                  htmlFor="password"
-                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                >
-                  Password
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  required
-                  value={formData.password}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                  placeholder="Enter your password"
-                />
-              </div>
+              <Input
+                type="password"
+                id="password"
+                name="password"
+                label="Password"
+                required
+                value={formData.password}
+                onChange={handleChange}
+                placeholder="Enter your password"
+                fullWidth
+              />
 
               <div className="flex items-center">
                 <input
@@ -222,31 +209,24 @@ function LoginForm() {
             </form>
           ) : (
             <form onSubmit={handleMfaSubmit} className="space-y-6">
-              <div>
-                <label
-                  htmlFor="mfa_code"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Authentication Code
-                </label>
-                <input
-                  type="text"
-                  id="mfa_code"
-                  name="mfa_code"
-                  required
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-center text-2xl tracking-widest"
-                  placeholder="000000"
-                  maxLength={6}
-                  pattern="[0-9]{6}"
-                  autoComplete="off"
-                  autoFocus
-                />
-                <p className="mt-2 text-xs text-gray-500">
-                  Enter the 6-digit code from your authenticator app
-                </p>
-              </div>
+              <Input
+                type="text"
+                id="mfa_code"
+                name="mfa_code"
+                label="Authentication Code"
+                required
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                placeholder="000000"
+                maxLength={6}
+                // @ts-ignore - pattern is a valid HTML attribute
+                pattern="[0-9]{6}"
+                autoComplete="off"
+                autoFocus
+                className="text-center text-2xl tracking-widest"
+                helperText="Enter the 6-digit code from your authenticator app"
+                fullWidth
+              />
 
               <Button
                 type="submit"

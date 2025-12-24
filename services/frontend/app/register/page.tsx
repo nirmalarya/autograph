@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Button from '../components/Button';
+import Input from '../components/Input';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -106,88 +107,58 @@ export default function RegisterPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Email Address *
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                required
-                value={formData.email}
-                onChange={handleChange}
-                className="w-full px-4 py-2 sm:py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="you@example.com"
-              />
-            </div>
+            <Input
+              type="email"
+              id="email"
+              name="email"
+              label="Email Address"
+              required
+              value={formData.email}
+              onChange={handleChange}
+              placeholder="you@example.com"
+              fullWidth
+            />
 
-            <div>
-              <label
-                htmlFor="fullName"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Full Name (Optional)
-              </label>
-              <input
-                type="text"
-                id="fullName"
-                name="fullName"
-                value={formData.fullName}
-                onChange={handleChange}
-                maxLength={255}
-                className="w-full px-4 py-2 sm:py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="John Doe"
-              />
-            </div>
+            <Input
+              type="text"
+              id="fullName"
+              name="fullName"
+              label="Full Name (Optional)"
+              value={formData.fullName}
+              onChange={handleChange}
+              maxLength={255}
+              placeholder="John Doe"
+              fullWidth
+            />
 
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Password *
-              </label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                required
-                value={formData.password}
-                onChange={handleChange}
-                minLength={8}
-                maxLength={128}
-                className="w-full px-4 py-2 sm:py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="At least 8 characters"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Must be 8-128 characters long
-              </p>
-            </div>
+            <Input
+              type="password"
+              id="password"
+              name="password"
+              label="Password"
+              required
+              value={formData.password}
+              onChange={handleChange}
+              minLength={8}
+              maxLength={128}
+              placeholder="At least 8 characters"
+              helperText="Must be 8-128 characters long"
+              fullWidth
+            />
 
-            <div>
-              <label
-                htmlFor="passwordConfirm"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Confirm Password *
-              </label>
-              <input
-                type="password"
-                id="passwordConfirm"
-                name="passwordConfirm"
-                required
-                value={formData.passwordConfirm}
-                onChange={handleChange}
-                minLength={8}
-                maxLength={128}
-                className="w-full px-4 py-2 sm:py-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="Confirm your password"
-              />
-            </div>
+            <Input
+              type="password"
+              id="passwordConfirm"
+              name="passwordConfirm"
+              label="Confirm Password"
+              required
+              value={formData.passwordConfirm}
+              onChange={handleChange}
+              minLength={8}
+              maxLength={128}
+              placeholder="Confirm your password"
+              fullWidth
+            />
 
             <Button
               type="submit"
