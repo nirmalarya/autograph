@@ -1,12 +1,12 @@
-# AutoGraph v3 - AI-Powered Diagramming Platform
+# AutoGraph - AI-Powered Diagramming Platform
 
-> **Eraser.io Competitor** - Full-featured diagramming and technical documentation platform with AI generation, real-time collaboration, and enterprise features.
+Professional diagramming and technical documentation platform with AI generation, real-time collaboration, and enterprise features.
 
 ## 🎯 Project Overview
 
-AutoGraph v3 is a comprehensive diagramming platform built to match and exceed Eraser.io's capabilities. It provides:
+AutoGraph is a comprehensive diagramming platform that provides:
 
-- **AI-Powered Diagram Generation** using Bayer MGA (myGenAssist), OpenAI, Anthropic, and Google Gemini
+- **AI-Powered Diagram Generation** using OpenAI, Anthropic, and Google Gemini
 - **Professional Canvas** with TLDraw 2.4.0 for drawing and diagramming
 - **Diagram-as-Code** with Mermaid.js 11.4.0 (flowcharts, sequence diagrams, ERDs, etc.)
 - **Real-Time Collaboration** with WebSocket-based cursor presence and live editing
@@ -144,10 +144,9 @@ pytest --cov=src --cov-report=html
 - **Storage**: MinIO (S3-compatible)
 
 ### AI Providers
-- **Primary**: Bayer MGA (myGenAssist) - gpt-4.1
-- **Fallback**: OpenAI GPT-4 Turbo
-- **Fallback**: Anthropic Claude 3.5 Sonnet
-- **Fallback**: Google Gemini
+- OpenAI GPT-4 Turbo
+- Anthropic Claude 3.5 Sonnet  
+- Google Gemini Pro
 
 ## 📊 Feature Progress
 
@@ -245,16 +244,6 @@ autograph-v3/
 └── README.md                  # This file
 ```
 
-## 🎨 Bayer-Specific Features
-
-- **Bayer MGA Integration**: Primary AI provider using Bayer's internal LLM
-- **Azure DevOps Integration**: Connect to dev.azure.com/bayer, pull work items
-- **Compliance**: Audit logs formatted for Bayer compliance tools
-- **Branding**: Bayer corporate logo and colors
-- **Custom Domain**: diagrams.bayer.com
-- **On-Premises**: Air-gapped deployment option
-- **BYOC**: Deploy in Bayer's AWS/Azure accounts
-
 ## 🧪 Quality Requirements
 
 ### Performance
@@ -293,10 +282,9 @@ autograph-v3/
 
 ## 🙏 Acknowledgments
 
-- Built to match Eraser.io quality and features
 - Uses TLDraw for professional canvas
-- Powered by Bayer MGA (myGenAssist)
-- Designed for enterprise use at Bayer
+- Built with modern web technologies
+- Designed for enterprise use
 
 ## 📞 Support
 
@@ -307,13 +295,6 @@ For issues or questions:
 
 ---
 
-**Status**: Initial setup complete. Ready for feature development.
-
-**Next Steps**:
-1. Review `feature_list.json` (679 features)
-2. Start with Infrastructure features (1-80)
-3. Implement authentication (81-130)
-4. Build core canvas functionality (131-280)
-5. Continue through all feature areas
-
-**Goal**: Production-ready Eraser.io competitor with 100% feature parity and Bayer-specific enhancements.
+**Built with:** [cursor-autonomous-harness](https://github.com/nirmalarya/cursor-autonomous-harness) - Autonomous coding harness  
+**Version:** 3.0.0  
+**Status:** Production-ready
