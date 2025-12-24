@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import OptimizedImage from "../../components/OptimizedImage";
 
 interface Version {
   id: string;
@@ -735,7 +736,7 @@ export default function VersionComparePage({
                 
                 {/* Thumbnail */}
                 {comparison.version1.thumbnail_url && (
-                  <img
+                  <OptimizedImage
                     src={comparison.version1.thumbnail_url}
                     alt={`Version ${comparison.version1.version_number}`}
                     className="w-full border rounded mb-4"
@@ -877,7 +878,7 @@ export default function VersionComparePage({
                 
                 {/* Thumbnail */}
                 {comparison.version2.thumbnail_url && (
-                  <img
+                  <OptimizedImage
                     src={comparison.version2.thumbnail_url}
                     alt={`Version ${comparison.version2.version_number}`}
                     className="w-full border rounded mb-4"
@@ -908,14 +909,14 @@ export default function VersionComparePage({
               <h3 className="text-lg font-semibold mb-4">Overlay View</h3>
               <div className="relative">
                 {comparison.version1.thumbnail_url && (
-                  <img
+                  <OptimizedImage
                     src={comparison.version1.thumbnail_url}
                     alt={`Version ${comparison.version1.version_number}`}
                     className="w-full border rounded opacity-50"
                   />
                 )}
                 {comparison.version2.thumbnail_url && (
-                  <img
+                  <OptimizedImage
                     src={comparison.version2.thumbnail_url}
                     alt={`Version ${comparison.version2.version_number}`}
                     className="w-full border rounded absolute top-0 left-0 opacity-50"

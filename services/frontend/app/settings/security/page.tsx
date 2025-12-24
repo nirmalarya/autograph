@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import OptimizedImage from '../../components/OptimizedImage';
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
@@ -222,10 +223,11 @@ export default function SecuritySettingsPage() {
                 </p>
                 {qrCode && (
                   <div className="flex justify-center mb-4">
-                    <img 
+                    <OptimizedImage 
                       src={`data:image/png;base64,${qrCode}`} 
                       alt="MFA QR Code" 
                       className="border border-gray-300 rounded-lg p-4 bg-white"
+                      priority={true}
                     />
                   </div>
                 )}
