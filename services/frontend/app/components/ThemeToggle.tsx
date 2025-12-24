@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from './ThemeProvider';
+import Tooltip from './Tooltip';
 
 export default function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -16,11 +17,21 @@ export default function ThemeToggle() {
     }
   };
 
+  const tooltipContent = (
+    <div className="text-center">
+      <div className="font-semibold">Theme: {theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System'}</div>
+      {theme === 'system' && (
+        <div className="text-xs mt-1">Currently: {resolvedTheme === 'dark' ? 'Dark' : 'Light'}</div>
+      )}
+      <div className="text-xs mt-1 opacity-80">Click to change</div>
+    </div>
+  );
+
   return (
+    <Tooltip content={tooltipContent} position="bottom">
     <button
       onClick={toggleTheme}
       className="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-      title={`Theme: ${theme}${theme === 'system' ? ` (${resolvedTheme})` : ''}`}
       aria-label="Toggle theme"
     >
       {resolvedTheme === 'dark' ? (
@@ -58,5 +69,6 @@ export default function ThemeToggle() {
         <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">Auto</span>
       )}
     </button>
+    </Tooltip>
   );
 }

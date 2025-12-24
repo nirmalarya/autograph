@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { SkeletonCard, SkeletonListItem } from '../components/SkeletonLoader';
 import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
 import OptimizedImage from '../components/OptimizedImage';
+import Tooltip from '../components/Tooltip';
 
 // Lazy load heavy components with loading fallbacks
 const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
@@ -674,15 +675,17 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           <div className="flex justify-between items-center h-14 sm:h-16">
             <div className="flex items-center gap-2 sm:gap-4">
+              <Tooltip content={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'} position="bottom">
               <button
                 onClick={() => setShowFolderSidebar(!showFolderSidebar)}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition touch-manipulation"
-                title={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'}
+                aria-label={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'}
               >
                 <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
+              </Tooltip>
               <h1 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 dark:text-gray-100">AutoGraph v3</h1>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
@@ -691,15 +694,25 @@ export default function DashboardPage() {
               <ThemeToggle />
               <HighContrastToggle />
               {/* Hide keyboard shortcuts button on mobile */}
+              <Tooltip 
+                content={
+                  <div className="text-center">
+                    <div className="font-semibold">Keyboard Shortcuts</div>
+                    <div className="text-xs mt-1 opacity-80">Press ⌘? or Ctrl+?</div>
+                  </div>
+                } 
+                position="bottom"
+              >
               <button
                 onClick={() => setShowKeyboardShortcuts(true)}
                 className="hidden sm:block p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-gray-100 dark:hover:bg-gray-700 rounded-md transition"
-                title="Keyboard shortcuts (⌘?)"
+                aria-label="Keyboard shortcuts"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </button>
+              </Tooltip>
               <button
                 onClick={handleLogout}
                 className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition touch-manipulation"
@@ -1023,6 +1036,7 @@ export default function DashboardPage() {
               {/* View Mode Toggle */}
               <div className="flex gap-2 items-center ml-auto">
                 <span className="text-sm font-medium text-gray-700 mr-2">View:</span>
+                <Tooltip content="Grid view with thumbnails" position="top">
                 <button
                   onClick={() => setViewMode('grid')}
                   className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
@@ -1030,12 +1044,14 @@ export default function DashboardPage() {
                       ? 'bg-blue-600 text-white' 
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
-                  title="Grid view with thumbnails"
+                  aria-label="Grid view"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                   </svg>
                 </button>
+                </Tooltip>
+                <Tooltip content="List view with details" position="top">
                 <button
                   onClick={() => setViewMode('list')}
                   className={`px-3 py-1.5 text-sm rounded-md font-medium transition ${
@@ -1043,12 +1059,13 @@ export default function DashboardPage() {
                       ? 'bg-blue-600 text-white' 
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
-                  title="List view with details"
+                  aria-label="List view"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
+                </Tooltip>
               </div>
             </div>
             

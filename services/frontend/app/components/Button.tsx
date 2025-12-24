@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Tooltip from './Tooltip';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'success' | 'danger' | 'outline' | 'ghost';
 export type ButtonSize = 'sm' | 'md' | 'lg';
@@ -80,6 +81,8 @@ interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> 
   label: string; // For accessibility
   variant?: 'default' | 'primary';
   size?: 'sm' | 'md' | 'lg';
+  tooltip?: React.ReactNode; // Optional custom tooltip content
+  tooltipPosition?: 'top' | 'bottom' | 'left' | 'right';
 }
 
 export function IconButton({
@@ -87,6 +90,8 @@ export function IconButton({
   label,
   variant = 'default',
   size = 'md',
+  tooltip,
+  tooltipPosition = 'top',
   className = '',
   ...props
 }: IconButtonProps) {
@@ -104,15 +109,21 @@ export function IconButton({
     lg: 'w-6 h-6',
   };
   
-  return (
+  const button = (
     <button
       className={`${baseClasses} ${sizeClasses[size]} focus-ring ${className}`}
       aria-label={label}
-      title={label}
       {...props}
     >
       <div className={iconSizeClasses[size]}>{icon}</div>
     </button>
+  );
+
+  // Wrap with tooltip if tooltip content is provided, otherwise use label as tooltip
+  return (
+    <Tooltip content={tooltip || label} position={tooltipPosition}>
+      {button}
+    </Tooltip>
   );
 }
 
