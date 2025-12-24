@@ -838,6 +838,7 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           <div className="flex justify-between items-center h-14 sm:h-16">
             <div className="flex items-center gap-2 sm:gap-4">
+              <Logo size="md" showText={true} />
               <Tooltip content={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'} position="bottom">
               <button
                 onClick={() => setShowFolderSidebar(!showFolderSidebar)}
@@ -849,7 +850,6 @@ export default function DashboardPage() {
                 </svg>
               </button>
               </Tooltip>
-              <Logo size="md" showText={true} />
             </div>
             <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
               {/* Hide email on mobile */}

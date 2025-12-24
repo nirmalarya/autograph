@@ -35,9 +35,6 @@ export default function HomePage() {
         </section>
         
         <nav aria-label="Main navigation" className="mt-6 sm:mt-8 text-center">
-          <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-4 sm:mb-6" role="status" aria-live="polite">
-            Status: Infrastructure Ready ✅
-          </p>
           {/* Responsive buttons: stack on mobile, side-by-side on larger screens */}
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
             <a
