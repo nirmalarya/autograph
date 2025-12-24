@@ -2,7 +2,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import os
 import io
@@ -17,8 +17,87 @@ from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import uuid
 
 load_dotenv()
+
+# Database configuration
+POSTGRES_USER = os.getenv("POSTGRES_USER", "autograph")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "autograph")
+
+def get_db_connection():
+    """Get database connection."""
+    return psycopg2.connect(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        database=POSTGRES_DB
+    )
+
+def log_export_to_history(
+    file_id: str,
+    user_id: str,
+    export_format: str,
+    export_type: str,
+    export_settings: Dict[str, Any],
+    file_size: int,
+    file_path: str = None,
+    status: str = "completed",
+    error_message: str = None
+) -> str:
+    """
+    Log an export operation to the export_history table.
+    
+    Args:
+        file_id: The diagram file ID
+        user_id: The user who performed the export
+        export_format: Format (png, svg, pdf, json, md, html)
+        export_type: Type (full, selection, figure)
+        export_settings: Export settings dict (resolution, quality, etc.)
+        file_size: Size of exported file in bytes
+        file_path: Optional path to stored file
+        status: Export status (completed, failed)
+        error_message: Error message if failed
+    
+    Returns:
+        str: Export history ID
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        export_id = str(uuid.uuid4())
+        expires_at = datetime.utcnow() + timedelta(days=30)  # 30-day retention
+        
+        cursor.execute("""
+            INSERT INTO export_history (
+                id, file_id, user_id, export_format, export_type, 
+                export_settings, file_size, file_path, status, 
+                error_message, created_at, expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            export_id, file_id, user_id, export_format, export_type,
+            json.dumps(export_settings), file_size, file_path, status,
+            error_message, datetime.utcnow(), expires_at
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Logged export {export_id} for file {file_id} (format: {export_format})")
+        return export_id
+        
+    except Exception as e:
+        logger.error(f"Failed to log export to history: {e}")
+        # Don't fail the export if logging fails
+        return None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -160,6 +239,7 @@ class ExportRequest(BaseModel):
     export_scope: Optional[str] = "full"  # full, selection, or frame
     selected_shapes: Optional[list] = None  # IDs of selected shapes
     frame_id: Optional[str] = None  # ID of frame to export
+    user_id: Optional[str] = None  # User performing the export (for history tracking)
     # PDF-specific options
     pdf_page_size: Optional[str] = "letter"  # letter, a4, custom
     pdf_multi_page: Optional[bool] = False  # Enable multi-page for large diagrams
@@ -410,11 +490,35 @@ async def export_png(request: ExportRequest):
         )
         img_byte_arr.seek(0)
         
+        # Get the content bytes for response
+        png_content = img_byte_arr.read()
+        file_size = len(png_content)
+        
+        # Log export to history
+        export_settings = {
+            "width": width,
+            "height": height,
+            "scale": request.scale,
+            "background": request.background,
+            "quality": request.quality,
+            "export_scope": request.export_scope
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id if hasattr(request, 'user_id') and request.user_id else "anonymous",
+            export_format="png",
+            export_type=request.export_scope if request.export_scope else "full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
+        
         scope_label = "_frame" if request.export_scope == "frame" else ("_selection" if request.export_scope == "selection" else "")
         logger.info(f"PNG export{scope_label} with anti-aliasing generated successfully for diagram {request.diagram_id}")
         
         return Response(
-            content=img_byte_arr.read(),
+            content=png_content,
             media_type="image/png",
             headers={
                 "Content-Disposition": f"attachment; filename=diagram_{request.diagram_id}{scope_label}.png"
@@ -558,6 +662,27 @@ async def export_svg(request: ExportRequest):
     </g>
   </g>
 </svg>'''
+        
+        # Log export to history
+        file_size = len(svg_content.encode('utf-8'))
+        export_settings = {
+            "width": width,
+            "height": height,
+            "scale": request.scale,
+            "background": request.background,
+            "quality": request.quality,
+            "export_scope": request.export_scope
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id or "anonymous",
+            export_format="svg",
+            export_type=request.export_scope if request.export_scope else "full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
         
         scope_label = "_selection" if request.export_scope == "selection" else ""
         logger.info(f"SVG export{scope_label} generated successfully for diagram {request.diagram_id}")
@@ -742,6 +867,28 @@ async def export_pdf(request: ExportRequest):
         buffer.seek(0)
         pdf_content = buffer.read()
         
+        # Log export to history
+        file_size = len(pdf_content)
+        export_settings = {
+            "width": diagram_width,
+            "height": diagram_height,
+            "background": request.background,
+            "page_size": request.pdf_page_size,
+            "multi_page": request.pdf_multi_page,
+            "embed_fonts": request.pdf_embed_fonts,
+            "vector_graphics": request.pdf_vector_graphics
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id or "anonymous",
+            export_format="pdf",
+            export_type="full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
+        
         logger.info(f"PDF export generated successfully for diagram {request.diagram_id} (size: {len(pdf_content)} bytes)")
         
         # Determine filename suffix
@@ -866,6 +1013,26 @@ Add your notes here. This section can contain:
 *Generated by AutoGraph v3 Export Service*
 """
         
+        # Log export to history
+        file_size = len(markdown_content.encode('utf-8'))
+        export_settings = {
+            "width": request.width,
+            "height": request.height,
+            "quality": request.quality,
+            "scale": request.scale,
+            "background": request.background
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id or "anonymous",
+            export_format="md",
+            export_type="full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
+        
         logger.info(f"Markdown export generated successfully for diagram {request.diagram_id}")
         
         return Response(
@@ -970,10 +1137,31 @@ async def export_json(request: ExportRequest):
             }
         }
         
+        # Log export to history
+        json_content = json.dumps(json_data, indent=2)
+        file_size = len(json_content.encode('utf-8'))
+        export_settings = {
+            "width": request.width,
+            "height": request.height,
+            "scale": request.scale,
+            "quality": request.quality,
+            "export_scope": request.export_scope
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id or "anonymous",
+            export_format="json",
+            export_type=request.export_scope if request.export_scope else "full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
+        
         logger.info(f"JSON export generated successfully for diagram {request.diagram_id}")
         
         return Response(
-            content=json.dumps(json_data, indent=2),
+            content=json_content,
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename=diagram_{request.diagram_id}.json"
@@ -1216,6 +1404,26 @@ async def export_html(request: ExportRequest):
     </div>
 </body>
 </html>"""
+        
+        # Log export to history
+        file_size = len(html_content.encode('utf-8'))
+        export_settings = {
+            "width": request.width,
+            "height": request.height,
+            "scale": request.scale,
+            "quality": request.quality,
+            "background": request.background
+        }
+        
+        log_export_to_history(
+            file_id=request.diagram_id,
+            user_id=request.user_id or "anonymous",
+            export_format="html",
+            export_type="full",
+            export_settings=export_settings,
+            file_size=file_size,
+            status="completed"
+        )
         
         logger.info(f"HTML export generated successfully for diagram {request.diagram_id}")
         
