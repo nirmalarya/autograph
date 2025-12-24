@@ -46,6 +46,10 @@ const MobileBottomNav = dynamic(() => import('../components/MobileBottomNav'), {
   loading: () => <div className="h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700" />,
 });
 
+const ExampleDiagrams = dynamic(() => import('../components/ExampleDiagrams'), {
+  ssr: false,
+});
+
 const VirtualGrid = dynamic(() => import('../components/VirtualGrid'), {
   loading: () => <div className="h-96 bg-gray-100 dark:bg-gray-800 rounded animate-pulse" />,
   ssr: false,
@@ -143,6 +147,9 @@ export default function DashboardPage() {
   
   // Keyboard shortcuts dialog state
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+
+  // Example diagrams state
+  const [showExamples, setShowExamples] = useState(false);
 
   // Focus trap for modals
   const createModalRef = useFocusTrap(showCreateModal);
@@ -812,6 +819,14 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
+            <Button 
+              onClick={() => setShowExamples(true)}
+              variant="outline"
+              size="md"
+              className="border-blue-300 text-blue-700 dark:text-blue-400 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+            >
+              📚 View Examples
+            </Button>
             <Button 
               onClick={() => router.push('/ai-generate')}
               variant="primary"
@@ -1905,6 +1920,12 @@ export default function DashboardPage() {
 
       {/* Mobile Bottom Navigation */}
       <MobileBottomNav onCreateClick={() => setShowCreateModal(true)} />
+
+      {/* Example Diagrams Modal */}
+      <ExampleDiagrams
+        isOpen={showExamples}
+        onClose={() => setShowExamples(false)}
+      />
     </main>
   );
 }
