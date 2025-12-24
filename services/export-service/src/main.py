@@ -1874,6 +1874,283 @@ async def export_diagram_by_id(diagram_id: str, request: DiagramExportRequest):
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
+class ExportPresetRequest(BaseModel):
+    """Request model for creating an export preset."""
+    name: str
+    format: str
+    settings: Dict[str, Any]
+    is_default: Optional[bool] = False
+
+
+class ExportPresetResponse(BaseModel):
+    """Response model for export preset."""
+    id: str
+    user_id: str
+    name: str
+    format: str
+    settings: Dict[str, Any]
+    is_default: bool
+    created_at: str
+    updated_at: str
+
+
+@app.post("/api/export-presets", status_code=201)
+async def create_export_preset(request: Request, preset: ExportPresetRequest):
+    """
+    Create a new export preset.
+    
+    Saves export settings with a name for quick reuse.
+    """
+    try:
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID required")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # If this preset is marked as default, unset other defaults
+        if preset.is_default:
+            cursor.execute("""
+                UPDATE export_presets
+                SET is_default = FALSE
+                WHERE user_id = %s AND format = %s
+            """, (user_id, preset.format))
+        
+        # Create preset
+        preset_id = str(uuid.uuid4())
+        cursor.execute("""
+            INSERT INTO export_presets (id, user_id, name, format, settings, is_default)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, user_id, name, format, settings, is_default, created_at, updated_at
+        """, (
+            preset_id,
+            user_id,
+            preset.name,
+            preset.format,
+            json.dumps(preset.settings),
+            preset.is_default
+        ))
+        
+        result = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Created export preset {preset_id} for user {user_id}")
+        
+        return {
+            "id": result["id"],
+            "user_id": result["user_id"],
+            "name": result["name"],
+            "format": result["format"],
+            "settings": json.loads(result["settings"]) if isinstance(result["settings"], str) else result["settings"],
+            "is_default": result["is_default"],
+            "created_at": result["created_at"].isoformat(),
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating export preset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export-presets")
+async def list_export_presets(request: Request, format: Optional[str] = None):
+    """
+    List all export presets for the current user.
+    
+    Optionally filter by format (png, svg, pdf, etc.).
+    """
+    try:
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID required")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        if format:
+            cursor.execute("""
+                SELECT id, user_id, name, format, settings, is_default, created_at, updated_at
+                FROM export_presets
+                WHERE user_id = %s AND format = %s
+                ORDER BY is_default DESC, name ASC
+            """, (user_id, format))
+        else:
+            cursor.execute("""
+                SELECT id, user_id, name, format, settings, is_default, created_at, updated_at
+                FROM export_presets
+                WHERE user_id = %s
+                ORDER BY format ASC, is_default DESC, name ASC
+            """, (user_id,))
+        
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        presets = []
+        for row in results:
+            presets.append({
+                "id": row["id"],
+                "user_id": row["user_id"],
+                "name": row["name"],
+                "format": row["format"],
+                "settings": json.loads(row["settings"]) if isinstance(row["settings"], str) else row["settings"],
+                "is_default": row["is_default"],
+                "created_at": row["created_at"].isoformat(),
+                "updated_at": row["updated_at"].isoformat()
+            })
+        
+        logger.info(f"Listed {len(presets)} export presets for user {user_id}")
+        return presets
+        
+    except Exception as e:
+        logger.error(f"Error listing export presets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export-presets/{preset_id}")
+async def get_export_preset(request: Request, preset_id: str):
+    """Get a specific export preset by ID."""
+    try:
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID required")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT id, user_id, name, format, settings, is_default, created_at, updated_at
+            FROM export_presets
+            WHERE id = %s AND user_id = %s
+        """, (preset_id, user_id))
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        
+        return {
+            "id": result["id"],
+            "user_id": result["user_id"],
+            "name": result["name"],
+            "format": result["format"],
+            "settings": json.loads(result["settings"]) if isinstance(result["settings"], str) else result["settings"],
+            "is_default": result["is_default"],
+            "created_at": result["created_at"].isoformat(),
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting export preset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/export-presets/{preset_id}")
+async def delete_export_preset(request: Request, preset_id: str):
+    """Delete an export preset."""
+    try:
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID required")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            DELETE FROM export_presets
+            WHERE id = %s AND user_id = %s
+        """, (preset_id, user_id))
+        
+        deleted_count = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        if deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        
+        logger.info(f"Deleted export preset {preset_id} for user {user_id}")
+        return {"message": "Preset deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting export preset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/export-presets/{preset_id}")
+async def update_export_preset(request: Request, preset_id: str, preset: ExportPresetRequest):
+    """Update an existing export preset."""
+    try:
+        user_id = request.headers.get("X-User-ID")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID required")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # If this preset is marked as default, unset other defaults
+        if preset.is_default:
+            cursor.execute("""
+                UPDATE export_presets
+                SET is_default = FALSE
+                WHERE user_id = %s AND format = %s AND id != %s
+            """, (user_id, preset.format, preset_id))
+        
+        # Update preset
+        cursor.execute("""
+            UPDATE export_presets
+            SET name = %s, format = %s, settings = %s, is_default = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND user_id = %s
+            RETURNING id, user_id, name, format, settings, is_default, created_at, updated_at
+        """, (
+            preset.name,
+            preset.format,
+            json.dumps(preset.settings),
+            preset.is_default,
+            preset_id,
+            user_id
+        ))
+        
+        result = cursor.fetchone()
+        
+        if not result:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Preset not found")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Updated export preset {preset_id} for user {user_id}")
+        
+        return {
+            "id": result["id"],
+            "user_id": result["user_id"],
+            "name": result["name"],
+            "format": result["format"],
+            "settings": json.loads(result["settings"]) if isinstance(result["settings"], str) else result["settings"],
+            "is_default": result["is_default"],
+            "created_at": result["created_at"].isoformat(),
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating export preset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("EXPORT_SERVICE_PORT", "8097")))
