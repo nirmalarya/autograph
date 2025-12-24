@@ -2477,6 +2477,477 @@ async def update_export_preset(request: Request, preset_id: str, preset: ExportP
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# SCHEDULED EXPORTS API
+# ============================================================================
+
+class ScheduledExportCreate(BaseModel):
+    """Model for creating a scheduled export."""
+    file_id: str
+    user_id: str
+    schedule_type: str  # daily, weekly, monthly
+    schedule_time: str  # HH:MM:SS format
+    schedule_day_of_week: Optional[int] = None  # 0-6 for weekly
+    schedule_day_of_month: Optional[int] = None  # 1-31 for monthly
+    timezone: Optional[str] = "UTC"
+    export_format: str  # png, svg, pdf, json, md, html
+    export_settings: Optional[Dict[str, Any]] = {}
+    destination_type: Optional[str] = "local"  # local, s3, google_drive, dropbox
+    destination_config: Optional[Dict[str, Any]] = {}
+
+
+class ScheduledExportUpdate(BaseModel):
+    """Model for updating a scheduled export."""
+    schedule_time: Optional[str] = None
+    schedule_day_of_week: Optional[int] = None
+    schedule_day_of_month: Optional[int] = None
+    timezone: Optional[str] = None
+    export_format: Optional[str] = None
+    export_settings: Optional[Dict[str, Any]] = None
+    destination_type: Optional[str] = None
+    destination_config: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+@app.post("/api/scheduled-exports", status_code=201)
+async def create_scheduled_export(schedule_data: ScheduledExportCreate):
+    """
+    Create a new scheduled export.
+    
+    Feature #508: Scheduled exports - daily
+    Feature #509: Scheduled exports - weekly
+    """
+    try:
+        # Validate schedule_type
+        if schedule_data.schedule_type not in ["daily", "weekly", "monthly"]:
+            raise HTTPException(
+                status_code=400,
+                detail="schedule_type must be one of: daily, weekly, monthly"
+            )
+        
+        # Validate export_format
+        if schedule_data.export_format not in ["png", "svg", "pdf", "json", "md", "html"]:
+            raise HTTPException(
+                status_code=400,
+                detail="export_format must be one of: png, svg, pdf, json, md, html"
+            )
+        
+        # Validate destination_type
+        if schedule_data.destination_type not in ["local", "s3", "google_drive", "dropbox"]:
+            raise HTTPException(
+                status_code=400,
+                detail="destination_type must be one of: local, s3, google_drive, dropbox"
+            )
+        
+        # Validate schedule_time format (HH:MM:SS)
+        import re
+        if not re.match(r'^([0-1][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$', schedule_data.schedule_time):
+            raise HTTPException(
+                status_code=400,
+                detail="schedule_time must be in HH:MM:SS format (e.g., 02:00:00)"
+            )
+        
+        # Connect to database
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Calculate next run time
+        from datetime import datetime, time, timedelta
+        import pytz
+        
+        tz = pytz.timezone(schedule_data.timezone)
+        now_tz = datetime.now(tz)
+        
+        # Parse schedule time
+        hour, minute, second = map(int, schedule_data.schedule_time.split(':'))
+        schedule_time_obj = time(hour, minute, second)
+        
+        # Calculate next run based on schedule type
+        if schedule_data.schedule_type == "daily":
+            # Next run is today at schedule_time or tomorrow if past
+            next_run = tz.localize(datetime.combine(now_tz.date(), schedule_time_obj))
+            if next_run <= now_tz:
+                next_run += timedelta(days=1)
+        
+        elif schedule_data.schedule_type == "weekly":
+            if schedule_data.schedule_day_of_week is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="schedule_day_of_week is required for weekly schedules"
+                )
+            if not (0 <= schedule_data.schedule_day_of_week <= 6):
+                raise HTTPException(
+                    status_code=400,
+                    detail="schedule_day_of_week must be between 0 (Monday) and 6 (Sunday)"
+                )
+            
+            # Calculate next occurrence of that day of week
+            days_ahead = schedule_data.schedule_day_of_week - now_tz.weekday()
+            if days_ahead < 0 or (days_ahead == 0 and now_tz.time() >= schedule_time_obj):
+                days_ahead += 7
+            next_run = tz.localize(datetime.combine(now_tz.date() + timedelta(days=days_ahead), schedule_time_obj))
+        
+        elif schedule_data.schedule_type == "monthly":
+            if schedule_data.schedule_day_of_month is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="schedule_day_of_month is required for monthly schedules"
+                )
+            if not (1 <= schedule_data.schedule_day_of_month <= 31):
+                raise HTTPException(
+                    status_code=400,
+                    detail="schedule_day_of_month must be between 1 and 31"
+                )
+            
+            # Calculate next occurrence of that day of month
+            next_run = tz.localize(datetime(now_tz.year, now_tz.month, schedule_data.schedule_day_of_month, hour, minute, second))
+            if next_run <= now_tz:
+                # Move to next month
+                if now_tz.month == 12:
+                    next_run = tz.localize(datetime(now_tz.year + 1, 1, schedule_data.schedule_day_of_month, hour, minute, second))
+                else:
+                    next_run = tz.localize(datetime(now_tz.year, now_tz.month + 1, schedule_data.schedule_day_of_month, hour, minute, second))
+        
+        # Convert to UTC for storage
+        next_run_utc = next_run.astimezone(pytz.UTC)
+        
+        # Generate ID
+        schedule_id = str(uuid.uuid4())
+        
+        # Insert into database
+        cursor.execute(
+            """
+            INSERT INTO scheduled_exports (
+                id, file_id, user_id, schedule_type, schedule_time,
+                schedule_day_of_week, schedule_day_of_month, timezone,
+                export_format, export_settings, destination_type, destination_config,
+                next_run_at, is_active, created_at, updated_at, created_by
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), %s
+            )
+            RETURNING id, file_id, user_id, schedule_type, schedule_time,
+                      schedule_day_of_week, schedule_day_of_month, timezone,
+                      export_format, export_settings, destination_type, destination_config,
+                      is_active, next_run_at, created_at, updated_at
+            """,
+            (
+                schedule_id,
+                schedule_data.file_id,
+                schedule_data.user_id,
+                schedule_data.schedule_type,
+                schedule_data.schedule_time,
+                schedule_data.schedule_day_of_week,
+                schedule_data.schedule_day_of_month,
+                schedule_data.timezone,
+                schedule_data.export_format,
+                json.dumps(schedule_data.export_settings),
+                schedule_data.destination_type,
+                json.dumps(schedule_data.destination_config),
+                next_run_utc,
+                True,
+                schedule_data.user_id
+            )
+        )
+        
+        result = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Created scheduled export {schedule_id} for file {schedule_data.file_id}")
+        
+        return {
+            "id": result["id"],
+            "file_id": result["file_id"],
+            "user_id": result["user_id"],
+            "schedule_type": result["schedule_type"],
+            "schedule_time": str(result["schedule_time"]),
+            "schedule_day_of_week": result["schedule_day_of_week"],
+            "schedule_day_of_month": result["schedule_day_of_month"],
+            "timezone": result["timezone"],
+            "export_format": result["export_format"],
+            "export_settings": json.loads(result["export_settings"]) if isinstance(result["export_settings"], str) else result["export_settings"],
+            "destination_type": result["destination_type"],
+            "destination_config": json.loads(result["destination_config"]) if isinstance(result["destination_config"], str) else result["destination_config"],
+            "is_active": result["is_active"],
+            "next_run_at": result["next_run_at"].isoformat() if result["next_run_at"] else None,
+            "created_at": result["created_at"].isoformat(),
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating scheduled export: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scheduled-exports")
+async def list_scheduled_exports(user_id: Optional[str] = None, file_id: Optional[str] = None, is_active: Optional[bool] = None):
+    """
+    List scheduled exports with optional filters.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Build query with filters
+        query = "SELECT * FROM scheduled_exports WHERE 1=1"
+        params = []
+        
+        if user_id:
+            query += " AND user_id = %s"
+            params.append(user_id)
+        
+        if file_id:
+            query += " AND file_id = %s"
+            params.append(file_id)
+        
+        if is_active is not None:
+            query += " AND is_active = %s"
+            params.append(is_active)
+        
+        query += " ORDER BY created_at DESC"
+        
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        schedules = []
+        for result in results:
+            schedules.append({
+                "id": result["id"],
+                "file_id": result["file_id"],
+                "user_id": result["user_id"],
+                "schedule_type": result["schedule_type"],
+                "schedule_time": str(result["schedule_time"]),
+                "schedule_day_of_week": result["schedule_day_of_week"],
+                "schedule_day_of_month": result["schedule_day_of_month"],
+                "timezone": result["timezone"],
+                "export_format": result["export_format"],
+                "export_settings": json.loads(result["export_settings"]) if isinstance(result["export_settings"], str) else result["export_settings"],
+                "destination_type": result["destination_type"],
+                "destination_config": json.loads(result["destination_config"]) if isinstance(result["destination_config"], str) else result["destination_config"],
+                "is_active": result["is_active"],
+                "last_run_at": result["last_run_at"].isoformat() if result["last_run_at"] else None,
+                "next_run_at": result["next_run_at"].isoformat() if result["next_run_at"] else None,
+                "run_count": result["run_count"],
+                "error_count": result["error_count"],
+                "created_at": result["created_at"].isoformat(),
+                "updated_at": result["updated_at"].isoformat()
+            })
+        
+        return {"schedules": schedules, "count": len(schedules)}
+        
+    except Exception as e:
+        logger.error(f"Error listing scheduled exports: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scheduled-exports/{schedule_id}")
+async def get_scheduled_export(schedule_id: str):
+    """
+    Get details of a specific scheduled export.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("SELECT * FROM scheduled_exports WHERE id = %s", (schedule_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Scheduled export not found")
+        
+        return {
+            "id": result["id"],
+            "file_id": result["file_id"],
+            "user_id": result["user_id"],
+            "schedule_type": result["schedule_type"],
+            "schedule_time": str(result["schedule_time"]),
+            "schedule_day_of_week": result["schedule_day_of_week"],
+            "schedule_day_of_month": result["schedule_day_of_month"],
+            "timezone": result["timezone"],
+            "export_format": result["export_format"],
+            "export_settings": json.loads(result["export_settings"]) if isinstance(result["export_settings"], str) else result["export_settings"],
+            "destination_type": result["destination_type"],
+            "destination_config": json.loads(result["destination_config"]) if isinstance(result["destination_config"], str) else result["destination_config"],
+            "is_active": result["is_active"],
+            "last_run_at": result["last_run_at"].isoformat() if result["last_run_at"] else None,
+            "next_run_at": result["next_run_at"].isoformat() if result["next_run_at"] else None,
+            "run_count": result["run_count"],
+            "error_count": result["error_count"],
+            "last_error": result["last_error"],
+            "created_at": result["created_at"].isoformat(),
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting scheduled export: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/scheduled-exports/{schedule_id}")
+async def update_scheduled_export(schedule_id: str, update_data: ScheduledExportUpdate):
+    """
+    Update a scheduled export.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Build update query dynamically
+        update_fields = []
+        params = []
+        
+        if update_data.schedule_time is not None:
+            update_fields.append("schedule_time = %s")
+            params.append(update_data.schedule_time)
+        
+        if update_data.schedule_day_of_week is not None:
+            update_fields.append("schedule_day_of_week = %s")
+            params.append(update_data.schedule_day_of_week)
+        
+        if update_data.schedule_day_of_month is not None:
+            update_fields.append("schedule_day_of_month = %s")
+            params.append(update_data.schedule_day_of_month)
+        
+        if update_data.timezone is not None:
+            update_fields.append("timezone = %s")
+            params.append(update_data.timezone)
+        
+        if update_data.export_format is not None:
+            update_fields.append("export_format = %s")
+            params.append(update_data.export_format)
+        
+        if update_data.export_settings is not None:
+            update_fields.append("export_settings = %s")
+            params.append(json.dumps(update_data.export_settings))
+        
+        if update_data.destination_type is not None:
+            update_fields.append("destination_type = %s")
+            params.append(update_data.destination_type)
+        
+        if update_data.destination_config is not None:
+            update_fields.append("destination_config = %s")
+            params.append(json.dumps(update_data.destination_config))
+        
+        if update_data.is_active is not None:
+            update_fields.append("is_active = %s")
+            params.append(update_data.is_active)
+        
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        
+        params.append(schedule_id)
+        query = f"UPDATE scheduled_exports SET {', '.join(update_fields)} WHERE id = %s RETURNING *"
+        
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        
+        if not result:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Scheduled export not found")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Updated scheduled export {schedule_id}")
+        
+        return {
+            "id": result["id"],
+            "file_id": result["file_id"],
+            "user_id": result["user_id"],
+            "schedule_type": result["schedule_type"],
+            "schedule_time": str(result["schedule_time"]),
+            "schedule_day_of_week": result["schedule_day_of_week"],
+            "schedule_day_of_month": result["schedule_day_of_month"],
+            "timezone": result["timezone"],
+            "export_format": result["export_format"],
+            "export_settings": json.loads(result["export_settings"]) if isinstance(result["export_settings"], str) else result["export_settings"],
+            "destination_type": result["destination_type"],
+            "destination_config": json.loads(result["destination_config"]) if isinstance(result["destination_config"], str) else result["destination_config"],
+            "is_active": result["is_active"],
+            "next_run_at": result["next_run_at"].isoformat() if result["next_run_at"] else None,
+            "updated_at": result["updated_at"].isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating scheduled export: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/scheduled-exports/{schedule_id}")
+async def delete_scheduled_export(schedule_id: str):
+    """
+    Delete a scheduled export.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            database=POSTGRES_DB
+        )
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM scheduled_exports WHERE id = %s RETURNING id", (schedule_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Scheduled export not found")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Deleted scheduled export {schedule_id}")
+        
+        return {"message": "Scheduled export deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting scheduled export: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("EXPORT_SERVICE_PORT", "8097")))
