@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Breadcrumbs from '../components/Breadcrumbs';
+import FolderTree from '../components/FolderTree';
 
 interface Diagram {
   id: string;
@@ -67,6 +69,11 @@ export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [activeTab, setActiveTab] = useState<'all' | 'recent' | 'starred' | 'shared' | 'trash'>('all');
   
+  // Folder navigation state
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [breadcrumbs, setBreadcrumbs] = useState<any[]>([]);
+  const [showFolderSidebar, setShowFolderSidebar] = useState(true);
+  
   // Batch operations state
   const [selectedDiagrams, setSelectedDiagrams] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -100,7 +107,35 @@ export default function DashboardPage() {
     if (user?.sub) {
       fetchDiagrams();
     }
-  }, [user, page, filterType, searchQuery, sortBy, sortOrder, activeTab]);
+  }, [user, page, filterType, searchQuery, sortBy, sortOrder, activeTab, currentFolderId]);
+
+  // Fetch breadcrumbs when folder changes
+  useEffect(() => {
+    if (user?.sub && currentFolderId) {
+      fetchBreadcrumbs();
+    } else {
+      setBreadcrumbs([]);
+    }
+  }, [user, currentFolderId]);
+
+  const fetchBreadcrumbs = async () => {
+    if (!currentFolderId || !user?.sub) return;
+
+    try {
+      const response = await fetch(`http://localhost:8082/folders/${currentFolderId}/breadcrumbs`, {
+        headers: {
+          'X-User-ID': user.sub,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBreadcrumbs(data.breadcrumbs || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch breadcrumbs:', err);
+    }
+  };
 
   const fetchDiagrams = async () => {
     if (!user?.sub) return;
@@ -142,6 +177,11 @@ export default function DashboardPage() {
 
         if (sortOrder) {
           params.append('sort_order', sortOrder);
+        }
+
+        // Add folder filter if a folder is selected
+        if (currentFolderId) {
+          params.append('folder_id', currentFolderId);
         }
       }
 
@@ -287,6 +327,17 @@ export default function DashboardPage() {
     router.push('/');
   };
 
+  // Folder navigation handlers
+  const handleFolderSelect = (folderId: string | null) => {
+    setCurrentFolderId(folderId);
+    setPage(1); // Reset to first page when changing folders
+  };
+
+  const handleBreadcrumbNavigate = (folderId: string | null) => {
+    setCurrentFolderId(folderId);
+    setPage(1);
+  };
+
   // Batch operations handlers
   const toggleSelectDiagram = (diagramId: string) => {
     const newSelected = new Set(selectedDiagrams);
@@ -377,11 +428,20 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 flex flex-col">
       <nav className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setShowFolderSidebar(!showFolderSidebar)}
+                className="p-2 hover:bg-gray-100 rounded-md transition"
+                title={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'}
+              >
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
               <h1 className="text-xl font-bold text-gray-900">AutoGraph v3</h1>
             </div>
             <div className="flex items-center gap-4">
@@ -397,7 +457,29 @@ export default function DashboardPage() {
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      {/* Breadcrumbs - only show when in a folder */}
+      {currentFolderId && breadcrumbs.length > 0 && (
+        <Breadcrumbs 
+          breadcrumbs={breadcrumbs} 
+          onNavigate={handleBreadcrumbNavigate}
+        />
+      )}
+
+      {/* Main content area with sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Folder Sidebar */}
+        {showFolderSidebar && user?.sub && (
+          <FolderTree
+            userId={user.sub}
+            currentFolderId={currentFolderId}
+            onFolderSelect={handleFolderSelect}
+            onRefresh={fetchDiagrams}
+          />
+        )}
+
+        {/* Main Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="mb-8 flex justify-between items-center">
           <div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">
@@ -1008,7 +1090,12 @@ export default function DashboardPage() {
             )}
           </>
         )}
+          </div>
+          {/* End of max-w-7xl container */}
+        </div>
+        {/* End of flex-1 overflow-y-auto (main content) */}
       </div>
+      {/* End of flex container with sidebar */}
 
       {/* Create Diagram Modal */}
       {showCreateModal && (
