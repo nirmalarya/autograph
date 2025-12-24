@@ -143,6 +143,7 @@ export default function DashboardPage() {
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [deletingBatch, setDeletingBatch] = useState(false);
   const [movingBatch, setMovingBatch] = useState(false);
+  const [showBatchExportMenu, setShowBatchExportMenu] = useState(false);
   
   // Command palette state
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -682,6 +683,93 @@ export default function DashboardPage() {
       alert('Failed to move some diagrams. Please try again.');
     } finally {
       setMovingBatch(false);
+    }
+  };
+
+  const handleBatchExport = async (format: 'png' | 'svg' | 'pdf' | 'json') => {
+    if (selectedDiagrams.size === 0) return;
+
+    try {
+      // Fetch full diagram data for selected diagrams
+      const selectedDiagramsData = diagrams.filter(d => selectedDiagrams.has(d.id));
+      
+      // Fetch canvas data for each diagram
+      const diagramsWithData = await Promise.all(
+        selectedDiagramsData.map(async (diagram) => {
+          try {
+            const response = await fetch(`http://localhost:8082/${diagram.id}`, {
+              headers: {
+                'X-User-ID': user?.sub || '',
+              },
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Failed to fetch diagram ${diagram.id}`);
+            }
+            
+            const data = await response.json();
+            
+            return {
+              diagram_id: diagram.id,
+              title: diagram.title,
+              canvas_data: data.canvas_data || {}
+            };
+          } catch (error) {
+            console.error(`Error fetching diagram ${diagram.id}:`, error);
+            return null;
+          }
+        })
+      );
+
+      // Filter out failed fetches
+      const validDiagrams = diagramsWithData.filter(d => d !== null);
+
+      if (validDiagrams.length === 0) {
+        alert('Failed to fetch diagram data. Please try again.');
+        return;
+      }
+
+      // Call batch export endpoint
+      const response = await fetch('http://localhost:8097/export/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          diagrams: validDiagrams,
+          format: format,
+          user_id: user?.sub || 'anonymous',
+          width: 1920,
+          height: 1080,
+          scale: 2,
+          quality: 'high',
+          background: 'white'
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Batch export failed');
+      }
+
+      // Download the ZIP file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `autograph_export_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      // Clear selection
+      setSelectedDiagrams(new Set());
+      
+      // Show success message
+      alert(`Successfully exported ${validDiagrams.length} diagram(s) as ${format.toUpperCase()}`);
+    } catch (err) {
+      console.error('Failed to batch export:', err);
+      alert('Failed to export diagrams. Please try again.');
     }
   };
 
@@ -1292,6 +1380,57 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="flex gap-2">
+                {/* Batch Export Dropdown */}
+                <div className="relative">
+                  <Button
+                    onClick={() => setShowBatchExportMenu(!showBatchExportMenu)}
+                    variant="outline"
+                    size="md"
+                    className="border-green-300 text-green-700 hover:bg-green-50"
+                  >
+                    Export Selected
+                  </Button>
+                  {showBatchExportMenu && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                      <button
+                        onClick={() => {
+                          handleBatchExport('png');
+                          setShowBatchExportMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                      >
+                        Export as PNG
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleBatchExport('svg');
+                          setShowBatchExportMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                      >
+                        Export as SVG
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleBatchExport('pdf');
+                          setShowBatchExportMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                      >
+                        Export as PDF
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleBatchExport('json');
+                          setShowBatchExportMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                      >
+                        Export as JSON
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <Button
                   onClick={() => setShowMoveDialog(true)}
                   variant="outline"
