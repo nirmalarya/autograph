@@ -570,40 +570,70 @@ async def list_diagrams(
             raise HTTPException(status_code=400, detail="Invalid file_type. Must be: canvas, note, or mixed")
         query = query.filter(File.file_type == file_type)
     
-    # Apply full-text search with fuzzy matching
+    # Apply full-text search with fuzzy matching and advanced filters
     if search:
-        # Exact match pattern for traditional search
-        search_pattern = f"%{search}%"
+        # Parse advanced search filters (e.g., "type:canvas database", "author:john aws")
+        import re
         
-        # Fuzzy matching using pg_trgm similarity
-        # similarity() returns a value between 0 and 1 (higher = more similar)
-        # We use 0.25 as threshold (25% similarity) for typo tolerance
-        # This allows for 2-3 character typos in typical words
-        similarity_threshold = 0.25
+        # Extract filter keywords (format: "keyword:value")
+        filter_pattern = r'(\w+):(\S+)'
+        filters = re.findall(filter_pattern, search)
         
-        # Search in title, note_content, and canvas_data (text elements)
-        # Use OR to match any of these fields
-        # Combine exact matching (ILIKE) with fuzzy matching (similarity)
-        query = query.filter(
-            or_(
-                # Exact matches (case-insensitive)
-                File.title.ilike(search_pattern),
-                File.note_content.ilike(search_pattern),
-                cast(File.canvas_data, String).ilike(search_pattern),
-                # Fuzzy matches using trigram similarity
-                func.similarity(File.title, search) >= similarity_threshold,
-                func.similarity(File.note_content, search) >= similarity_threshold
+        # Remove filters from search query to get plain search terms
+        search_terms = re.sub(filter_pattern, '', search).strip()
+        
+        # Apply keyword filters
+        for filter_key, filter_value in filters:
+            if filter_key.lower() == 'type':
+                # Filter by file type
+                if filter_value.lower() in ['canvas', 'note', 'mixed']:
+                    query = query.filter(File.file_type == filter_value.lower())
+            elif filter_key.lower() == 'author':
+                # Filter by author (owner email)
+                # Join with users table to search by email/name
+                from .models import User
+                user_subquery = db.query(User.id).filter(
+                    or_(
+                        User.email.ilike(f'%{filter_value}%'),
+                        User.full_name.ilike(f'%{filter_value}%')
+                    )
+                ).subquery()
+                query = query.filter(File.owner_id.in_(user_subquery))
+        
+        # If there are remaining search terms (after filters removed), apply search
+        if search_terms:
+            # Exact match pattern for traditional search
+            search_pattern = f"%{search_terms}%"
+            
+            # Fuzzy matching using pg_trgm similarity
+            # similarity() returns a value between 0 and 1 (higher = more similar)
+            # We use 0.25 as threshold (25% similarity) for typo tolerance
+            # This allows for 2-3 character typos in typical words
+            similarity_threshold = 0.25
+            
+            # Search in title, note_content, and canvas_data (text elements)
+            # Use OR to match any of these fields
+            # Combine exact matching (ILIKE) with fuzzy matching (similarity)
+            query = query.filter(
+                or_(
+                    # Exact matches (case-insensitive)
+                    File.title.ilike(search_pattern),
+                    File.note_content.ilike(search_pattern),
+                    cast(File.canvas_data, String).ilike(search_pattern),
+                    # Fuzzy matches using trigram similarity
+                    func.similarity(File.title, search_terms) >= similarity_threshold,
+                    func.similarity(File.note_content, search_terms) >= similarity_threshold
+                )
             )
-        )
-        
-        # Order fuzzy search results by relevance (similarity score)
-        # Higher similarity scores appear first
-        query = query.order_by(
-            func.greatest(
-                func.similarity(File.title, search),
-                func.similarity(func.coalesce(File.note_content, ''), search)
-            ).desc()
-        )
+            
+            # Order fuzzy search results by relevance (similarity score)
+            # Higher similarity scores appear first
+            query = query.order_by(
+                func.greatest(
+                    func.similarity(File.title, search_terms),
+                    func.similarity(func.coalesce(File.note_content, ''), search_terms)
+                ).desc()
+            )
     
     # Get total count
     total = query.count()

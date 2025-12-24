@@ -338,6 +338,24 @@ export default function DashboardPage() {
     setPage(1);
   };
 
+  // Helper function to highlight search terms in text
+  const highlightSearchTerm = (text: string, searchTerm: string) => {
+    if (!searchTerm || !text) return text;
+    
+    const parts = text.split(new RegExp(`(${searchTerm})`, 'gi'));
+    return (
+      <>
+        {parts.map((part, index) => 
+          part.toLowerCase() === searchTerm.toLowerCase() ? (
+            <mark key={index} className="bg-yellow-200 px-1 rounded">{part}</mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
+
   // Batch operations handlers
   const toggleSelectDiagram = (diagramId: string) => {
     const newSelected = new Set(selectedDiagrams);
@@ -583,13 +601,18 @@ export default function DashboardPage() {
               {/* Search Bar */}
               <form onSubmit={handleSearch} className="flex-1">
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Search diagrams by title..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search diagrams... (try: type:canvas database, author:john aws)"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Tip: Use <code className="px-1 bg-gray-100 rounded">type:</code> or <code className="px-1 bg-gray-100 rounded">author:</code> to filter
+                  </p>
+                </div>
                 <button
                   type="submit"
                   className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
@@ -874,7 +897,7 @@ export default function DashboardPage() {
                       >
                         <div className="flex items-start justify-between mb-2">
                           <h3 className="text-lg font-semibold text-gray-900 truncate flex-1">
-                            {diagram.title}
+                            {searchQuery ? highlightSearchTerm(diagram.title, searchQuery) : diagram.title}
                           </h3>
                           <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
                             {diagram.file_type}
@@ -991,7 +1014,9 @@ export default function DashboardPage() {
                           onClick={() => handleDiagramClick(diagram)}
                           className="px-6 py-4 whitespace-nowrap cursor-pointer"
                         >
-                          <div className="text-sm font-medium text-gray-900">{diagram.title}</div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {searchQuery ? highlightSearchTerm(diagram.title, searchQuery) : diagram.title}
+                          </div>
                         </td>
                         <td 
                           onClick={() => handleDiagramClick(diagram)}
