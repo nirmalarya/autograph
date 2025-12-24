@@ -3294,6 +3294,11 @@ class UpdateVersionDescriptionRequest(BaseModel):
     """Request model for updating a version description/comment."""
     description: Optional[str] = None
 
+class UpdateVersionContentRequest(BaseModel):
+    """Request model for updating version content (ALWAYS REJECTED - versions are immutable)."""
+    canvas_data: Optional[Dict[str, Any]] = None
+    note_content: Optional[str] = None
+
 class VersionResponse(BaseModel):
     """Response model for a version."""
     id: str
@@ -3758,7 +3763,13 @@ async def get_version(
     include_content: bool = True,
     db: Session = Depends(get_db)
 ):
-    """Get a specific version by ID."""
+    """Get a specific version by ID with locking information.
+    
+    Historical versions are always locked (read-only). Version content (canvas_data, note_content)
+    cannot be modified. Only metadata (label, description) can be updated.
+    
+    To edit a version's content, you must restore it to the current diagram first.
+    """
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -3782,6 +3793,19 @@ async def get_version(
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
     
+    # Get diagram to check if this is the current version
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Determine if version is locked (all historical versions are locked)
+    latest_version = db.query(Version).filter(
+        Version.file_id == diagram_id
+    ).order_by(Version.version_number.desc()).first()
+    
+    is_locked = True  # All versions are immutable snapshots
+    is_latest = latest_version and version.id == latest_version.id
+    
     # Get user info
     user = db.query(User).filter(User.id == version.created_by).first()
     
@@ -3794,11 +3818,15 @@ async def get_version(
         "thumbnail_url": version.thumbnail_url,
         "created_by": version.created_by,
         "created_at": version.created_at.isoformat(),
+        "is_locked": is_locked,  # Always true - versions are immutable
+        "is_latest": is_latest,
+        "is_read_only": True,  # Historical versions are always read-only
         "user": {
             "id": user.id if user else None,
             "full_name": user.full_name if user else "Unknown",
             "email": user.email if user else None
-        }
+        },
+        "message": "Historical version is read-only. To edit, restore this version first."
     }
     
     # Include full content if requested
@@ -3825,7 +3853,10 @@ async def update_version_label(
     label_data: UpdateVersionLabelRequest,
     db: Session = Depends(get_db)
 ):
-    """Update the label of a specific version."""
+    """Update the label of a specific version.
+    
+    Note: This only updates metadata. Version content (canvas_data, note_content) is immutable.
+    """
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -3850,7 +3881,7 @@ async def update_version_label(
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
     
-    # Update label
+    # Update label (metadata only - content is locked)
     version.label = label_data.label
     db.commit()
     db.refresh(version)
@@ -3892,7 +3923,10 @@ async def update_version_description(
     description_data: UpdateVersionDescriptionRequest,
     db: Session = Depends(get_db)
 ):
-    """Update the description/comment of a specific version."""
+    """Update the description/comment of a specific version.
+    
+    Note: This only updates metadata. Version content (canvas_data, note_content) is immutable.
+    """
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -3916,7 +3950,7 @@ async def update_version_description(
     if not version:
         raise HTTPException(status_code=404, detail="Version not found")
     
-    # Update description
+    # Update description (metadata only - content is locked)
     version.description = description_data.description
     db.commit()
     db.refresh(version)
@@ -3947,6 +3981,65 @@ async def update_version_description(
             "email": user.email if user else None
         }
     }
+
+
+@app.patch("/{diagram_id}/versions/{version_id}/content")
+async def update_version_content(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    content_data: UpdateVersionContentRequest,
+    db: Session = Depends(get_db)
+):
+    """Attempt to update version content (ALWAYS REJECTED).
+    
+    Historical versions are immutable. Their content (canvas_data, note_content) cannot be modified.
+    This endpoint exists to explicitly document this behavior and provide a clear error message.
+    
+    To edit a version's content:
+    1. Use POST /{diagram_id}/versions/{version_id}/restore to restore the version
+    2. Then edit the current diagram using PUT /{diagram_id}
+    
+    Only version metadata (label, description) can be updated via:
+    - PATCH /{diagram_id}/versions/{version_id}/label
+    - PATCH /{diagram_id}/versions/{version_id}/description
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    logger.warning(
+        "Attempt to modify locked version content (rejected)",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version to provide informative error
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Always reject content modification
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "Version content is locked",
+            "message": "Historical versions are read-only. Version content (canvas_data, note_content) cannot be modified.",
+            "version_number": version.version_number,
+            "is_locked": True,
+            "alternatives": {
+                "restore_then_edit": f"POST /{diagram_id}/versions/{version_id}/restore then PUT /{diagram_id}",
+                "update_label": f"PATCH /{diagram_id}/versions/{version_id}/label",
+                "update_description": f"PATCH /{diagram_id}/versions/{version_id}/description"
+            }
+        }
+    )
+
 
 @app.post("/{diagram_id}/versions/{version_id}/share")
 async def create_version_share_link(
