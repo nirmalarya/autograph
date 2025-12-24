@@ -1,7 +1,7 @@
 """Auth Service - User authentication and authorization."""
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse, Response
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
@@ -3267,6 +3267,472 @@ async def check_viewer_permission(
         "user_id": current_user.id,
         "email": current_user.email,
         "role": current_user.role
+    }
+
+
+# Pydantic models for API keys
+class ApiKeyCreate(BaseModel):
+    """Model for creating an API key."""
+    name: str
+    scopes: list[str] = []  # List of allowed scopes (e.g., ["read", "write", "admin"])
+    expires_in_days: int | None = None  # Optional expiration in days
+
+
+class ApiKeyResponse(BaseModel):
+    """Model for API key response."""
+    id: str
+    name: str
+    key_prefix: str
+    scopes: list[str]
+    is_active: bool
+    expires_at: str | None
+    last_used_at: str | None
+    created_at: str
+
+
+class ApiKeyListResponse(BaseModel):
+    """Model for listing API keys."""
+    api_keys: list[ApiKeyResponse]
+
+
+class ApiKeyCreatedResponse(BaseModel):
+    """Model for newly created API key (includes full key)."""
+    id: str
+    name: str
+    api_key: str  # Full key - only shown once at creation
+    key_prefix: str
+    scopes: list[str]
+    expires_at: str | None
+    created_at: str
+    warning: str = "This is the only time you'll see the full API key. Store it securely!"
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """
+    Generate a secure API key.
+    
+    Returns:
+        Tuple of (full_key, key_hash, key_prefix)
+    """
+    # Generate a secure random key (32 bytes = 256 bits)
+    key_bytes = secrets.token_bytes(32)
+    # Encode as base64url (URL-safe base64 without padding)
+    full_key = base64.urlsafe_b64encode(key_bytes).decode('utf-8').rstrip('=')
+    
+    # Prefix for easy identification
+    full_key = f"ag_{full_key}"  # ag = AutoGraph
+    
+    # Hash the key for storage (bcrypt)
+    key_hash = pwd_context.hash(full_key)
+    
+    # Store first 8 characters as prefix for identification
+    key_prefix = full_key[:8]
+    
+    return full_key, key_hash, key_prefix
+
+
+def verify_api_key(plain_key: str, key_hash: str) -> bool:
+    """
+    Verify an API key against its hash.
+    
+    Args:
+        plain_key: Plain text API key
+        key_hash: Bcrypt hash of the API key
+        
+    Returns:
+        True if key is valid, False otherwise
+    """
+    return pwd_context.verify(plain_key, key_hash)
+
+
+async def get_current_user_from_api_key(
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Get current user from API key authentication.
+    
+    Feature #107: API key authentication for programmatic access
+    
+    Supports Bearer token format: Authorization: Bearer ag_xxxxx
+    """
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    
+    # If no authorization header, try OAuth2 (JWT)
+    if authorization is None:
+        # Fall back to JWT authentication
+        return await get_current_user(db=db)
+    
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API key",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Extract the API key from the Bearer token
+        api_key = authorization.credentials
+        
+        # Check if it looks like an API key (starts with ag_)
+        if not api_key.startswith("ag_"):
+            # Not an API key, might be a JWT - fall back
+            return await get_current_user(token=api_key, db=db)
+        
+        # Query database for API key
+        from .models import ApiKey
+        api_keys = db.query(ApiKey).filter(
+            ApiKey.is_active == True
+        ).all()
+        
+        # Find matching API key by verifying hash
+        matching_key = None
+        for key_record in api_keys:
+            if verify_api_key(api_key, key_record.key_hash):
+                matching_key = key_record
+                break
+        
+        if not matching_key:
+            logger.warning(
+                "Invalid API key attempted",
+                key_prefix=api_key[:8] if len(api_key) >= 8 else api_key
+            )
+            raise credentials_exception
+        
+        # Check if key is expired
+        if matching_key.expires_at and matching_key.expires_at < datetime.now(timezone.utc):
+            logger.warning(
+                "Expired API key used",
+                api_key_id=matching_key.id,
+                key_name=matching_key.name,
+                expired_at=matching_key.expires_at.isoformat()
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Update last used timestamp
+        matching_key.last_used_at = datetime.now(timezone.utc)
+        db.commit()
+        
+        # Get the user
+        user = get_user_by_id(db, matching_key.user_id)
+        if not user:
+            logger.error(
+                "API key has invalid user_id",
+                api_key_id=matching_key.id,
+                user_id=matching_key.user_id
+            )
+            raise credentials_exception
+        
+        logger.info(
+            "API key authentication successful",
+            api_key_id=matching_key.id,
+            key_name=matching_key.name,
+            user_id=user.id,
+            scopes=matching_key.scopes
+        )
+        
+        return user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error validating API key",
+            exc=e
+        )
+        raise credentials_exception
+
+
+# API Key endpoints
+@app.post("/api-keys", response_model=ApiKeyCreatedResponse)
+async def create_api_key(
+    key_data: ApiKeyCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Create a new API key for programmatic access.
+    
+    Feature #107: API key authentication for programmatic access
+    Feature #109: API key with expiration date
+    Feature #110: API key with scope restrictions
+    
+    Scopes:
+    - read: Read-only access to diagrams
+    - write: Create and update diagrams
+    - admin: Full access (only for admin users)
+    
+    Returns the full API key - this is the only time it will be shown!
+    """
+    correlation_id = f"create-api-key-{int(time.time() * 1000)}"
+    
+    logger.info(
+        "Creating API key",
+        correlation_id=correlation_id,
+        user_id=current_user.id,
+        key_name=key_data.name,
+        scopes=key_data.scopes,
+        expires_in_days=key_data.expires_in_days
+    )
+    
+    try:
+        # Validate scopes
+        valid_scopes = ["read", "write", "admin"]
+        for scope in key_data.scopes:
+            if scope not in valid_scopes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid scope: {scope}. Valid scopes: {valid_scopes}"
+                )
+        
+        # Check if user is trying to create admin scope without being admin
+        if "admin" in key_data.scopes and current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admin users can create API keys with admin scope"
+            )
+        
+        # Generate API key
+        full_key, key_hash, key_prefix = generate_api_key()
+        
+        # Calculate expiration
+        expires_at = None
+        if key_data.expires_in_days is not None:
+            if key_data.expires_in_days <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Expiration days must be positive"
+                )
+            expires_at = datetime.now(timezone.utc) + timedelta(days=key_data.expires_in_days)
+        
+        # Create API key record
+        from .models import ApiKey
+        api_key = ApiKey(
+            user_id=current_user.id,
+            name=key_data.name,
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            scopes=key_data.scopes,
+            expires_at=expires_at,
+            is_active=True
+        )
+        db.add(api_key)
+        db.commit()
+        db.refresh(api_key)
+        
+        logger.info(
+            "API key created successfully",
+            correlation_id=correlation_id,
+            api_key_id=api_key.id,
+            user_id=current_user.id,
+            key_name=key_data.name,
+            key_prefix=key_prefix,
+            scopes=key_data.scopes,
+            expires_at=expires_at.isoformat() if expires_at else None
+        )
+        
+        # Create audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            action="create_api_key",
+            resource_type="api_key",
+            resource_id=api_key.id,
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=get_user_agent(request) if request else None,
+            extra_data={
+                "key_name": key_data.name,
+                "key_prefix": key_prefix,
+                "scopes": key_data.scopes,
+                "expires_at": expires_at.isoformat() if expires_at else None
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+        
+        return ApiKeyCreatedResponse(
+            id=api_key.id,
+            name=api_key.name,
+            api_key=full_key,
+            key_prefix=key_prefix,
+            scopes=api_key.scopes or [],
+            expires_at=expires_at.isoformat() if expires_at else None,
+            created_at=api_key.created_at.isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error creating API key",
+            correlation_id=correlation_id,
+            exc=e,
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create API key"
+        )
+
+
+@app.get("/api-keys", response_model=ApiKeyListResponse)
+async def list_api_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all API keys for the current user.
+    
+    Feature #107: API key authentication for programmatic access
+    """
+    logger.info(
+        "Listing API keys",
+        user_id=current_user.id
+    )
+    
+    try:
+        from .models import ApiKey
+        api_keys = db.query(ApiKey).filter(
+            ApiKey.user_id == current_user.id
+        ).order_by(ApiKey.created_at.desc()).all()
+        
+        return ApiKeyListResponse(
+            api_keys=[
+                ApiKeyResponse(
+                    id=key.id,
+                    name=key.name,
+                    key_prefix=key.key_prefix,
+                    scopes=key.scopes or [],
+                    is_active=key.is_active,
+                    expires_at=key.expires_at.isoformat() if key.expires_at else None,
+                    last_used_at=key.last_used_at.isoformat() if key.last_used_at else None,
+                    created_at=key.created_at.isoformat()
+                )
+                for key in api_keys
+            ]
+        )
+        
+    except Exception as e:
+        logger.error(
+            "Error listing API keys",
+            exc=e,
+            user_id=current_user.id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list API keys"
+        )
+
+
+@app.delete("/api-keys/{key_id}")
+async def revoke_api_key(
+    key_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Revoke (deactivate) an API key.
+    
+    Feature #108: API key can be revoked
+    
+    This marks the key as inactive but doesn't delete it from the database
+    (for audit purposes).
+    """
+    correlation_id = f"revoke-api-key-{int(time.time() * 1000)}"
+    
+    logger.info(
+        "Revoking API key",
+        correlation_id=correlation_id,
+        user_id=current_user.id,
+        api_key_id=key_id
+    )
+    
+    try:
+        from .models import ApiKey
+        api_key = db.query(ApiKey).filter(
+            ApiKey.id == key_id,
+            ApiKey.user_id == current_user.id
+        ).first()
+        
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="API key not found"
+            )
+        
+        # Mark as inactive
+        api_key.is_active = False
+        db.commit()
+        
+        logger.info(
+            "API key revoked successfully",
+            correlation_id=correlation_id,
+            api_key_id=key_id,
+            key_name=api_key.name,
+            user_id=current_user.id
+        )
+        
+        # Create audit log
+        audit_log = AuditLog(
+            user_id=current_user.id,
+            action="revoke_api_key",
+            resource_type="api_key",
+            resource_id=key_id,
+            ip_address=get_client_ip(request) if request else None,
+            user_agent=get_user_agent(request) if request else None,
+            extra_data={
+                "key_name": api_key.name,
+                "key_prefix": api_key.key_prefix
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+        
+        return {
+            "message": "API key revoked successfully",
+            "api_key_id": key_id,
+            "key_name": api_key.name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error revoking API key",
+            correlation_id=correlation_id,
+            exc=e,
+            user_id=current_user.id,
+            api_key_id=key_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke API key"
+        )
+
+
+@app.get("/test/api-key-auth")
+async def test_api_key_auth(
+    current_user: User = Depends(get_current_user_from_api_key)
+):
+    """
+    Test endpoint for API key authentication.
+    
+    Can be accessed with either:
+    - JWT Bearer token (regular authentication)
+    - API key Bearer token (API key authentication)
+    
+    Feature #107: API key authentication for programmatic access
+    """
+    return {
+        "message": "API key authentication successful",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 
