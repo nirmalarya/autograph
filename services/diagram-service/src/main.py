@@ -3286,6 +3286,14 @@ class CreateVersionRequest(BaseModel):
     description: Optional[str] = None
     label: Optional[str] = None
 
+class UpdateVersionLabelRequest(BaseModel):
+    """Request model for updating a version label."""
+    label: Optional[str] = None
+
+class UpdateVersionDescriptionRequest(BaseModel):
+    """Request model for updating a version description/comment."""
+    description: Optional[str] = None
+
 class VersionResponse(BaseModel):
     """Response model for a version."""
     id: str
@@ -3747,7 +3755,136 @@ async def get_version(
     return response_data
 
 
+@app.patch("/{diagram_id}/versions/{version_id}/label")
+async def update_version_label(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    label_data: UpdateVersionLabelRequest,
+    db: Session = Depends(get_db)
+):
+    """Update the label of a specific version."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Updating version label",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id,
+        new_label=label_data.label
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Update label
+    version.label = label_data.label
+    db.commit()
+    db.refresh(version)
+    
+    # Get user info
+    user = db.query(User).filter(User.id == version.created_by).first()
+    
+    logger.info(
+        "Version label updated successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        version_number=version.version_number,
+        label=version.label
+    )
+    
+    return {
+        "id": version.id,
+        "file_id": version.file_id,
+        "version_number": version.version_number,
+        "description": version.description,
+        "label": version.label,
+        "thumbnail_url": version.thumbnail_url,
+        "created_by": version.created_by,
+        "created_at": version.created_at.isoformat(),
+        "user": {
+            "id": user.id if user else None,
+            "full_name": user.full_name if user else "Unknown",
+            "email": user.email if user else None
+        }
+    }
 
+
+@app.patch("/{diagram_id}/versions/{version_id}/description")
+async def update_version_description(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    description_data: UpdateVersionDescriptionRequest,
+    db: Session = Depends(get_db)
+):
+    """Update the description/comment of a specific version."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Updating version description",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Update description
+    version.description = description_data.description
+    db.commit()
+    db.refresh(version)
+    
+    # Get user info
+    user = db.query(User).filter(User.id == version.created_by).first()
+    
+    logger.info(
+        "Version description updated successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        version_number=version.version_number
+    )
+    
+    return {
+        "id": version.id,
+        "file_id": version.file_id,
+        "version_number": version.version_number,
+        "description": version.description,
+        "label": version.label,
+        "thumbnail_url": version.thumbnail_url,
+        "created_by": version.created_by,
+        "created_at": version.created_at.isoformat(),
+        "user": {
+            "id": user.id if user else None,
+            "full_name": user.full_name if user else "Unknown",
+            "email": user.email if user else None
+        }
+    }
 
 @app.post("/{diagram_id}/versions/{version_id}/restore")
 async def restore_version(

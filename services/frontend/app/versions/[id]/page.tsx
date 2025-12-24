@@ -62,6 +62,16 @@ export default function VersionComparePage({
   const [viewMode, setViewMode] = useState<"side-by-side" | "overlay">(
     (unwrappedSearchParams.mode as "side-by-side" | "overlay") || "side-by-side"
   );
+  
+  // Label editing state
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [labelValue, setLabelValue] = useState<string>("");
+  const [savingLabel, setSavingLabel] = useState(false);
+  
+  // Description editing state
+  const [editingDescription, setEditingDescription] = useState<string | null>(null);
+  const [descriptionValue, setDescriptionValue] = useState<string>("");
+  const [savingDescription, setSavingDescription] = useState(false);
 
   const diagramId = unwrappedParams.id;
 
@@ -152,6 +162,156 @@ export default function VersionComparePage({
     router.push(
       `/versions/${diagramId}?v1=${selectedV1}&v2=${selectedV2}&mode=${mode}`
     );
+  };
+  
+  const handleEditLabel = (versionId: string, currentLabel: string | undefined) => {
+    setEditingLabel(versionId);
+    setLabelValue(currentLabel || "");
+  };
+  
+  const handleSaveLabel = async (versionId: string) => {
+    setSavingLabel(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        setError("Not authenticated");
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:8082/${diagramId}/versions/${versionId}/label`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+          body: JSON.stringify({ label: labelValue || null }),
+        }
+      );
+
+      if (!response.ok) throw new Error("Failed to update label");
+
+      // Refresh versions list and comparison
+      const versionsResponse = await fetch(
+        `http://localhost:8082/${diagramId}/versions`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+        }
+      );
+      
+      if (versionsResponse.ok) {
+        const data = await versionsResponse.json();
+        setVersions(data.versions || []);
+      }
+      
+      // Also refresh comparison to update labels
+      const comparisonResponse = await fetch(
+        `http://localhost:8082/${diagramId}/versions/compare?v1=${selectedV1}&v2=${selectedV2}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+        }
+      );
+      
+      if (comparisonResponse.ok) {
+        const compData = await comparisonResponse.json();
+        setComparison(compData);
+      }
+      
+      setEditingLabel(null);
+    } catch (err) {
+      console.error("Error updating label:", err);
+      alert("Failed to update label");
+    } finally {
+      setSavingLabel(false);
+    }
+  };
+  
+  const handleCancelEdit = () => {
+    setEditingLabel(null);
+    setLabelValue("");
+  };
+  
+  const handleEditDescription = (versionId: string, currentDescription: string | undefined) => {
+    setEditingDescription(versionId);
+    setDescriptionValue(currentDescription || "");
+  };
+  
+  const handleSaveDescription = async (versionId: string) => {
+    setSavingDescription(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        setError("Not authenticated");
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:8082/${diagramId}/versions/${versionId}/description`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+          body: JSON.stringify({ description: descriptionValue || null }),
+        }
+      );
+
+      if (!response.ok) throw new Error("Failed to update description");
+
+      // Refresh versions list and comparison
+      const versionsResponse = await fetch(
+        `http://localhost:8082/${diagramId}/versions`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+        }
+      );
+      
+      if (versionsResponse.ok) {
+        const data = await versionsResponse.json();
+        setVersions(data.versions || []);
+      }
+      
+      // Also refresh comparison to update descriptions
+      const comparisonResponse = await fetch(
+        `http://localhost:8082/${diagramId}/versions/compare?v1=${selectedV1}&v2=${selectedV2}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": localStorage.getItem("user_id") || "",
+          },
+        }
+      );
+      
+      if (comparisonResponse.ok) {
+        const compData = await comparisonResponse.json();
+        setComparison(compData);
+      }
+      
+      setEditingDescription(null);
+    } catch (err) {
+      console.error("Error updating description:", err);
+      alert("Failed to update description");
+    } finally {
+      setSavingDescription(false);
+    }
+  };
+  
+  const handleCancelDescriptionEdit = () => {
+    setEditingDescription(null);
+    setDescriptionValue("");
   };
 
   if (loading && !comparison) {
@@ -314,15 +474,117 @@ export default function VersionComparePage({
             <div className="grid grid-cols-2 gap-6">
               {/* Version 1 */}
               <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold mb-4">
-                  Version {comparison.version1.version_number}
-                  {comparison.version1.label && ` - ${comparison.version1.label}`}
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">
+                    Version {comparison.version1.version_number}
+                  </h3>
+                  {editingLabel === comparison.version1.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={labelValue}
+                        onChange={(e) => setLabelValue(e.target.value)}
+                        className="border rounded px-2 py-1 text-sm"
+                        placeholder="Enter label..."
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => handleSaveLabel(comparison.version1.id)}
+                        disabled={savingLabel}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {savingLabel ? "..." : "Save"}
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {comparison.version1.label && (
+                        <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                          {comparison.version1.label}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => handleEditLabel(comparison.version1.id, comparison.version1.label)}
+                        className="text-sm text-blue-600 hover:text-blue-700 px-2 py-1"
+                        title="Edit label"
+                      >
+                        {comparison.version1.label ? "Edit" : "+ Add Label"}
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <p className="text-sm text-gray-600 mb-4">
                   {new Date(comparison.version1.created_at).toLocaleString()}
                   {" by "}
                   {comparison.version1.user.full_name}
                 </p>
+                
+                {/* Description/Comment */}
+                <div className="mb-4">
+                  {editingDescription === comparison.version1.id ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Version Comment
+                      </label>
+                      <textarea
+                        value={descriptionValue}
+                        onChange={(e) => setDescriptionValue(e.target.value)}
+                        className="w-full border rounded px-3 py-2 text-sm"
+                        placeholder="Add a note explaining this version..."
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => handleSaveDescription(comparison.version1.id)}
+                          disabled={savingDescription}
+                          className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {savingDescription ? "Saving..." : "Save Comment"}
+                        </button>
+                        <button
+                          onClick={handleCancelDescriptionEdit}
+                          className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {comparison.version1.description ? (
+                        <div className="bg-gray-50 rounded p-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500 mb-1">Comment:</p>
+                              <p className="text-sm text-gray-700">{comparison.version1.description}</p>
+                            </div>
+                            <button
+                              onClick={() => handleEditDescription(comparison.version1.id, comparison.version1.description)}
+                              className="text-xs text-blue-600 hover:text-blue-700 ml-2"
+                              title="Edit comment"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleEditDescription(comparison.version1.id, comparison.version1.description)}
+                          className="text-sm text-blue-600 hover:text-blue-700"
+                        >
+                          + Add Comment
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 
                 {/* Thumbnail */}
                 {comparison.version1.thumbnail_url && (
@@ -336,15 +598,117 @@ export default function VersionComparePage({
 
               {/* Version 2 */}
               <div className="bg-white rounded-lg shadow p-6">
-                <h3 className="text-lg font-semibold mb-4">
-                  Version {comparison.version2.version_number}
-                  {comparison.version2.label && ` - ${comparison.version2.label}`}
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">
+                    Version {comparison.version2.version_number}
+                  </h3>
+                  {editingLabel === comparison.version2.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={labelValue}
+                        onChange={(e) => setLabelValue(e.target.value)}
+                        className="border rounded px-2 py-1 text-sm"
+                        placeholder="Enter label..."
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => handleSaveLabel(comparison.version2.id)}
+                        disabled={savingLabel}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {savingLabel ? "..." : "Save"}
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {comparison.version2.label && (
+                        <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                          {comparison.version2.label}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => handleEditLabel(comparison.version2.id, comparison.version2.label)}
+                        className="text-sm text-blue-600 hover:text-blue-700 px-2 py-1"
+                        title="Edit label"
+                      >
+                        {comparison.version2.label ? "Edit" : "+ Add Label"}
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <p className="text-sm text-gray-600 mb-4">
                   {new Date(comparison.version2.created_at).toLocaleString()}
                   {" by "}
                   {comparison.version2.user.full_name}
                 </p>
+                
+                {/* Description/Comment */}
+                <div className="mb-4">
+                  {editingDescription === comparison.version2.id ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Version Comment
+                      </label>
+                      <textarea
+                        value={descriptionValue}
+                        onChange={(e) => setDescriptionValue(e.target.value)}
+                        className="w-full border rounded px-3 py-2 text-sm"
+                        placeholder="Add a note explaining this version..."
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => handleSaveDescription(comparison.version2.id)}
+                          disabled={savingDescription}
+                          className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {savingDescription ? "Saving..." : "Save Comment"}
+                        </button>
+                        <button
+                          onClick={handleCancelDescriptionEdit}
+                          className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {comparison.version2.description ? (
+                        <div className="bg-gray-50 rounded p-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500 mb-1">Comment:</p>
+                              <p className="text-sm text-gray-700">{comparison.version2.description}</p>
+                            </div>
+                            <button
+                              onClick={() => handleEditDescription(comparison.version2.id, comparison.version2.description)}
+                              className="text-xs text-blue-600 hover:text-blue-700 ml-2"
+                              title="Edit comment"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleEditDescription(comparison.version2.id, comparison.version2.description)}
+                          className="text-sm text-blue-600 hover:text-blue-700"
+                        >
+                          + Add Comment
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 
                 {/* Thumbnail */}
                 {comparison.version2.thumbnail_url && (
