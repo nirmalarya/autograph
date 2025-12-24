@@ -62,7 +62,7 @@ export default function SettingsPage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <a href="/dashboard" className="text-xl font-bold text-gray-900 dark:text-gray-100 hover:text-gray-700 dark:hover:text-gray-300 transition">
-                AutoGraph v3
+                AutoGraph
               </a>
               <span className="text-gray-400">→</span>
               <span className="text-sm text-gray-600 dark:text-gray-400">Settings</span>
@@ -103,7 +103,7 @@ export default function SettingsPage() {
                   Onboarding & Help
                 </h2>
                 <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
-                  Get help with using AutoGraph v3
+                  Get help with using AutoGraph
                 </p>
               </div>
             </div>

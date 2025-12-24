@@ -198,7 +198,7 @@ export default function ShortcutsSettingsPage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <a href="/dashboard" className="text-xl font-bold text-gray-900 dark:text-gray-100 hover:text-gray-700 dark:hover:text-gray-300 transition">
-                AutoGraph v3
+                AutoGraph
               </a>
               <span className="text-gray-400">→</span>
               <a href="/settings" className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition">

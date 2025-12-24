@@ -96,7 +96,7 @@ export default function RegisterPage() {
               Create Account
             </h1>
             <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-              Sign up for AutoGraph v3
+              Sign up for AutoGraph
             </p>
           </div>
 
