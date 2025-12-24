@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Button from '../components/Button';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -188,13 +189,16 @@ export default function RegisterPage() {
               />
             </div>
 
-            <button
+            <Button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 text-white py-3 sm:py-4 px-4 rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation text-base sm:text-lg"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={loading}
             >
-              {loading ? 'Creating Account...' : 'Create Account'}
-            </button>
+              Create Account
+            </Button>
           </form>
 
           <div className="mt-6 text-center">

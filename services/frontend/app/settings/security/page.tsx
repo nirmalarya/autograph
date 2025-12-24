@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import OptimizedImage from '../../components/OptimizedImage';
+import Button from '../../components/Button';
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
@@ -202,13 +203,15 @@ export default function SecuritySettingsPage() {
                 Two-factor authentication adds an extra layer of security to your account. 
                 You'll need to enter a code from your authenticator app each time you log in.
               </p>
-              <button
+              <Button
                 onClick={handleStartMfaSetup}
                 disabled={setupLoading}
-                className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                variant="primary"
+                size="lg"
+                loading={setupLoading}
               >
-                {setupLoading ? 'Setting up...' : 'Enable Two-Factor Authentication'}
-              </button>
+                Enable Two-Factor Authentication
+              </Button>
             </div>
           )}
 
@@ -271,14 +274,16 @@ export default function SecuritySettingsPage() {
                   </div>
 
                   <div className="flex gap-4">
-                    <button
+                    <Button
                       type="submit"
                       disabled={setupLoading || verificationCode.length !== 6}
-                      className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      variant="primary"
+                      size="lg"
+                      loading={setupLoading}
                     >
-                      {setupLoading ? 'Verifying...' : 'Verify and Enable'}
-                    </button>
-                    <button
+                      Verify and Enable
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => {
                         setShowMfaSetup(false);
@@ -287,10 +292,11 @@ export default function SecuritySettingsPage() {
                         setVerificationCode('');
                         setError('');
                       }}
-                      className="px-6 py-3 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 transition"
+                      variant="secondary"
+                      size="lg"
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </form>
               </div>
