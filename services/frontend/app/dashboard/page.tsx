@@ -405,11 +405,33 @@ export default function DashboardPage() {
     setCreating(true);
     setError('');
 
+    // OPTIMISTIC UI: Create temporary diagram immediately
+    const tempId = `temp-${Date.now()}`;
+    const actualType = diagramType === 'mermaid' ? 'note' : diagramType;
+    const optimisticDiagram: Diagram = {
+      id: tempId,
+      title: diagramType === 'mermaid' ? `${diagramTitle} (Mermaid)` : diagramTitle,
+      file_type: actualType,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      current_version: 1,
+      owner_email: user?.email,
+    };
+
+    // Add to list immediately (optimistic update)
+    setDiagrams(prev => [optimisticDiagram, ...prev]);
+    
+    // Close modal immediately for better UX
+    setShowCreateModal(false);
+    const savedTitle = diagramTitle;
+    const savedType = diagramType;
+    setDiagramTitle('');
+    setDiagramType('canvas');
+
     try {
       const token = localStorage.getItem('access_token');
       
       // For Mermaid diagrams, store as 'note' type with default Mermaid code
-      const actualType = diagramType === 'mermaid' ? 'note' : diagramType;
       const defaultMermaidCode = `graph TD
     A[Start] --> B{Is it working?}
     B -->|Yes| C[Great!]
@@ -424,32 +446,31 @@ export default function DashboardPage() {
           'X-User-ID': user?.sub || '',
         },
         body: JSON.stringify({
-          title: diagramType === 'mermaid' ? `${diagramTitle} (Mermaid)` : diagramTitle,
+          title: savedType === 'mermaid' ? `${savedTitle} (Mermaid)` : savedTitle,
           file_type: actualType,
           canvas_data: actualType === 'canvas' || actualType === 'mixed' ? { shapes: [] } : null,
-          note_content: diagramType === 'mermaid' ? defaultMermaidCode : (actualType === 'note' || actualType === 'mixed' ? '' : null),
+          note_content: savedType === 'mermaid' ? defaultMermaidCode : (actualType === 'note' || actualType === 'mixed' ? '' : null),
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
+        // Remove optimistic diagram on error
+        setDiagrams(prev => prev.filter(d => d.id !== tempId));
         throw new Error(errorData.detail || 'Failed to create diagram');
       }
 
       const diagram = await response.json();
       
-      // Close modal and refresh list
-      setShowCreateModal(false);
-      setDiagramTitle('');
-      setDiagramType('canvas');
-      fetchDiagrams();
+      // Replace temporary diagram with real one
+      setDiagrams(prev => prev.map(d => d.id === tempId ? diagram : d));
       
       // Redirect to the appropriate editor
-      if (diagramType === 'mermaid') {
+      if (savedType === 'mermaid') {
         router.push(`/mermaid/${diagram.id}`);
-      } else if (diagramType === 'canvas') {
+      } else if (savedType === 'canvas') {
         router.push(`/canvas/${diagram.id}`);
-      } else if (diagramType === 'note') {
+      } else if (savedType === 'note') {
         router.push(`/note/${diagram.id}`);
       } else {
         router.push(`/canvas/${diagram.id}`); // Mixed defaults to canvas view
@@ -457,6 +478,8 @@ export default function DashboardPage() {
     } catch (err: any) {
       console.error('Failed to create diagram:', err);
       setError(err.message || 'Failed to create diagram');
+      // Show error notification but don't reopen modal
+      alert(err.message || 'Failed to create diagram');
     } finally {
       setCreating(false);
     }
@@ -1192,10 +1215,14 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                  {diagrams.map((diagram) => (
+                  {diagrams.map((diagram) => {
+                    const isPending = diagram.id.startsWith('temp-');
+                    return (
                     <div
                       key={diagram.id}
                       className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm overflow-hidden border-2 transition ${
+                        isPending ? 'optimistic-create optimistic-pending' : ''
+                      } ${
                         selectedDiagrams.has(diagram.id)
                           ? 'border-blue-500 shadow-md'
                           : 'border-gray-200 dark:border-gray-700 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-600'
@@ -1272,7 +1299,7 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </>
             )}
@@ -1330,10 +1357,14 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {diagrams.map((diagram) => (
+                    {diagrams.map((diagram) => {
+                      const isPending = diagram.id.startsWith('temp-');
+                      return (
                       <tr
                         key={diagram.id}
                         className={`transition ${
+                          isPending ? 'optimistic-create optimistic-pending' : ''
+                        } ${
                           selectedDiagrams.has(diagram.id)
                             ? 'bg-blue-50'
                             : 'hover:bg-gray-50'
@@ -1448,7 +1479,7 @@ export default function DashboardPage() {
                           <div className="text-sm text-gray-600">{diagram.comment_count || 0}</div>
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>

@@ -6,6 +6,7 @@ import PWAInstaller from './components/PWAInstaller';
 import PushNotifications from './components/PushNotifications';
 import OfflineStatusBanner from './components/OfflineStatusBanner';
 import ErrorBoundary from './components/ErrorBoundary';
+import PageTransition from './components/PageTransition';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -54,7 +55,9 @@ export default function RootLayout({
             <OfflineStatusBanner />
             <PWAInstaller />
             <PushNotifications />
-            {children}
+            <PageTransition>
+              {children}
+            </PageTransition>
           </ThemeProvider>
         </ErrorBoundary>
       </body>

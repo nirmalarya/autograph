@@ -106,4 +106,165 @@
   .tl-canvas {
     transition: transform 0.1s ease-out;
   }
+
+  /* Smooth page transitions - no flickering */
+  .page-transition {
+    transition: opacity 150ms ease-in-out;
+  }
+
+  .page-transition-in {
+    animation: fadeIn 150ms ease-in-out;
+  }
+
+  .page-transition-out {
+    animation: fadeOut 150ms ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeOut {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* Smooth state transitions for all interactive elements */
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition: all 150ms ease-in-out;
+  }
+
+  /* Smooth background and color transitions */
+  * {
+    transition-property: background-color, border-color, color, fill, stroke;
+    transition-timing-function: ease-in-out;
+    transition-duration: 150ms;
+  }
+
+  /* Prevent transition on page load */
+  .no-transition {
+    transition: none !important;
+  }
+
+  /* Smooth modal and dialog transitions */
+  .modal-enter {
+    animation: modalEnter 200ms ease-out;
+  }
+
+  .modal-exit {
+    animation: modalExit 200ms ease-in;
+  }
+
+  @keyframes modalEnter {
+    from {
+      opacity: 0;
+      transform: scale(0.95) translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  @keyframes modalExit {
+    from {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.95) translateY(-10px);
+    }
+  }
+
+  /* Smooth list item transitions */
+  .list-item-enter {
+    animation: listItemEnter 200ms ease-out;
+  }
+
+  @keyframes listItemEnter {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* Smooth card transitions */
+  .card-enter {
+    animation: cardEnter 300ms ease-out;
+  }
+
+  @keyframes cardEnter {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Optimistic UI - instant feedback */
+  .optimistic-create {
+    animation: optimisticCreate 300ms ease-out;
+  }
+
+  @keyframes optimisticCreate {
+    0% {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    50% {
+      opacity: 0.7;
+      transform: scale(1.02);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Optimistic update indicator */
+  .optimistic-pending {
+    opacity: 0.7;
+    position: relative;
+  }
+
+  .optimistic-pending::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.1), transparent);
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
 }
