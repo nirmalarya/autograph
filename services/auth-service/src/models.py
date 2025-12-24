@@ -43,11 +43,14 @@ class User(Base):
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime(timezone=True))  # Account locked until this time
     
+    # User preferences
+    preferences = Column(JSON, default={})  # User preferences (theme, language, etc.)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_login_at = Column(DateTime(timezone=True))
-    
+
     # Relationships
     teams = relationship("Team", back_populates="owner")
     files = relationship("File", back_populates="owner")
@@ -183,9 +186,19 @@ class File(Base):
     view_count = Column(Integer, default=0)
     export_count = Column(Integer, default=0)  # Track number of exports
     collaborator_count = Column(Integer, default=1)  # Track number of collaborators (owner + shared users)
-    
+    comment_count = Column(Integer, default=0)  # Track number of comments
+    last_edited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    tags = Column(JSON, default=[])  # Searchable tags
+    size_bytes = Column(BigInteger, default=0)  # Track file size in bytes
+
     # Version control
     current_version = Column(Integer, default=1)
+    version_count = Column(Integer, default=1)  # Track total number of versions
+
+    # Version retention policy
+    retention_policy = Column(String(20), default="keep_all", nullable=False)  # keep_all, keep_last_n, keep_duration
+    retention_count = Column(Integer)  # For keep_last_n: number of versions to keep
+    retention_days = Column(Integer)  # For keep_duration: number of days to keep versions
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -209,6 +222,8 @@ class File(Base):
         Index('idx_files_deleted', 'is_deleted'),
         Index('idx_files_title', 'title'),
         Index('idx_files_last_activity', 'last_activity'),
+        Index('idx_files_last_edited_by', 'last_edited_by'),
+        Index('idx_files_retention_policy', 'retention_policy'),
     )
 
 
@@ -223,7 +238,16 @@ class Version(Base):
     # Version content
     canvas_data = Column(JSONB)  # JSONB for better performance
     note_content = Column(Text)
-    
+
+    # Compression fields
+    is_compressed = Column(Boolean, default=False, nullable=False)  # Whether content is gzipped
+    compressed_canvas_data = Column(Text)  # Base64-encoded gzipped canvas_data
+    compressed_note_content = Column(Text)  # Base64-encoded gzipped note_content
+    original_size = Column(Integer)  # Size before compression (bytes)
+    compressed_size = Column(Integer)  # Size after compression (bytes)
+    compression_ratio = Column(Float)  # compressed_size / original_size
+    compressed_at = Column(DateTime(timezone=True))  # When compression was applied
+
     # Version metadata
     description = Column(String(500))
     label = Column(String(100))
@@ -239,6 +263,8 @@ class Version(Base):
     __table_args__ = (
         Index('idx_versions_file', 'file_id'),
         Index('idx_versions_number', 'file_id', 'version_number'),
+        Index('idx_versions_compressed', 'is_compressed'),
+        Index('idx_versions_created', 'created_at'),
     )
 
 

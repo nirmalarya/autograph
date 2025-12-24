@@ -33,7 +33,19 @@ class User(Base):
     # SSO fields
     sso_provider = Column(String(50))  # microsoft, okta, onelogin
     sso_id = Column(String(255))
-    
+
+    # User preferences
+    preferences = Column(JSON, default={})  # User preferences (theme, language, etc.)
+
+    # MFA fields (from auth-service)
+    mfa_enabled = Column(Boolean, default=False, nullable=False)
+    mfa_secret = Column(String(255))  # Base32-encoded TOTP secret
+    mfa_backup_codes = Column(JSON)  # List of hashed backup codes (one-time use)
+
+    # Account lockout fields (from auth-service)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True))  # Account locked until this time
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -52,6 +64,7 @@ class User(Base):
     __table_args__ = (
         Index('idx_users_email', 'email'),
         Index('idx_users_sso', 'sso_provider', 'sso_id'),
+        Index('idx_users_locked_until', 'locked_until'),
     )
 
 
@@ -177,7 +190,8 @@ class File(Base):
     comment_count = Column(Integer, default=0)  # Track number of comments
     last_edited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
     tags = Column(JSON, default=[])  # Searchable tags
-    
+    size_bytes = Column(BigInteger, default=0)  # Track file size in bytes
+
     # Version control
     current_version = Column(Integer, default=1)
     version_count = Column(Integer, default=1)  # Track total number of versions
@@ -229,8 +243,8 @@ class Version(Base):
     is_compressed = Column(Boolean, default=False, nullable=False)  # Whether content is gzipped
     compressed_canvas_data = Column(Text)  # Base64-encoded gzipped canvas_data
     compressed_note_content = Column(Text)  # Base64-encoded gzipped note_content
-    original_size = Column(BigInteger)  # Size before compression (bytes)
-    compressed_size = Column(BigInteger)  # Size after compression (bytes)
+    original_size = Column(Integer)  # Size before compression (bytes) - matches DB
+    compressed_size = Column(Integer)  # Size after compression (bytes) - matches DB
     compression_ratio = Column(Float)  # compressed_size / original_size
     compressed_at = Column(DateTime(timezone=True))  # When compression was applied
     
