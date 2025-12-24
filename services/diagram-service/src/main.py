@@ -1494,9 +1494,47 @@ async def update_diagram(
                 error=str(e)
             )
     
-    # Note: Auto-versioning is handled by background job (every 5 minutes)
-    # Manual versions are created via POST /{diagram_id}/versions endpoint
-    # We don't auto-create versions on every update to avoid version spam
+    # Auto-versioning: Create a version if 5+ minutes have passed since last auto-version
+    should_create_version = False
+    if diagram.last_auto_versioned_at is None:
+        # First time - create initial version
+        should_create_version = True
+    else:
+        # Check if 5 minutes have passed
+        time_since_last_version = datetime.utcnow() - diagram.last_auto_versioned_at.replace(tzinfo=None)
+        if time_since_last_version.total_seconds() >= 300:  # 5 minutes = 300 seconds
+            should_create_version = True
+    
+    if should_create_version and (update_data.canvas_data is not None or update_data.note_content is not None):
+        # Get next version number
+        latest_version = db.query(Version).filter(
+            Version.file_id == diagram_id
+        ).order_by(Version.version_number.desc()).first()
+        
+        next_version_number = (latest_version.version_number + 1) if latest_version else 1
+        
+        # Create auto-version snapshot
+        new_version = Version(
+            id=str(uuid.uuid4()),
+            file_id=diagram_id,
+            version_number=next_version_number,
+            canvas_data=diagram.canvas_data if update_data.canvas_data is not None else None,
+            note_content=diagram.note_content if update_data.note_content is not None else None,
+            description="Auto-save",
+            created_by=user_id
+        )
+        
+        db.add(new_version)
+        diagram.current_version = next_version_number
+        diagram.last_auto_versioned_at = datetime.utcnow()
+        
+        logger.info(
+            "Auto-version created",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            version_number=next_version_number,
+            user_id=user_id
+        )
     
     db.commit()
     db.refresh(diagram)

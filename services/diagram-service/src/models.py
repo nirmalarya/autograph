@@ -151,6 +151,7 @@ class File(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_accessed_at = Column(DateTime(timezone=True))
     last_activity = Column(DateTime(timezone=True))  # Last activity (view, edit, comment)
+    last_auto_versioned_at = Column(DateTime(timezone=True))  # Last time an auto-version was created
     
     # Relationships
     owner = relationship("User", back_populates="files", foreign_keys=[owner_id])
