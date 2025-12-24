@@ -1,5 +1,5 @@
 """Auth Service - User authentication and authorization."""
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Header
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer
 from sqlalchemy.orm import Session
@@ -461,16 +461,21 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    """Create JWT access token."""
+    """Create JWT access token with guaranteed uniqueness."""
+    import uuid
     to_encode = data.copy()
     now = datetime.utcnow()
     if expires_delta:
         expire = now + expires_delta
     else:
         expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # Add a unique identifier to prevent identical tokens in rapid succession
+    # This ensures each token is unique even if issued in the same second
     to_encode.update({
         "exp": expire,
         "iat": now,
+        "jti": str(uuid.uuid4()),  # JWT ID claim for uniqueness
         "type": "access"
     })
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -713,7 +718,13 @@ def get_user_sessions(user_id: str) -> list[dict]:
     return sessions
 
 
-def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) -> None:
+def create_session(
+    access_token: str, 
+    user_id: str, 
+    ttl_seconds: int = 86400,
+    ip_address: str = None,
+    user_agent: str = None
+) -> None:
     """Create a session in Redis with 24-hour TTL.
     
     Enforces maximum concurrent sessions limit. If user already has
@@ -723,6 +734,8 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
         access_token: The access token to use as session key
         user_id: The user ID
         ttl_seconds: Time to live in seconds (default: 86400 = 24 hours)
+        ip_address: Client IP address (optional)
+        user_agent: Client user agent string (optional)
     """
     user_sessions_key = f"user_sessions:{user_id}"
     
@@ -731,6 +744,7 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
     
     print(f"DEBUG: Creating session for user {user_id}, current sessions: {len(user_sessions)}, max: {MAX_CONCURRENT_SESSIONS}")
     print(f"DEBUG: Current session tokens: {[s['token'][:10] + '...' for s in user_sessions]}")
+    print(f"DEBUG: New token: {access_token[:30]}...")
     
     logger.debug(
         "Creating session - checking concurrent limit",
@@ -766,20 +780,26 @@ def create_session(access_token: str, user_id: str, ttl_seconds: int = 86400) ->
     session_data = {
         "user_id": user_id,
         "created_at": now.isoformat(),
-        "last_activity": now.isoformat()
+        "last_activity": now.isoformat(),
+        "ip_address": ip_address or "unknown",
+        "user_agent": user_agent or "unknown"
     }
     
-    # Store session data FIRST before adding to set
-    redis_client.setex(key, ttl_seconds, json.dumps(session_data))
+    # Use Redis pipeline to ensure atomicity
+    # Store session data AND add to set in a single atomic operation
+    print(f"DEBUG: Creating session atomically with pipeline: {key}")
+    pipe = redis_client.pipeline()
+    pipe.setex(key, ttl_seconds, json.dumps(session_data))
+    pipe.sadd(user_sessions_key, access_token)
+    pipe.persist(user_sessions_key)  # Remove any TTL on the set
+    results = pipe.execute()
     
-    # Then add token to user sessions set
-    redis_client.sadd(user_sessions_key, access_token)
+    print(f"DEBUG: Pipeline results: setex={results[0]}, sadd={results[1]}, persist={results[2]}")
     
-    # Remove any TTL on the set (in case old code set one)
-    redis_client.persist(user_sessions_key)
-    # The set will be cleaned up when sessions expire via get_user_sessions()
-    
-    print(f"DEBUG: Session created: {key[:30]}...")
+    # Verify it was added
+    members_count = redis_client.scard(user_sessions_key)
+    print(f"DEBUG: Set now has {members_count} members")
+    print(f"DEBUG: Session created successfully!")
 
 
 def validate_session(access_token: str) -> bool:
@@ -1682,7 +1702,13 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
     )
     
     # Create session in Redis with 24-hour TTL
-    create_session(access_token, user.id, ttl_seconds=86400)
+    create_session(
+        access_token, 
+        user.id, 
+        ttl_seconds=86400,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
     
     # Log successful login
     create_audit_log(
@@ -1803,7 +1829,13 @@ async def login_form(
     refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
     
     # Create session in Redis with 24-hour TTL
-    create_session(access_token, user.id, ttl_seconds=86400)
+    create_session(
+        access_token, 
+        user.id, 
+        ttl_seconds=86400,
+        ip_address=client_ip,
+        user_agent=user_agent
+    )
     
     # Log successful login
     create_audit_log(
@@ -1823,11 +1855,15 @@ async def login_form(
 
 
 @app.post("/refresh", response_model=Token)
-async def refresh_tokens(request: RefreshTokenRequest, db: Session = Depends(get_db)):
+async def refresh_tokens(request: RefreshTokenRequest, req: Request, db: Session = Depends(get_db)):
     """Refresh access token using refresh token.
     
     Implements token rotation - old refresh token is invalidated.
     """
+    # Get client IP and user agent
+    client_ip = get_client_ip(req)
+    user_agent = get_user_agent(req)
+    
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate refresh token",
@@ -1905,7 +1941,13 @@ async def refresh_tokens(request: RefreshTokenRequest, db: Session = Depends(get
         new_refresh_token, new_jti = create_refresh_token(data={"sub": user.id}, db=db)
         
         # Create session in Redis with 24-hour TTL
-        create_session(new_access_token, user.id, ttl_seconds=86400)
+        create_session(
+            new_access_token, 
+            user.id, 
+            ttl_seconds=86400,
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
         
         return {
             "access_token": new_access_token,
@@ -2761,7 +2803,13 @@ async def verify_mfa(
         refresh_token, jti = create_refresh_token(data={"sub": user.id}, db=db)
         
         # Create session in Redis with 24-hour TTL
-        create_session(access_token, user.id, ttl_seconds=86400)
+        create_session(
+            access_token, 
+            user.id, 
+            ttl_seconds=86400,
+            ip_address=client_ip,
+            user_agent=user_agent
+        )
         
         # Update last login timestamp
         user.last_login_at = datetime.now(timezone.utc)
@@ -4023,6 +4071,294 @@ async def revoke_api_key(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to revoke API key"
+        )
+
+
+@app.get("/test/api-key-auth")
+async def test_api_key_auth(
+    current_user: User = Depends(get_current_user_from_api_key)
+):
+    """
+    Test endpoint for API key authentication.
+    
+    Can be accessed with either:
+    - JWT Bearer token (regular authentication)
+    - API key Bearer token (API key authentication)
+    
+    Feature #107: API key authentication for programmatic access
+    """
+    return {
+        "message": "API key authentication successful",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+# ============================================================================
+# SESSION MANAGEMENT ENDPOINTS (Feature #97)
+# ============================================================================
+
+def parse_user_agent(user_agent_string: str) -> dict:
+    """Parse user agent string to extract device and browser info."""
+    user_agent_string = user_agent_string.lower()
+    
+    # Detect device type
+    device = "Desktop"
+    if "mobile" in user_agent_string or "android" in user_agent_string:
+        device = "Mobile"
+    elif "tablet" in user_agent_string or "ipad" in user_agent_string:
+        device = "Tablet"
+    
+    # Detect browser
+    browser = "Unknown"
+    if "chrome" in user_agent_string and "edg" not in user_agent_string:
+        browser = "Chrome"
+    elif "safari" in user_agent_string and "chrome" not in user_agent_string:
+        browser = "Safari"
+    elif "firefox" in user_agent_string:
+        browser = "Firefox"
+    elif "edg" in user_agent_string:
+        browser = "Edge"
+    
+    # Detect OS
+    os_name = "Unknown"
+    if "windows" in user_agent_string:
+        os_name = "Windows"
+    elif "mac" in user_agent_string:
+        os_name = "macOS"
+    elif "linux" in user_agent_string:
+        os_name = "Linux"
+    elif "android" in user_agent_string:
+        os_name = "Android"
+    elif "ios" in user_agent_string or "iphone" in user_agent_string:
+        os_name = "iOS"
+    
+    return {
+        "device": device,
+        "browser": browser,
+        "os": os_name
+    }
+
+
+@app.get("/sessions")
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    authorization: str = Header(None)
+):
+    """
+    List all active sessions for the current user.
+    
+    Feature #97: Session management UI - view active sessions
+    
+    Returns:
+        List of sessions with metadata (device, IP, last activity)
+    """
+    try:
+        # Get current token from Authorization header
+        current_token = None
+        if authorization and authorization.startswith("Bearer "):
+            current_token = authorization.split(" ")[1]
+        
+        # Get all sessions for user
+        sessions = get_user_sessions(current_user.id)
+        
+        # Format sessions for response
+        formatted_sessions = []
+        for session in sessions:
+            data = session["data"]
+            user_agent_info = parse_user_agent(data.get("user_agent", ""))
+            
+            # Check if this is the current session
+            is_current = (session["token"] == current_token)
+            
+            formatted_sessions.append({
+                "token_id": session["token"][:20] + "...",  # Partial token for identification
+                "full_token": session["token"],  # Full token (only for backend use)
+                "device": user_agent_info["device"],
+                "browser": user_agent_info["browser"],
+                "os": user_agent_info["os"],
+                "ip_address": data.get("ip_address", "unknown"),
+                "created_at": data.get("created_at"),
+                "last_activity": data.get("last_activity"),
+                "is_current": is_current
+            })
+        
+        # Sort by created_at (newest first)
+        formatted_sessions.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        return {
+            "sessions": formatted_sessions,
+            "total": len(formatted_sessions)
+        }
+        
+    except Exception as e:
+        logger.error(
+            "Error listing sessions",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list sessions"
+        )
+
+
+@app.delete("/sessions/{token_id}")
+async def revoke_session(
+    token_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Revoke a specific session.
+    
+    Feature #97: Session management UI - revoke individual session
+    
+    Args:
+        token_id: Partial or full token to revoke
+    """
+    try:
+        # Get all sessions for user
+        sessions = get_user_sessions(current_user.id)
+        
+        # Find the session to revoke
+        session_to_revoke = None
+        for session in sessions:
+            if session["token"].startswith(token_id) or session["token"] == token_id:
+                session_to_revoke = session
+                break
+        
+        if not session_to_revoke:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        # Delete the session
+        token = session_to_revoke["token"]
+        session_key = f"session:{token}"
+        user_sessions_key = f"user_sessions:{current_user.id}"
+        
+        # Use pipeline for atomicity
+        pipe = redis_client.pipeline()
+        pipe.delete(session_key)
+        pipe.srem(user_sessions_key, token)
+        pipe.execute()
+        
+        # Log the revocation
+        create_audit_log(
+            db=db,
+            action="session_revoked",
+            user_id=current_user.id,
+            extra_data={
+                "token_prefix": token[:20],
+                "revoked_by": "user"
+            }
+        )
+        
+        logger.info(
+            "Session revoked",
+            user_id=current_user.id,
+            token_prefix=token[:20]
+        )
+        
+        return {
+            "message": "Session revoked successfully",
+            "token_id": token[:20] + "..."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error revoking session",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke session"
+        )
+
+
+@app.delete("/sessions/all/others")
+async def revoke_all_other_sessions(
+    current_user: User = Depends(get_current_user),
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Revoke all sessions except the current one.
+    
+    Feature #97: Session management UI - revoke all other sessions
+    """
+    try:
+        # Get current token from Authorization header
+        current_token = None
+        if authorization and authorization.startswith("Bearer "):
+            current_token = authorization.split(" ")[1]
+        
+        if not current_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No current session found"
+            )
+        
+        # Get all sessions for user
+        sessions = get_user_sessions(current_user.id)
+        
+        # Revoke all except current
+        revoked_count = 0
+        user_sessions_key = f"user_sessions:{current_user.id}"
+        
+        for session in sessions:
+            if session["token"] != current_token:
+                token = session["token"]
+                session_key = f"session:{token}"
+                
+                # Delete session
+                pipe = redis_client.pipeline()
+                pipe.delete(session_key)
+                pipe.srem(user_sessions_key, token)
+                pipe.execute()
+                
+                revoked_count += 1
+        
+        # Log the revocation
+        create_audit_log(
+            db=db,
+            action="sessions_revoked_all_others",
+            user_id=current_user.id,
+            extra_data={
+                "revoked_count": revoked_count,
+                "revoked_by": "user"
+            }
+        )
+        
+        logger.info(
+            "All other sessions revoked",
+            user_id=current_user.id,
+            revoked_count=revoked_count
+        )
+        
+        return {
+            "message": f"Revoked {revoked_count} session(s) successfully",
+            "revoked_count": revoked_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error revoking all other sessions",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke sessions"
         )
 
 
