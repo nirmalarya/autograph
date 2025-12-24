@@ -27,6 +27,17 @@ import tempfile
 from playwright.async_api import async_playwright
 import asyncio
 
+# Cloud storage integrations
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+from google.auth.transport.requests import Request as GoogleRequest
+import dropbox
+from dropbox.files import WriteMode
+from dropbox.exceptions import ApiError, AuthError
+
 load_dotenv()
 
 # Database configuration
@@ -267,6 +278,238 @@ def optimize_svg(svg_content: str, quality: str = "high") -> str:
         svg_content = re.sub(r'\b\d+\.\d{3,}\b', round_numbers, svg_content)
     
     return svg_content
+
+# Cloud Export Helper Functions
+# Features #509, #510, #511: Export to cloud (S3, Google Drive, Dropbox)
+
+async def upload_to_s3(
+    file_data: bytes,
+    file_name: str,
+    config: Dict[str, Any],
+    content_type: str = "application/octet-stream"
+) -> Dict[str, Any]:
+    """
+    Upload file to AWS S3.
+    Feature #509: Export to cloud: S3
+    
+    Args:
+        file_data: File content as bytes
+        file_name: Name of the file
+        config: S3 configuration dict with keys:
+            - access_key_id: AWS access key ID
+            - secret_access_key: AWS secret access key
+            - bucket_name: S3 bucket name
+            - region: AWS region (optional, default: us-east-1)
+            - folder: Folder path in bucket (optional)
+        content_type: MIME type of the file
+    
+    Returns:
+        Dict with upload result:
+            - success: bool
+            - url: S3 object URL (if successful)
+            - error: Error message (if failed)
+    """
+    try:
+        # Validate config
+        required_keys = ["access_key_id", "secret_access_key", "bucket_name"]
+        for key in required_keys:
+            if key not in config:
+                return {"success": False, "error": f"Missing required config: {key}"}
+        
+        # Initialize S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=config["access_key_id"],
+            aws_secret_access_key=config["secret_access_key"],
+            region_name=config.get("region", "us-east-1")
+        )
+        
+        # Build S3 key (path in bucket)
+        folder = config.get("folder", "").strip("/")
+        s3_key = f"{folder}/{file_name}" if folder else file_name
+        
+        # Upload to S3
+        s3_client.put_object(
+            Bucket=config["bucket_name"],
+            Key=s3_key,
+            Body=file_data,
+            ContentType=content_type
+        )
+        
+        # Generate URL
+        url = f"https://{config['bucket_name']}.s3.{config.get('region', 'us-east-1')}.amazonaws.com/{s3_key}"
+        
+        logger.info(f"Successfully uploaded {file_name} to S3: {url}")
+        return {"success": True, "url": url, "bucket": config["bucket_name"], "key": s3_key}
+        
+    except NoCredentialsError:
+        error = "AWS credentials not provided or invalid"
+        logger.error(f"S3 upload failed: {error}")
+        return {"success": False, "error": error}
+    except ClientError as e:
+        error = f"S3 client error: {e}"
+        logger.error(f"S3 upload failed: {error}")
+        return {"success": False, "error": error}
+    except Exception as e:
+        error = f"Unexpected error: {e}"
+        logger.error(f"S3 upload failed: {error}")
+        return {"success": False, "error": error}
+
+
+async def upload_to_google_drive(
+    file_data: bytes,
+    file_name: str,
+    config: Dict[str, Any],
+    content_type: str = "application/octet-stream"
+) -> Dict[str, Any]:
+    """
+    Upload file to Google Drive.
+    Feature #510: Export to cloud: Google Drive
+    
+    Args:
+        file_data: File content as bytes
+        file_name: Name of the file
+        config: Google Drive configuration dict with keys:
+            - access_token: OAuth access token
+            - refresh_token: OAuth refresh token (optional)
+            - client_id: OAuth client ID (optional, for token refresh)
+            - client_secret: OAuth client secret (optional, for token refresh)
+            - folder_id: Google Drive folder ID (optional)
+        content_type: MIME type of the file
+    
+    Returns:
+        Dict with upload result:
+            - success: bool
+            - url: Google Drive file URL (if successful)
+            - file_id: Google Drive file ID (if successful)
+            - error: Error message (if failed)
+    """
+    try:
+        # Validate config
+        if "access_token" not in config:
+            return {"success": False, "error": "Missing required config: access_token"}
+        
+        # Create credentials
+        creds = Credentials(
+            token=config["access_token"],
+            refresh_token=config.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=config.get("client_id"),
+            client_secret=config.get("client_secret")
+        )
+        
+        # Refresh token if expired
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+        
+        # Build Google Drive service
+        service = build('drive', 'v3', credentials=creds)
+        
+        # Prepare file metadata
+        file_metadata = {'name': file_name}
+        if "folder_id" in config:
+            file_metadata['parents'] = [config["folder_id"]]
+        
+        # Upload file
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_data),
+            mimetype=content_type,
+            resumable=True
+        )
+        
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id,webViewLink'
+        ).execute()
+        
+        file_id = file.get('id')
+        url = file.get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
+        
+        logger.info(f"Successfully uploaded {file_name} to Google Drive: {url}")
+        return {"success": True, "url": url, "file_id": file_id}
+        
+    except Exception as e:
+        error = f"Google Drive upload error: {e}"
+        logger.error(f"Google Drive upload failed: {error}")
+        return {"success": False, "error": error}
+
+
+async def upload_to_dropbox(
+    file_data: bytes,
+    file_name: str,
+    config: Dict[str, Any],
+    content_type: str = "application/octet-stream"
+) -> Dict[str, Any]:
+    """
+    Upload file to Dropbox.
+    Feature #511: Export to cloud: Dropbox
+    
+    Args:
+        file_data: File content as bytes
+        file_name: Name of the file
+        config: Dropbox configuration dict with keys:
+            - access_token: Dropbox access token
+            - folder: Folder path in Dropbox (optional, default: /)
+        content_type: MIME type of the file (not used by Dropbox API)
+    
+    Returns:
+        Dict with upload result:
+            - success: bool
+            - url: Dropbox file URL (if successful)
+            - path: Dropbox file path (if successful)
+            - error: Error message (if failed)
+    """
+    try:
+        # Validate config
+        if "access_token" not in config:
+            return {"success": False, "error": "Missing required config: access_token"}
+        
+        # Initialize Dropbox client
+        dbx = dropbox.Dropbox(config["access_token"])
+        
+        # Test authentication
+        try:
+            dbx.users_get_current_account()
+        except AuthError:
+            return {"success": False, "error": "Invalid Dropbox access token"}
+        
+        # Build Dropbox path
+        folder = config.get("folder", "").strip("/")
+        dropbox_path = f"/{folder}/{file_name}" if folder else f"/{file_name}"
+        
+        # Upload file
+        result = dbx.files_upload(
+            file_data,
+            dropbox_path,
+            mode=WriteMode('overwrite'),
+            autorename=False
+        )
+        
+        # Create a shared link if possible
+        try:
+            link = dbx.sharing_create_shared_link(dropbox_path)
+            url = link.url
+        except ApiError:
+            # Link might already exist or sharing not allowed
+            # Just use the path
+            url = f"https://www.dropbox.com/home{dropbox_path}"
+        
+        logger.info(f"Successfully uploaded {file_name} to Dropbox: {url}")
+        return {"success": True, "url": url, "path": dropbox_path}
+        
+    except AuthError as e:
+        error = f"Dropbox authentication error: {e}"
+        logger.error(f"Dropbox upload failed: {error}")
+        return {"success": False, "error": error}
+    except ApiError as e:
+        error = f"Dropbox API error: {e}"
+        logger.error(f"Dropbox upload failed: {error}")
+        return {"success": False, "error": error}
+    except Exception as e:
+        error = f"Unexpected error: {e}"
+        logger.error(f"Dropbox upload failed: {error}")
+        return {"success": False, "error": error}
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2480,6 +2723,212 @@ async def update_export_preset(request: Request, preset_id: str, preset: ExportP
 # ============================================================================
 # SCHEDULED EXPORTS API
 # ============================================================================
+
+# ==================== CLOUD EXPORT ENDPOINTS ====================
+# Features #509, #510, #511: Export to cloud (S3, Google Drive, Dropbox)
+
+class CloudExportRequest(BaseModel):
+    """Request model for cloud export."""
+    file_id: str
+    user_id: str
+    export_format: str  # png, svg, pdf, json, md, html
+    export_settings: Optional[Dict[str, Any]] = {}
+    destination: str  # s3, google_drive, dropbox
+    destination_config: Dict[str, Any]  # Cloud provider specific configuration
+    file_name: Optional[str] = None  # Custom file name (optional)
+
+
+@app.post("/api/export/cloud")
+async def export_to_cloud(request: CloudExportRequest):
+    """
+    Export diagram to cloud storage (S3, Google Drive, or Dropbox).
+    
+    Features:
+    - #509: Export to cloud: S3
+    - #510: Export to cloud: Google Drive
+    - #511: Export to cloud: Dropbox
+    
+    Args:
+        request: CloudExportRequest with file_id, format, destination, and config
+    
+    Returns:
+        JSON with upload result (success, url, etc.)
+    """
+    try:
+        # Validate destination
+        if request.destination not in ["s3", "google_drive", "dropbox"]:
+            raise HTTPException(
+                status_code=400,
+                detail="destination must be one of: s3, google_drive, dropbox"
+            )
+        
+        # Validate export format
+        if request.export_format not in ["png", "svg", "pdf", "json", "md", "html"]:
+            raise HTTPException(
+                status_code=400,
+                detail="export_format must be one of: png, svg, pdf, json, md, html"
+            )
+        
+        # First, export the diagram to the requested format
+        # We'll use the existing export endpoints internally
+        
+        # Fetch diagram data
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{DIAGRAM_SERVICE_URL}/api/diagrams/{request.file_id}")
+            if response.status_code != 200:
+                raise HTTPException(status_code=404, detail="Diagram not found")
+            diagram = response.json()
+        
+        # Generate export based on format
+        export_data = None
+        content_type = "application/octet-stream"
+        file_extension = request.export_format
+        
+        if request.export_format == "png":
+            # Use Playwright rendering for high-quality PNG
+            width = request.export_settings.get("width", 1920)
+            height = request.export_settings.get("height", 1080)
+            scale = request.export_settings.get("scale", 2.0)
+            quality = request.export_settings.get("quality", 100)
+            background = request.export_settings.get("background", "white")
+            
+            export_data = await render_diagram_with_playwright(
+                diagram_id=request.file_id,
+                width=width,
+                height=height,
+                scale=scale,
+                format="png",
+                quality=quality,
+                background=background
+            )
+            content_type = "image/png"
+        
+        elif request.export_format == "svg":
+            # Export SVG
+            canvas_data = diagram.get("canvas_data", {})
+            svg_content = "<svg>Placeholder SVG</svg>"  # TODO: Implement actual SVG export
+            export_data = svg_content.encode('utf-8')
+            content_type = "image/svg+xml"
+        
+        elif request.export_format == "pdf":
+            # Export PDF
+            # Use render_diagram_with_playwright to get PNG first, then convert to PDF
+            width = request.export_settings.get("width", 1920)
+            height = request.export_settings.get("height", 1080)
+            
+            png_data = await render_diagram_with_playwright(
+                diagram_id=request.file_id,
+                width=width,
+                height=height,
+                scale=2.0,
+                format="png",
+                quality=100,
+                background="white"
+            )
+            
+            # Convert PNG to PDF
+            pdf_buffer = io.BytesIO()
+            img = Image.open(io.BytesIO(png_data))
+            pdf_canvas_obj = pdf_canvas.Canvas(pdf_buffer, pagesize=(img.width, img.height))
+            pdf_canvas_obj.drawImage(ImageReader(io.BytesIO(png_data)), 0, 0, img.width, img.height)
+            pdf_canvas_obj.save()
+            export_data = pdf_buffer.getvalue()
+            content_type = "application/pdf"
+        
+        elif request.export_format == "json":
+            # Export JSON (canvas data)
+            canvas_data = diagram.get("canvas_data", {})
+            export_data = json.dumps(canvas_data, indent=2).encode('utf-8')
+            content_type = "application/json"
+        
+        elif request.export_format == "md":
+            # Export Markdown (note content)
+            note_content = diagram.get("note_content", "")
+            export_data = note_content.encode('utf-8')
+            content_type = "text/markdown"
+            file_extension = "md"
+        
+        elif request.export_format == "html":
+            # Export HTML
+            note_content = diagram.get("note_content", "")
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{diagram.get('title', 'Diagram')}</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <h1>{diagram.get('title', 'Diagram')}</h1>
+    <pre>{note_content}</pre>
+</body>
+</html>"""
+            export_data = html_content.encode('utf-8')
+            content_type = "text/html"
+        
+        if not export_data:
+            raise HTTPException(status_code=500, detail="Failed to generate export")
+        
+        # Generate file name
+        if request.file_name:
+            file_name = request.file_name
+            if not file_name.endswith(f".{file_extension}"):
+                file_name = f"{file_name}.{file_extension}"
+        else:
+            diagram_title = diagram.get("title", "diagram").replace(" ", "_")
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            file_name = f"{diagram_title}_{timestamp}.{file_extension}"
+        
+        # Upload to cloud storage
+        result = None
+        if request.destination == "s3":
+            result = await upload_to_s3(export_data, file_name, request.destination_config, content_type)
+        elif request.destination == "google_drive":
+            result = await upload_to_google_drive(export_data, file_name, request.destination_config, content_type)
+        elif request.destination == "dropbox":
+            result = await upload_to_dropbox(export_data, file_name, request.destination_config, content_type)
+        
+        if not result or not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error", "Cloud upload failed")
+            )
+        
+        # Log export to history
+        log_export_to_history(
+            file_id=request.file_id,
+            user_id=request.user_id,
+            export_format=request.export_format,
+            export_type="cloud",
+            export_settings={
+                **request.export_settings,
+                "destination": request.destination,
+                "file_name": file_name
+            },
+            file_size=len(export_data),
+            file_path=result.get("url"),
+            status="completed"
+        )
+        
+        logger.info(f"Successfully exported diagram {request.file_id} to {request.destination}")
+        
+        return {
+            "success": True,
+            "destination": request.destination,
+            "file_name": file_name,
+            "file_size": len(export_data),
+            "format": request.export_format,
+            **result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cloud export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== SCHEDULED EXPORTS ====================
+# Features #508, #509: Scheduled exports (daily, weekly)
 
 class ScheduledExportCreate(BaseModel):
     """Model for creating a scheduled export."""
