@@ -5122,6 +5122,352 @@ async def get_compression_stats(
     return stats
 
 
+# ============================================================
+# VERSION RETENTION POLICY ENDPOINTS
+# ============================================================
+
+class RetentionPolicyRequest(BaseModel):
+    """Request model for setting retention policy."""
+    policy: str  # keep_all, keep_last_n, keep_duration
+    count: Optional[int] = None  # For keep_last_n
+    days: Optional[int] = None  # For keep_duration
+
+
+@app.get("/{diagram_id}/retention-policy")
+async def get_retention_policy(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get the version retention policy for a diagram.
+    
+    Returns the current retention policy settings:
+    - keep_all: Keep all versions (default)
+    - keep_last_n: Keep only the last N versions
+    - keep_duration: Keep versions for a specified number of days
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Get diagram
+    file = db.query(File).filter(File.id == diagram_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check ownership
+    if file.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this diagram's policy")
+    
+    policy_info = {
+        "diagram_id": diagram_id,
+        "policy": file.retention_policy or "keep_all",
+        "count": file.retention_count,
+        "days": file.retention_days,
+        "current_version_count": file.version_count
+    }
+    
+    logger.info(
+        "Retrieved retention policy",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        policy=policy_info["policy"]
+    )
+    
+    return policy_info
+
+
+@app.put("/{diagram_id}/retention-policy")
+async def set_retention_policy(
+    diagram_id: str,
+    policy_request: RetentionPolicyRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Set the version retention policy for a diagram.
+    
+    Policy options:
+    - keep_all: Keep all versions (default)
+    - keep_last_n: Keep only the last N versions (requires count parameter)
+    - keep_duration: Keep versions for a specified number of days (requires days parameter)
+    
+    Note: This sets the policy but does not immediately prune versions.
+    Use the apply endpoint to execute the policy.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Validate policy
+    valid_policies = ["keep_all", "keep_last_n", "keep_duration"]
+    if policy_request.policy not in valid_policies:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid policy. Must be one of: {', '.join(valid_policies)}"
+        )
+    
+    # Validate parameters
+    if policy_request.policy == "keep_last_n":
+        if not policy_request.count or policy_request.count < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="keep_last_n policy requires a positive count parameter"
+            )
+    
+    if policy_request.policy == "keep_duration":
+        if not policy_request.days or policy_request.days < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="keep_duration policy requires a positive days parameter"
+            )
+    
+    # Get diagram
+    file = db.query(File).filter(File.id == diagram_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check ownership
+    if file.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this diagram's policy")
+    
+    # Update policy
+    file.retention_policy = policy_request.policy
+    file.retention_count = policy_request.count
+    file.retention_days = policy_request.days
+    
+    db.commit()
+    
+    policy_info = {
+        "diagram_id": diagram_id,
+        "policy": file.retention_policy,
+        "count": file.retention_count,
+        "days": file.retention_days,
+        "message": "Retention policy updated successfully"
+    }
+    
+    logger.info(
+        "Updated retention policy",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        policy=policy_request.policy,
+        count=policy_request.count,
+        days=policy_request.days
+    )
+    
+    return policy_info
+
+
+@app.post("/{diagram_id}/retention-policy/apply")
+async def apply_retention_policy(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Apply the retention policy and prune old versions.
+    
+    This will delete versions according to the configured policy:
+    - keep_all: No versions deleted
+    - keep_last_n: Delete all but the last N versions
+    - keep_duration: Delete versions older than the specified duration
+    
+    Returns the number of versions deleted.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Get diagram
+    file = db.query(File).filter(File.id == diagram_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check ownership
+    if file.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to apply policy")
+    
+    deleted_count = 0
+    policy = file.retention_policy or "keep_all"
+    
+    if policy == "keep_all":
+        # No versions to delete
+        pass
+    
+    elif policy == "keep_last_n":
+        # Keep only the last N versions
+        if not file.retention_count:
+            raise HTTPException(
+                status_code=400,
+                detail="Retention count not configured for keep_last_n policy"
+            )
+        
+        # Get all versions ordered by version number descending
+        all_versions = db.query(Version).filter(
+            Version.file_id == diagram_id
+        ).order_by(Version.version_number.desc()).all()
+        
+        # Delete versions beyond the retention count
+        if len(all_versions) > file.retention_count:
+            versions_to_delete = all_versions[file.retention_count:]
+            for version in versions_to_delete:
+                db.delete(version)
+                deleted_count += 1
+    
+    elif policy == "keep_duration":
+        # Keep versions within the duration, delete older ones
+        if not file.retention_days:
+            raise HTTPException(
+                status_code=400,
+                detail="Retention days not configured for keep_duration policy"
+            )
+        
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=file.retention_days)
+        
+        # Find and delete old versions
+        old_versions = db.query(Version).filter(
+            Version.file_id == diagram_id,
+            Version.created_at < cutoff_date
+        ).all()
+        
+        for version in old_versions:
+            db.delete(version)
+            deleted_count += 1
+    
+    # Update version count
+    if deleted_count > 0:
+        file.version_count = db.query(func.count(Version.id)).filter(
+            Version.file_id == diagram_id
+        ).scalar()
+        db.commit()
+    
+    result = {
+        "diagram_id": diagram_id,
+        "policy": policy,
+        "versions_deleted": deleted_count,
+        "versions_remaining": file.version_count,
+        "message": f"Policy applied successfully. Deleted {deleted_count} version(s)."
+    }
+    
+    logger.info(
+        "Applied retention policy",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        policy=policy,
+        deleted=deleted_count,
+        remaining=file.version_count
+    )
+    
+    return result
+
+
+@app.post("/retention-policy/apply-all")
+async def apply_all_retention_policies(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Apply retention policies to all diagrams (system-wide).
+    
+    This is typically called by a background job/cron.
+    No authentication required as it's for system maintenance.
+    
+    Returns statistics about policies applied and versions deleted.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    total_diagrams = 0
+    total_deleted = 0
+    policies_applied = {"keep_all": 0, "keep_last_n": 0, "keep_duration": 0}
+    errors = []
+    
+    # Get all diagrams that are not deleted
+    files = db.query(File).filter(File.is_deleted == False).all()
+    
+    for file in files:
+        try:
+            total_diagrams += 1
+            policy = file.retention_policy or "keep_all"
+            policies_applied[policy] = policies_applied.get(policy, 0) + 1
+            
+            deleted_count = 0
+            
+            if policy == "keep_all":
+                # No action needed
+                pass
+            
+            elif policy == "keep_last_n":
+                if file.retention_count:
+                    # Get all versions ordered by version number descending
+                    all_versions = db.query(Version).filter(
+                        Version.file_id == file.id
+                    ).order_by(Version.version_number.desc()).all()
+                    
+                    # Delete versions beyond the retention count
+                    if len(all_versions) > file.retention_count:
+                        versions_to_delete = all_versions[file.retention_count:]
+                        for version in versions_to_delete:
+                            db.delete(version)
+                            deleted_count += 1
+            
+            elif policy == "keep_duration":
+                if file.retention_days:
+                    cutoff_date = datetime.now(timezone.utc) - timedelta(days=file.retention_days)
+                    
+                    # Find and delete old versions
+                    old_versions = db.query(Version).filter(
+                        Version.file_id == file.id,
+                        Version.created_at < cutoff_date
+                    ).all()
+                    
+                    for version in old_versions:
+                        db.delete(version)
+                        deleted_count += 1
+            
+            # Update version count if any were deleted
+            if deleted_count > 0:
+                file.version_count = db.query(func.count(Version.id)).filter(
+                    Version.file_id == file.id
+                ).scalar()
+                total_deleted += deleted_count
+            
+        except Exception as e:
+            errors.append({
+                "diagram_id": file.id,
+                "error": str(e)
+            })
+            logger.error(
+                "Error applying retention policy",
+                correlation_id=correlation_id,
+                diagram_id=file.id,
+                error=str(e)
+            )
+    
+    # Commit all changes
+    db.commit()
+    
+    result = {
+        "total_diagrams_processed": total_diagrams,
+        "total_versions_deleted": total_deleted,
+        "policies_applied": policies_applied,
+        "errors": errors,
+        "error_count": len(errors)
+    }
+    
+    logger.info(
+        "Applied retention policies system-wide",
+        correlation_id=correlation_id,
+        diagrams=total_diagrams,
+        deleted=total_deleted,
+        errors=len(errors)
+    )
+    
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("DIAGRAM_SERVICE_PORT", "8082")))
