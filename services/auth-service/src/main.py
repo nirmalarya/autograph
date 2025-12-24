@@ -6203,6 +6203,480 @@ async def set_ip_allowlist_config(
         )
 
 
+# ============================================================================
+# AUDIT LOG ENDPOINTS
+# ============================================================================
+
+class AuditLogResponse(BaseModel):
+    """Response model for audit log entries."""
+    id: int
+    user_id: str | None = None
+    user_email: str | None = None
+    action: str
+    resource_type: str | None = None
+    resource_id: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+    extra_data: dict | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AuditLogListResponse(BaseModel):
+    """Response model for paginated audit log list."""
+    audit_logs: list[AuditLogResponse]
+    total: int
+    skip: int
+    limit: int
+
+
+@app.get("/admin/audit-logs", response_model=AuditLogListResponse)
+async def get_audit_logs(
+    skip: int = 0,
+    limit: int = 100,
+    action: str | None = None,
+    user_id: str | None = None,
+    resource_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Get comprehensive audit logs with filtering and pagination.
+    
+    Feature: Enterprise: Audit log: comprehensive logging
+    
+    Query Parameters:
+    - skip: Number of records to skip (pagination)
+    - limit: Number of records to return (max 1000)
+    - action: Filter by action (e.g., 'login', 'create_file')
+    - user_id: Filter by user ID
+    - resource_type: Filter by resource type (e.g., 'file', 'user')
+    - start_date: Filter by start date (ISO format)
+    - end_date: Filter by end date (ISO format)
+    
+    Steps:
+    1. Admin logs in
+    2. Fetches audit logs with filters
+    3. Verifies all actions logged
+    4. Filters by user, action, date range
+    5. Verifies filtered results accurate
+    """
+    try:
+        # Validate limit
+        if limit > 1000:
+            limit = 1000
+        
+        # Build query
+        query = db.query(AuditLog)
+        
+        # Apply filters
+        if action:
+            query = query.filter(AuditLog.action == action)
+        
+        if user_id:
+            query = query.filter(AuditLog.user_id == user_id)
+        
+        if resource_type:
+            query = query.filter(AuditLog.resource_type == resource_type)
+        
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at >= start_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format. Use ISO format (e.g., 2024-01-01T00:00:00Z)"
+                )
+        
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at <= end_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format. Use ISO format (e.g., 2024-01-01T23:59:59Z)"
+                )
+        
+        # Get total count
+        total = query.count()
+        
+        # Apply pagination and ordering
+        audit_logs = query.order_by(AuditLog.created_at.desc()).offset(skip).limit(limit).all()
+        
+        # Enrich with user email
+        response_logs = []
+        for log in audit_logs:
+            log_dict = {
+                "id": log.id,
+                "user_id": log.user_id,
+                "user_email": None,
+                "action": log.action,
+                "resource_type": log.resource_type,
+                "resource_id": log.resource_id,
+                "ip_address": log.ip_address,
+                "user_agent": log.user_agent,
+                "extra_data": log.extra_data,
+                "created_at": log.created_at
+            }
+            
+            # Get user email if user_id exists
+            if log.user_id:
+                user = db.query(User).filter(User.id == log.user_id).first()
+                if user:
+                    log_dict["user_email"] = user.email
+            
+            response_logs.append(AuditLogResponse(**log_dict))
+        
+        logger.info(
+            "Audit logs fetched",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            total=total,
+            filters={
+                "action": action,
+                "user_id": user_id,
+                "resource_type": resource_type,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        )
+        
+        return AuditLogListResponse(
+            audit_logs=response_logs,
+            total=total,
+            skip=skip,
+            limit=limit
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error fetching audit logs",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch audit logs"
+        )
+
+
+@app.get("/admin/audit-logs/export/csv")
+async def export_audit_logs_csv(
+    action: str | None = None,
+    user_id: str | None = None,
+    resource_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Export audit logs to CSV format.
+    
+    Feature: Enterprise: Audit export: CSV format
+    
+    Query Parameters (same as get_audit_logs for filtering):
+    - action: Filter by action
+    - user_id: Filter by user ID
+    - resource_type: Filter by resource type
+    - start_date: Filter by start date (ISO format)
+    - end_date: Filter by end date (ISO format)
+    
+    Steps:
+    1. Admin requests audit log export
+    2. Specify filters (date range, user, action)
+    3. Download CSV file
+    4. Verify CSV contains all filtered records
+    5. Verify CSV format (headers, data)
+    """
+    try:
+        import csv
+        from io import StringIO
+        
+        # Build query (same logic as get_audit_logs)
+        query = db.query(AuditLog)
+        
+        if action:
+            query = query.filter(AuditLog.action == action)
+        
+        if user_id:
+            query = query.filter(AuditLog.user_id == user_id)
+        
+        if resource_type:
+            query = query.filter(AuditLog.resource_type == resource_type)
+        
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at >= start_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format"
+                )
+        
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at <= end_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format"
+                )
+        
+        # Get all logs (ordered by date)
+        audit_logs = query.order_by(AuditLog.created_at.desc()).all()
+        
+        # Create CSV in memory
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write headers
+        writer.writerow([
+            'ID', 'User ID', 'User Email', 'Action', 'Resource Type', 
+            'Resource ID', 'IP Address', 'User Agent', 'Extra Data', 'Created At'
+        ])
+        
+        # Write data
+        for log in audit_logs:
+            user_email = ""
+            if log.user_id:
+                user = db.query(User).filter(User.id == log.user_id).first()
+                if user:
+                    user_email = user.email
+            
+            writer.writerow([
+                log.id,
+                log.user_id or "",
+                user_email,
+                log.action,
+                log.resource_type or "",
+                log.resource_id or "",
+                log.ip_address or "",
+                log.user_agent or "",
+                json.dumps(log.extra_data) if log.extra_data else "",
+                log.created_at.isoformat()
+            ])
+        
+        # Get CSV content
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Log export action
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="audit_export",
+            resource_type="audit_log",
+            extra_data={
+                "format": "csv",
+                "record_count": len(audit_logs),
+                "filters": {
+                    "action": action,
+                    "user_id": user_id,
+                    "resource_type": resource_type,
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Audit logs exported to CSV",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            record_count=len(audit_logs)
+        )
+        
+        # Return CSV as download
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error exporting audit logs to CSV",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to export audit logs"
+        )
+
+
+@app.get("/admin/audit-logs/export/json")
+async def export_audit_logs_json(
+    action: str | None = None,
+    user_id: str | None = None,
+    resource_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Export audit logs to JSON format.
+    
+    Feature: Enterprise: Audit export: JSON format
+    
+    Query Parameters (same as get_audit_logs for filtering):
+    - action: Filter by action
+    - user_id: Filter by user ID
+    - resource_type: Filter by resource type
+    - start_date: Filter by start date (ISO format)
+    - end_date: Filter by end date (ISO format)
+    
+    Steps:
+    1. Admin requests audit log export (JSON)
+    2. Specify filters (date range, user, action)
+    3. Download JSON file
+    4. Verify JSON contains all filtered records
+    5. Verify JSON structure (array of objects)
+    """
+    try:
+        # Build query (same logic as get_audit_logs)
+        query = db.query(AuditLog)
+        
+        if action:
+            query = query.filter(AuditLog.action == action)
+        
+        if user_id:
+            query = query.filter(AuditLog.user_id == user_id)
+        
+        if resource_type:
+            query = query.filter(AuditLog.resource_type == resource_type)
+        
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at >= start_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid start_date format"
+                )
+        
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                query = query.filter(AuditLog.created_at <= end_dt)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid end_date format"
+                )
+        
+        # Get all logs (ordered by date)
+        audit_logs = query.order_by(AuditLog.created_at.desc()).all()
+        
+        # Build JSON structure
+        logs_data = []
+        for log in audit_logs:
+            user_email = None
+            if log.user_id:
+                user = db.query(User).filter(User.id == log.user_id).first()
+                if user:
+                    user_email = user.email
+            
+            logs_data.append({
+                "id": log.id,
+                "user_id": log.user_id,
+                "user_email": user_email,
+                "action": log.action,
+                "resource_type": log.resource_type,
+                "resource_id": log.resource_id,
+                "ip_address": log.ip_address,
+                "user_agent": log.user_agent,
+                "extra_data": log.extra_data,
+                "created_at": log.created_at.isoformat()
+            })
+        
+        # Log export action
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="audit_export",
+            resource_type="audit_log",
+            extra_data={
+                "format": "json",
+                "record_count": len(audit_logs),
+                "filters": {
+                    "action": action,
+                    "user_id": user_id,
+                    "resource_type": resource_type,
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Audit logs exported to JSON",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            record_count=len(audit_logs)
+        )
+        
+        # Return JSON as download
+        json_content = json.dumps({
+            "export_date": datetime.utcnow().isoformat(),
+            "total_records": len(audit_logs),
+            "filters": {
+                "action": action,
+                "user_id": user_id,
+                "resource_type": resource_type,
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "audit_logs": logs_data
+        }, indent=2)
+        
+        return Response(
+            content=json_content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error exporting audit logs to JSON",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to export audit logs"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AUTH_SERVICE_PORT", "8085")))
