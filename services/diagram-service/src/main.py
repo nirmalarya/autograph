@@ -6857,3 +6857,459 @@ async def get_user_export_history(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("DIAGRAM_SERVICE_PORT", "8082")))
+
+
+# ============================================================================
+# ENTERPRISE ANALYTICS ENDPOINTS
+# Features: Usage analytics for diagrams, users, and storage
+# ============================================================================
+
+@app.get("/api/analytics/overview")
+async def get_analytics_overview(
+    request: Request,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get overall usage analytics.
+    
+    Features:
+    - Enterprise: Usage analytics: diagrams created
+    - Enterprise: Usage analytics: users active  
+    - Enterprise: Usage analytics: storage used
+    - Enterprise: Cost allocation: track usage by team
+    """
+    try:
+        correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+        
+        # Total diagrams created
+        total_diagrams_query = db.query(func.count(File.id))
+        if team_id:
+            total_diagrams_query = total_diagrams_query.filter(File.team_id == team_id)
+        total_diagrams = total_diagrams_query.scalar() or 0
+        
+        # Diagrams created in last 30 days
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        recent_diagrams_query = db.query(func.count(File.id)).filter(
+            File.created_at >= thirty_days_ago
+        )
+        if team_id:
+            recent_diagrams_query = recent_diagrams_query.filter(File.team_id == team_id)
+        recent_diagrams = recent_diagrams_query.scalar() or 0
+        
+        # Active users (users who created or updated diagrams in last 30 days)
+        active_users_query = db.query(func.count(func.distinct(File.owner_id))).filter(
+            or_(
+                File.created_at >= thirty_days_ago,
+                File.updated_at >= thirty_days_ago
+            )
+        )
+        if team_id:
+            active_users_query = active_users_query.filter(File.team_id == team_id)
+        active_users = active_users_query.scalar() or 0
+        
+        # Total users
+        total_users_query = db.query(func.count(func.distinct(File.owner_id)))
+        if team_id:
+            total_users_query = total_users_query.filter(File.team_id == team_id)
+        total_users = total_users_query.scalar() or 0
+        
+        # Storage used (estimate based on canvas_data and note_content size)
+        # For production, you'd want to track actual file sizes
+        storage_query = db.query(
+            func.sum(
+                func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+            )
+        )
+        if team_id:
+            storage_query = storage_query.filter(File.team_id == team_id)
+        storage_bytes = storage_query.scalar() or 0
+        
+        # Convert to MB
+        storage_mb = storage_bytes / (1024 * 1024)
+        
+        # Diagram types breakdown
+        diagram_types = {}
+        types_query = db.query(
+            File.file_type,
+            func.count(File.id)
+        ).group_by(File.file_type)
+        if team_id:
+            types_query = types_query.filter(File.team_id == team_id)
+        
+        for diagram_type, count in types_query.all():
+            diagram_types[diagram_type or 'unknown'] = count
+        
+        # Team-specific cost allocation if requested
+        team_breakdown = None
+        if not team_id:
+            # Get breakdown by team
+            teams_query = db.query(
+                Team.id,
+                Team.name,
+                func.count(File.id).label('diagram_count'),
+                func.sum(
+                    func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+                ).label('storage_bytes')
+            ).join(
+                File, File.team_id == Team.id, isouter=True
+            ).group_by(Team.id, Team.name).all()
+            
+            team_breakdown = []
+            for team_id_val, team_name, diagram_count, team_storage_bytes in teams_query:
+                team_storage_mb = (team_storage_bytes or 0) / (1024 * 1024)
+                team_breakdown.append({
+                    "team_id": team_id_val,
+                    "team_name": team_name,
+                    "diagram_count": diagram_count or 0,
+                    "storage_mb": round(team_storage_mb, 2)
+                })
+        
+        logger.info(
+            "Retrieved analytics overview",
+            correlation_id=correlation_id,
+            total_diagrams=total_diagrams,
+            active_users=active_users
+        )
+        
+        response = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "period": "all_time" if not team_id else f"team_{team_id}",
+            "diagrams": {
+                "total": total_diagrams,
+                "last_30_days": recent_diagrams,
+                "by_type": diagram_types
+            },
+            "users": {
+                "total": total_users,
+                "active_last_30_days": active_users
+            },
+            "storage": {
+                "total_mb": round(storage_mb, 2),
+                "total_gb": round(storage_mb / 1024, 2)
+            }
+        }
+        
+        if team_breakdown:
+            response["team_breakdown"] = team_breakdown
+        
+        return response
+        
+    except Exception as e:
+        logger.error(
+            f"Error retrieving analytics overview: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve analytics")
+
+
+@app.get("/api/analytics/diagrams-created")
+async def get_diagrams_created_analytics(
+    request: Request,
+    days: int = 30,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get diagrams created over time.
+    Feature: Enterprise: Usage analytics: diagrams created
+    """
+    try:
+        correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+        
+        # Get diagrams created per day for the specified period
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        query = db.query(
+            func.date(File.created_at).label('date'),
+            func.count(File.id).label('count')
+        ).filter(
+            File.created_at >= start_date
+        ).group_by(
+            func.date(File.created_at)
+        ).order_by('date')
+        
+        if team_id:
+            query = query.filter(File.team_id == team_id)
+        
+        results = query.all()
+        
+        # Format response
+        daily_counts = []
+        for date_val, count in results:
+            daily_counts.append({
+                "date": str(date_val),
+                "count": count
+            })
+        
+        # Calculate totals
+        total = sum(item['count'] for item in daily_counts)
+        avg_per_day = total / days if days > 0 else 0
+        
+        return {
+            "period_days": days,
+            "start_date": start_date.date().isoformat(),
+            "end_date": datetime.utcnow().date().isoformat(),
+            "total_diagrams_created": total,
+            "average_per_day": round(avg_per_day, 2),
+            "daily_counts": daily_counts
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error retrieving diagrams created analytics: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve analytics")
+
+
+@app.get("/api/analytics/users-active")
+async def get_users_active_analytics(
+    request: Request,
+    days: int = 30,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get active users over time.
+    Feature: Enterprise: Usage analytics: users active
+    """
+    try:
+        correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+        
+        # Get active users per day
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Users who created or updated diagrams each day
+        query = db.query(
+            func.date(func.coalesce(File.updated_at, File.created_at)).label('date'),
+            func.count(func.distinct(File.owner_id)).label('active_users')
+        ).filter(
+            func.coalesce(File.updated_at, File.created_at) >= start_date
+        ).group_by(
+            func.date(func.coalesce(File.updated_at, File.created_at))
+        ).order_by('date')
+        
+        if team_id:
+            query = query.filter(File.team_id == team_id)
+        
+        results = query.all()
+        
+        # Format response
+        daily_active = []
+        for date_val, count in results:
+            daily_active.append({
+                "date": str(date_val),
+                "active_users": count
+            })
+        
+        # Calculate averages
+        total_active_unique = db.query(
+            func.count(func.distinct(File.owner_id))
+        ).filter(
+            func.coalesce(File.updated_at, File.created_at) >= start_date
+        )
+        if team_id:
+            total_active_unique = total_active_unique.filter(File.team_id == team_id)
+        
+        unique_active_users = total_active_unique.scalar() or 0
+        avg_daily_active = sum(item['active_users'] for item in daily_active) / days if days > 0 else 0
+        
+        return {
+            "period_days": days,
+            "start_date": start_date.date().isoformat(),
+            "end_date": datetime.utcnow().date().isoformat(),
+            "unique_active_users": unique_active_users,
+            "average_daily_active": round(avg_daily_active, 2),
+            "daily_active_users": daily_active
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error retrieving active users analytics: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve analytics")
+
+
+@app.get("/api/analytics/storage-used")
+async def get_storage_used_analytics(
+    request: Request,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get storage usage analytics.
+    Feature: Enterprise: Usage analytics: storage used
+    """
+    try:
+        correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+        
+        # Total storage query
+        storage_query = db.query(
+            func.sum(
+                func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+            )
+        )
+        if team_id:
+            storage_query = storage_query.filter(File.team_id == team_id)
+        
+        total_storage_bytes = storage_query.scalar() or 0
+        
+        # Storage by diagram type
+        type_storage_query = db.query(
+            File.file_type,
+            func.count(File.id).label('diagram_count'),
+            func.sum(
+                func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+            ).label('storage_bytes')
+        ).group_by(File.file_type)
+        
+        if team_id:
+            type_storage_query = type_storage_query.filter(File.team_id == team_id)
+        
+        by_type = []
+        for diagram_type, count, storage_bytes in type_storage_query.all():
+            storage_mb = (storage_bytes or 0) / (1024 * 1024)
+            by_type.append({
+                "type": diagram_type or 'unknown',
+                "diagram_count": count,
+                "storage_mb": round(storage_mb, 2)
+            })
+        
+        # Storage by user (top 10)
+        user_storage_query = db.query(
+            File.owner_id,
+            User.email,
+            func.count(File.id).label('diagram_count'),
+            func.sum(
+                func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+            ).label('storage_bytes')
+        ).join(User, User.id == File.owner_id).group_by(
+            File.owner_id, User.email
+        ).order_by(
+            func.sum(func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)).desc()
+        ).limit(10)
+        
+        if team_id:
+            user_storage_query = user_storage_query.filter(File.team_id == team_id)
+        
+        top_users = []
+        for owner_id, email, count, storage_bytes in user_storage_query.all():
+            storage_mb = (storage_bytes or 0) / (1024 * 1024)
+            top_users.append({
+                "user_id": owner_id,
+                "email": email,
+                "diagram_count": count,
+                "storage_mb": round(storage_mb, 2)
+            })
+        
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "total_storage": {
+                "bytes": total_storage_bytes,
+                "mb": round(total_storage_bytes / (1024 * 1024), 2),
+                "gb": round(total_storage_bytes / (1024 * 1024 * 1024), 3)
+            },
+            "by_type": by_type,
+            "top_users": top_users
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error retrieving storage analytics: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve analytics")
+
+
+@app.get("/api/analytics/cost-allocation")
+async def get_cost_allocation_analytics(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get cost allocation by team.
+    Feature: Enterprise: Cost allocation: track usage by team
+    """
+    try:
+        correlation_id = request.headers.get("x-correlation-id", str(uuid.uuid4()))
+        
+        # Get usage metrics per team
+        teams_query = db.query(
+            Team.id,
+            Team.name,
+            func.count(func.distinct(File.owner_id)).label('user_count'),
+            func.count(File.id).label('diagram_count'),
+            func.sum(
+                func.coalesce(func.pg_column_size(File.canvas_data), 0) + func.coalesce(func.pg_column_size(File.note_content), 0)
+            ).label('storage_bytes'),
+            func.count(Version.id).label('version_count')
+        ).outerjoin(
+            File, File.team_id == Team.id
+        ).outerjoin(
+            Version, Version.file_id == File.id
+        ).group_by(Team.id, Team.name).all()
+        
+        team_costs = []
+        # Simple cost model: $1 per user, $0.10 per diagram, $0.01 per GB storage
+        for team_id, team_name, user_count, diagram_count, storage_bytes, version_count in teams_query:
+            storage_gb = (storage_bytes or 0) / (1024 * 1024 * 1024)
+            
+            # Calculate costs
+            user_cost = (user_count or 0) * 1.0  # $1 per user
+            diagram_cost = (diagram_count or 0) * 0.1  # $0.10 per diagram
+            storage_cost = storage_gb * 0.01  # $0.01 per GB
+            total_cost = user_cost + diagram_cost + storage_cost
+            
+            team_costs.append({
+                "team_id": team_id,
+                "team_name": team_name,
+                "metrics": {
+                    "users": user_count or 0,
+                    "diagrams": diagram_count or 0,
+                    "storage_gb": round(storage_gb, 3),
+                    "versions": version_count or 0
+                },
+                "costs": {
+                    "user_cost": round(user_cost, 2),
+                    "diagram_cost": round(diagram_cost, 2),
+                    "storage_cost": round(storage_cost, 2),
+                    "total_cost": round(total_cost, 2)
+                }
+            })
+        
+        # Sort by total cost descending
+        team_costs.sort(key=lambda x: x['costs']['total_cost'], reverse=True)
+        
+        # Calculate totals
+        total_cost = sum(t['costs']['total_cost'] for t in team_costs)
+        total_users = sum(t['metrics']['users'] for t in team_costs)
+        total_diagrams = sum(t['metrics']['diagrams'] for t in team_costs)
+        total_storage_gb = sum(t['metrics']['storage_gb'] for t in team_costs)
+        
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "cost_model": {
+                "per_user": 1.0,
+                "per_diagram": 0.1,
+                "per_gb_storage": 0.01,
+                "currency": "USD"
+            },
+            "totals": {
+                "teams": len(team_costs),
+                "users": total_users,
+                "diagrams": total_diagrams,
+                "storage_gb": round(total_storage_gb, 3),
+                "total_cost": round(total_cost, 2)
+            },
+            "teams": team_costs
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error retrieving cost allocation: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve cost allocation")
+
