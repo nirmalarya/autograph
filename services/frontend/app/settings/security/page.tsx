@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import OptimizedImage from '../../components/OptimizedImage';
 import Button from '../../components/Button';
+import Input from '../../components/Input';
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
@@ -251,27 +252,21 @@ export default function SecuritySettingsPage() {
                   Step 2: Verify Code
                 </h3>
                 <form onSubmit={handleEnableMfa} className="space-y-4">
-                  <div>
-                    <label
-                      htmlFor="verification_code"
-                      className="block text-sm font-medium text-gray-700 mb-2"
-                    >
-                      Enter the 6-digit code from your app
-                    </label>
-                    <input
-                      type="text"
-                      id="verification_code"
-                      name="verification_code"
-                      required
-                      value={verificationCode}
-                      onChange={(e) => setVerificationCode(e.target.value)}
-                      className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-center text-2xl tracking-widest"
-                      placeholder="000000"
-                      maxLength={6}
-                      pattern="[0-9]{6}"
-                      autoComplete="off"
-                    />
-                  </div>
+                  <Input
+                    type="text"
+                    id="verification_code"
+                    name="verification_code"
+                    label="Enter the 6-digit code from your app"
+                    required
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    placeholder="000000"
+                    maxLength={6}
+                    // @ts-ignore - pattern is a valid HTML attribute
+                    pattern="[0-9]{6}"
+                    autoComplete="off"
+                    className="text-center text-2xl tracking-widest max-w-xs"
+                  />
 
                   <div className="flex gap-4">
                     <Button
