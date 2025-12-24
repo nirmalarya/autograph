@@ -352,6 +352,64 @@ async def log_correlation_id(request: Request, call_next):
         )
         raise
 
+# Middleware to check IP allowlist
+@app.middleware("http")
+async def check_ip_allowlist(request: Request, call_next):
+    """Middleware to check IP allowlist restrictions."""
+    try:
+        # Skip health checks and metrics
+        if request.url.path in ["/health", "/metrics"]:
+            return await call_next(request)
+        
+        # Check IP allowlist configuration
+        config_json = redis_client.get("config:ip_allowlist")
+        if config_json:
+            config = json.loads(config_json)
+            if config.get("enabled", False):
+                allowed_ips = config.get("allowed_ips", [])
+                if allowed_ips:
+                    client_ip = get_client_ip(request)
+                    
+                    # Check if IP is in allowlist
+                    import ipaddress
+                    ip_allowed = False
+                    for allowed in allowed_ips:
+                        try:
+                            # Support both single IPs and CIDR ranges
+                            if "/" in allowed:
+                                network = ipaddress.ip_network(allowed, strict=False)
+                                if ipaddress.ip_address(client_ip) in network:
+                                    ip_allowed = True
+                                    break
+                            else:
+                                if client_ip == allowed:
+                                    ip_allowed = True
+                                    break
+                        except Exception:
+                            # Invalid IP format, skip
+                            continue
+                    
+                    if not ip_allowed:
+                        logger.warning(
+                            "Access blocked - IP not in allowlist",
+                            client_ip=client_ip,
+                            path=request.url.path
+                        )
+                        return JSONResponse(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            content={
+                                "detail": "Access denied. Your IP address is not allowed to access this service."
+                            }
+                        )
+    except json.JSONDecodeError:
+        # If config is invalid, allow access
+        pass
+    except Exception as e:
+        # Log but don't block on error
+        logger.error("Error checking IP allowlist", exc=e)
+    
+    return await call_next(request)
+
 # Add exception handler for debugging
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -1409,6 +1467,54 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
     
     try:
         print(f"DEBUG: Registration request for email: {user_data.email}")
+        
+        # Check email domain restrictions
+        try:
+            domain_config_json = redis_client.get("config:email_domains")
+            if domain_config_json:
+                domain_config = json.loads(domain_config_json)
+                if domain_config.get("enabled", False):
+                    allowed_domains = domain_config.get("allowed_domains", [])
+                    if allowed_domains:
+                        email_domain = user_data.email.split("@")[-1].lower()
+                        # Check if domain matches any allowed domain
+                        domain_allowed = False
+                        for allowed in allowed_domains:
+                            allowed_domain = allowed.lower().lstrip("@")
+                            if email_domain == allowed_domain:
+                                domain_allowed = True
+                                break
+                        
+                        if not domain_allowed:
+                            logger.warning(
+                                "Registration blocked - email domain not allowed",
+                                email=user_data.email,
+                                domain=email_domain,
+                                allowed_domains=allowed_domains
+                            )
+                            create_audit_log(
+                                db=db,
+                                action="registration_blocked",
+                                ip_address=client_ip,
+                                user_agent=user_agent,
+                                extra_data={
+                                    "email": user_data.email,
+                                    "reason": "domain_not_allowed",
+                                    "domain": email_domain
+                                }
+                            )
+                            raise HTTPException(
+                                status_code=status.HTTP_403_FORBIDDEN,
+                                detail=f"Registration is restricted to allowed email domains. '{email_domain}' is not allowed."
+                            )
+        except json.JSONDecodeError:
+            # If config is invalid, allow registration
+            pass
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Log but don't block registration if check fails
+            logger.error("Error checking email domain restriction", exc=e)
         
         # Check if user already exists
         existing_user = get_user_by_email(db, user_data.email)
@@ -5517,6 +5623,584 @@ async def test_api_key_auth(
         "role": current_user.role,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+# ============================================================================
+# ADMIN ENDPOINTS - User Management Dashboard
+# ============================================================================
+
+def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency to verify user is admin."""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    return current_user
+
+
+class UserDetailsResponse(BaseModel):
+    """User details for admin dashboard."""
+    id: str
+    email: str
+    full_name: str | None = None
+    role: str
+    is_active: bool
+    is_verified: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+    team_count: int = 0
+    file_count: int = 0
+
+
+class BulkInviteRequest(BaseModel):
+    """Bulk invite request model."""
+    emails: list[str]
+    role: str = "viewer"
+    team_id: str = None
+
+
+class BulkRoleChangeRequest(BaseModel):
+    """Bulk role change request model."""
+    user_ids: list[str]
+    new_role: str
+
+
+class EmailDomainConfig(BaseModel):
+    """Email domain restriction configuration."""
+    allowed_domains: list[str]
+    enabled: bool = True
+
+
+class IPAllowlistConfig(BaseModel):
+    """IP allowlist configuration."""
+    allowed_ips: list[str]
+    enabled: bool = True
+
+
+@app.get("/admin/users", response_model=list[UserDetailsResponse])
+async def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Get all users for admin dashboard.
+    
+    Feature: Enterprise: User management dashboard: admin view
+    
+    Steps:
+    1. Admin navigates to /admin/users
+    2. Verify all users listed
+    3. Verify user details (email, role, status)
+    4. Verify roles displayed
+    5. Verify last active shown
+    """
+    try:
+        from .models import Team, File
+        
+        # Get all users with pagination
+        users = db.query(User).order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+        
+        result = []
+        for user in users:
+            # Count teams owned
+            team_count = db.query(Team).filter(Team.owner_id == user.id).count()
+            
+            # Count files owned
+            file_count = db.query(File).filter(File.owner_id == user.id).count()
+            
+            result.append(UserDetailsResponse(
+                id=user.id,
+                email=user.email,
+                full_name=user.full_name,
+                role=user.role,
+                is_active=user.is_active,
+                is_verified=user.is_verified,
+                created_at=user.created_at,
+                last_login_at=user.last_login_at,
+                team_count=team_count,
+                file_count=file_count
+            ))
+        
+        logger.info(
+            "Admin fetched user list",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            user_count=len(result)
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error fetching users",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch users"
+        )
+
+
+@app.post("/admin/users/bulk-invite")
+async def bulk_invite_users(
+    request: BulkInviteRequest,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Bulk invite multiple users.
+    
+    Feature: Enterprise: Bulk operations: invite multiple users
+    
+    Steps:
+    1. Click 'Bulk Invite'
+    2. Upload CSV with emails
+    3. Verify all invited
+    4. Verify emails sent
+    """
+    try:
+        from .models import Team, TeamMember
+        
+        # Validate role
+        valid_roles = ['admin', 'editor', 'viewer']
+        if request.role not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}"
+            )
+        
+        # If team_id provided, verify it exists and admin has access
+        team = None
+        if request.team_id:
+            team = db.query(Team).filter(Team.id == request.team_id).first()
+            if not team:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Team not found"
+                )
+            
+            # Check if admin is team admin
+            member = db.query(TeamMember).filter(
+                TeamMember.team_id == request.team_id,
+                TeamMember.user_id == admin_user.id,
+                TeamMember.role == "admin"
+            ).first()
+            
+            if not member and team.owner_id != admin_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to invite to this team"
+                )
+        
+        invited = []
+        failed = []
+        
+        for email in request.emails:
+            try:
+                # Check if user exists
+                user = db.query(User).filter(User.email == email).first()
+                
+                if not user:
+                    # Create new user (invited status)
+                    # For now, we'll just track that they need to be created
+                    failed.append({
+                        "email": email,
+                        "reason": "User not found. User must register first."
+                    })
+                    continue
+                
+                # If team_id provided, add to team
+                if request.team_id:
+                    # Check if already a member
+                    existing = db.query(TeamMember).filter(
+                        TeamMember.team_id == request.team_id,
+                        TeamMember.user_id == user.id
+                    ).first()
+                    
+                    if existing:
+                        failed.append({
+                            "email": email,
+                            "reason": "Already a team member"
+                        })
+                        continue
+                    
+                    # Add to team
+                    invitation_token = secrets.token_urlsafe(32)
+                    member = TeamMember(
+                        id=generate_uuid(),
+                        team_id=request.team_id,
+                        user_id=user.id,
+                        role=request.role,
+                        invitation_status="active",
+                        invited_by=admin_user.id,
+                        invitation_token=invitation_token,
+                        invitation_sent_at=datetime.now(timezone.utc),
+                        invitation_accepted_at=datetime.now(timezone.utc)  # Auto-accept for now
+                    )
+                    db.add(member)
+                    
+                invited.append({
+                    "email": email,
+                    "user_id": user.id,
+                    "role": request.role,
+                    "team_id": request.team_id
+                })
+                
+            except Exception as e:
+                failed.append({
+                    "email": email,
+                    "reason": str(e)
+                })
+        
+        db.commit()
+        
+        logger.info(
+            "Bulk invite completed",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            invited_count=len(invited),
+            failed_count=len(failed)
+        )
+        
+        return {
+            "invited": invited,
+            "failed": failed,
+            "total": len(request.emails),
+            "success_count": len(invited),
+            "failed_count": len(failed)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error in bulk invite",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process bulk invite"
+        )
+
+
+@app.post("/admin/users/bulk-role-change")
+async def bulk_role_change(
+    request: BulkRoleChangeRequest,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Change roles for multiple users in bulk.
+    
+    Feature: Enterprise: Bulk operations: change roles in bulk
+    
+    Steps:
+    1. Select 10 users
+    2. Click 'Change Role'
+    3. Select 'Editor'
+    4. Apply
+    5. Verify all updated
+    """
+    try:
+        # Validate role
+        valid_roles = ['user', 'admin', 'enterprise']
+        if request.new_role not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}"
+            )
+        
+        updated = []
+        failed = []
+        
+        for user_id in request.user_ids:
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                
+                if not user:
+                    failed.append({
+                        "user_id": user_id,
+                        "reason": "User not found"
+                    })
+                    continue
+                
+                # Don't allow changing own role
+                if user.id == admin_user.id:
+                    failed.append({
+                        "user_id": user_id,
+                        "email": user.email,
+                        "reason": "Cannot change your own role"
+                    })
+                    continue
+                
+                old_role = user.role
+                user.role = request.new_role
+                
+                # Log role change in audit log
+                audit = AuditLog(
+                    user_id=admin_user.id,
+                    action="role_change",
+                    resource_type="user",
+                    resource_id=user.id,
+                    extra_data={
+                        "target_user": user.email,
+                        "old_role": old_role,
+                        "new_role": request.new_role,
+                        "changed_by": admin_user.email
+                    }
+                )
+                db.add(audit)
+                
+                updated.append({
+                    "user_id": user.id,
+                    "email": user.email,
+                    "old_role": old_role,
+                    "new_role": request.new_role
+                })
+                
+            except Exception as e:
+                failed.append({
+                    "user_id": user_id,
+                    "reason": str(e)
+                })
+        
+        db.commit()
+        
+        logger.info(
+            "Bulk role change completed",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            updated_count=len(updated),
+            failed_count=len(failed)
+        )
+        
+        return {
+            "updated": updated,
+            "failed": failed,
+            "total": len(request.user_ids),
+            "success_count": len(updated),
+            "failed_count": len(failed)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error in bulk role change",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process bulk role change"
+        )
+
+
+@app.get("/admin/config/email-domains")
+async def get_email_domain_config(
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get email domain restriction configuration."""
+    try:
+        # Read from Redis or database
+        config_json = redis_client.get("config:email_domains")
+        if config_json:
+            return json.loads(config_json)
+        
+        # Default: no restrictions
+        return {
+            "allowed_domains": [],
+            "enabled": False
+        }
+    except Exception as e:
+        logger.error("Error fetching email domain config", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch configuration"
+        )
+
+
+@app.post("/admin/config/email-domains")
+async def set_email_domain_config(
+    config: EmailDomainConfig,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Configure allowed email domains for signup.
+    
+    Feature: Enterprise: Allowed email domains: restrict signups
+    
+    Steps:
+    1. Configure allowed domains: @bayer.com
+    2. User with @gmail.com attempts signup
+    3. Verify blocked
+    4. User with @bayer.com signs up
+    5. Verify allowed
+    """
+    try:
+        # Store in Redis
+        redis_client.set("config:email_domains", json.dumps({
+            "allowed_domains": config.allowed_domains,
+            "enabled": config.enabled
+        }))
+        
+        # Log configuration change
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="config_change",
+            resource_type="email_domains",
+            resource_id="email_domains",
+            extra_data={
+                "allowed_domains": config.allowed_domains,
+                "enabled": config.enabled,
+                "changed_by": admin_user.email
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Email domain config updated",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            allowed_domains=config.allowed_domains,
+            enabled=config.enabled
+        )
+        
+        return {
+            "message": "Email domain configuration updated",
+            "config": {
+                "allowed_domains": config.allowed_domains,
+                "enabled": config.enabled
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error updating email domain config",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update configuration"
+        )
+
+
+@app.get("/admin/config/ip-allowlist")
+async def get_ip_allowlist_config(
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get IP allowlist configuration."""
+    try:
+        # Read from Redis
+        config_json = redis_client.get("config:ip_allowlist")
+        if config_json:
+            return json.loads(config_json)
+        
+        # Default: no restrictions
+        return {
+            "allowed_ips": [],
+            "enabled": False
+        }
+    except Exception as e:
+        logger.error("Error fetching IP allowlist config", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch configuration"
+        )
+
+
+@app.post("/admin/config/ip-allowlist")
+async def set_ip_allowlist_config(
+    config: IPAllowlistConfig,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Configure IP allowlist for access restriction.
+    
+    Feature: Enterprise: IP allowlist: restrict access by IP
+    
+    Steps:
+    1. Configure allowlist: 192.168.1.0/24
+    2. Access from 192.168.1.5
+    3. Verify allowed
+    4. Access from 10.0.0.1
+    5. Verify blocked
+    """
+    try:
+        # Store in Redis
+        redis_client.set("config:ip_allowlist", json.dumps({
+            "allowed_ips": config.allowed_ips,
+            "enabled": config.enabled
+        }))
+        
+        # Log configuration change
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="config_change",
+            resource_type="ip_allowlist",
+            resource_id="ip_allowlist",
+            extra_data={
+                "allowed_ips": config.allowed_ips,
+                "enabled": config.enabled,
+                "changed_by": admin_user.email
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "IP allowlist config updated",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            allowed_ips=config.allowed_ips,
+            enabled=config.enabled
+        )
+        
+        return {
+            "message": "IP allowlist configuration updated",
+            "config": {
+                "allowed_ips": config.allowed_ips,
+                "enabled": config.enabled
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error updating IP allowlist config",
+            correlation_id=correlation_id,
+            admin_id=admin_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update configuration"
+        )
 
 
 if __name__ == "__main__":
