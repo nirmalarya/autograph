@@ -1,0 +1,260 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autograph-bayer-ingress
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    environment: bayer-production
+  annotations:
+    # NGINX Ingress Controller
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # Certificate Management
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Or for Bayer-managed certificate:
+    # cert-manager.io/cluster-issuer: bayer-ca-issuer
+    
+    # Proxy Settings
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "8k"
+    
+    # WebSocket Support (for real-time collaboration)
+    nginx.ingress.kubernetes.io/websocket-services: "collaboration-service"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    
+    # Security Headers (Bayer IT Security Standards)
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Security Headers
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+      
+      # CORS Headers (for API subdomain)
+      add_header Access-Control-Allow-Origin "https://diagrams.bayer.com" always;
+      add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
+      add_header Access-Control-Allow-Headers "Authorization, Content-Type, X-Request-ID" always;
+      add_header Access-Control-Allow-Credentials "true" always;
+      
+      # Request ID for tracing
+      add_header X-Request-ID $request_id always;
+    
+    # Rate Limiting (Bayer network protection)
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-rpm: "1000"
+    
+    # WAF/DDoS Protection
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/enable-owasp-core-rules: "true"
+    
+spec:
+  ingressClassName: nginx
+  
+  tls:
+  - hosts:
+    - diagrams.bayer.com
+    secretName: bayer-autograph-tls  # Certificate secret name
+  
+  rules:
+  # Main Application (diagrams.bayer.com)
+  - host: diagrams.bayer.com
+    http:
+      paths:
+      # Frontend (Next.js)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 3000
+      
+      # API Gateway
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway-service
+            port:
+              number: 8080
+      
+      # WebSocket for Real-Time Collaboration
+      - path: /ws
+        pathType: Prefix
+        backend:
+          service:
+            name: collaboration-service
+            port:
+              number: 8083
+      
+      # Health Check Endpoint
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: api-gateway-service
+            port:
+              number: 8080
+      
+      # SAML SSO Endpoints
+      - path: /saml
+        pathType: Prefix
+        backend:
+          service:
+            name: auth-service
+            port:
+              number: 8085
+
+---
+# Alternative: Separate API Subdomain
+# Uncomment if Bayer requires api.diagrams.bayer.com
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: autograph-bayer-api-ingress
+#   namespace: autograph
+#   labels:
+#     app: autograph-v3
+#     component: api
+#   annotations:
+#     kubernetes.io/ingress.class: nginx
+#     cert-manager.io/cluster-issuer: letsencrypt-prod
+#     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#   - hosts:
+#     - api.diagrams.bayer.com
+#     secretName: bayer-api-tls
+#   rules:
+#   - host: api.diagrams.bayer.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: api-gateway-service
+#             port:
+#               number: 8080
+
+---
+# LoadBalancer Service (for cloud deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: autograph-bayer-loadbalancer
+  namespace: autograph
+  labels:
+    app: autograph-v3
+    environment: bayer
+  annotations:
+    # AWS
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:eu-central-1:ACCOUNT_ID:certificate/CERT_ID"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    
+    # Azure
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+    service.beta.kubernetes.io/azure-dns-label-name: "diagrams-bayer"
+    
+    # GCP
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
+  ports:
+  - port: 443
+    targetPort: 3000
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: autograph-v3
+    component: frontend
+
+---
+# NetworkPolicy for Bayer Security Requirements
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autograph-bayer-network-policy
+  namespace: autograph
+spec:
+  podSelector:
+    matchLabels:
+      app: autograph-v3
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8083
+  
+  egress:
+  # Allow to database
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow to Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow to MinIO
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+    ports:
+    - protocol: TCP
+      port: 9000
+  
+  # Allow DNS
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow HTTPS egress (for external APIs: MGA, Azure DevOps, etc.)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443

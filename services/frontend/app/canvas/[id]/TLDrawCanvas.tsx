@@ -168,7 +168,14 @@ export default function TLDrawCanvas({ initialData, onSave, theme = 'light' }: T
           // Load existing canvas data if available
           if (initialData) {
             try {
-              editor.store.loadSnapshot(initialData);
+              // TLDraw 2.4.0 API: Use editor.store.loadSnapshot or editor.loadSnapshot
+              if (typeof (editor as any).loadSnapshot === 'function') {
+                (editor as any).loadSnapshot(initialData);
+              } else if (typeof (editor.store as any).loadSnapshot === 'function') {
+                (editor.store as any).loadSnapshot(initialData);
+              } else {
+                console.warn('loadSnapshot method not found, skipping initial data load');
+              }
             } catch (err) {
               console.error('Failed to load canvas snapshot:', err);
             }

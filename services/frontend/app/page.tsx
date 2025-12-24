@@ -1,11 +1,13 @@
+import Logo from './components/Logo';
+
 export default function HomePage() {
   return (
     <main id="main-content" role="main" aria-label="Home page" className="flex min-h-screen flex-col items-center justify-center px-4 py-8 sm:px-8 sm:py-12 md:px-16 md:py-16 lg:p-24 bg-white dark:bg-gray-900">
       <div className="z-10 max-w-5xl w-full items-center justify-center font-mono text-sm">
-        {/* Responsive heading - smaller on mobile */}
-        <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-center mb-4 sm:mb-6 md:mb-8 text-gray-900 dark:text-gray-100">
-          AutoGraph v3
-        </h1>
+        {/* Responsive Logo and Heading */}
+        <div className="flex justify-center mb-4 sm:mb-6 md:mb-8">
+          <Logo size="xl" showText={true} className="scale-125 sm:scale-150" />
+        </div>
         <p className="text-base sm:text-lg md:text-xl text-center mb-4 text-gray-700 dark:text-gray-300">
           AI-Powered Diagramming Platform
         </p>
