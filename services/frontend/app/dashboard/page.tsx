@@ -34,6 +34,10 @@ const ThemeToggle = dynamic(() => import('../components/ThemeToggle'), {
   loading: () => <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />,
 });
 
+const HighContrastToggle = dynamic(() => import('../components/HighContrastToggle'), {
+  loading: () => <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />,
+});
+
 const MobileBottomNav = dynamic(() => import('../components/MobileBottomNav'), {
   loading: () => <div className="h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700" />,
 });
@@ -675,6 +679,7 @@ export default function DashboardPage() {
               {/* Hide email on mobile */}
               <span className="hidden sm:inline text-xs sm:text-sm text-gray-600 dark:text-gray-300">{user?.email}</span>
               <ThemeToggle />
+              <HighContrastToggle />
               {/* Hide keyboard shortcuts button on mobile */}
               <button
                 onClick={() => setShowKeyboardShortcuts(true)}
