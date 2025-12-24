@@ -1,0 +1,78 @@
+================================================================================
+AUTOGRAPH v3.0 → v3.1 ENHANCEMENT - REGRESSION BASELINE
+================================================================================
+
+This document captures the current state of AutoGraph v3.0.
+ALL features listed here are currently PASSING.
+These MUST continue to pass after enhancement work!
+
+================================================================================
+BASELINE SUMMARY
+================================================================================
+
+Total Existing Features: 654
+Currently Passing: 654 (100%)
+Enhancement Features Added: 12
+Total Features in List: 666
+
+Categories of Passing Features:
+  functional: 624 features
+  style: 30 features
+
+================================================================================
+REGRESSION TESTING REQUIREMENTS
+================================================================================
+
+CRITICAL: These 654 features MUST continue to pass!
+
+Testing Schedule:
+  - Run regression_tester.py every 5 sessions
+  - Sample size: 10% minimum (65+ features)
+  - Pass rate required: 100%
+
+If ANY regression is found:
+  1. STOP all enhancement work immediately
+  2. Fix the regression first
+  3. Re-run regression tests
+  4. Only continue when 100% passing again
+
+================================================================================
+ENHANCEMENT WORK (Features #655-666)
+================================================================================
+
+New Features to Implement:
+  [P0] #655: Database schema audit - all tables have required columns
+  [P0] #656: Auth service shows healthy status consistently
+  [P0] #657: Diagram service shows healthy status consistently
+  [P0] #658: Collaboration service shows healthy status consistently
+  [P0] #659: Integration hub shows healthy status consistently
+  [P0] #660: Save diagram persists changes successfully
+  [P0] #661: Duplicate template creates exact copy successfully
+  [P0] #662: Create folder succeeds 100% of time
+  [P0] #663: Quality Gate: All services show healthy status
+  [P0] #664: Quality Gate: Zero database schema errors in logs
+  [P0] #665: Quality Gate: Clean browser console (no errors)
+  [P0] #666: Quality Gate: All 654 existing features still pass (regression)
+
+================================================================================
+CURRENT SERVICE STATUS
+================================================================================
+
+Healthy Services:
+  ✅ ai-service
+  ✅ postgres
+  ✅ redis
+  ✅ minio
+
+Unhealthy Services (TO FIX):
+  🔴 auth-service
+  🔴 diagram-service
+  🔴 collaboration-service
+  🔴 integration-hub
+
+================================================================================
+END OF BASELINE
+================================================================================
+
+Generated: Session 1 - Enhancement Mode Initialization
+DO NOT MODIFY THIS FILE - It represents v3.0 baseline
