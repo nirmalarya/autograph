@@ -3601,6 +3601,240 @@ async def fork_version(
     }
 
 
+# ==========================================
+# EXPORT ENDPOINTS
+# ==========================================
+
+@app.post("/{diagram_id}/export/png")
+async def export_diagram_png(
+    diagram_id: str,
+    request: Request,
+    scale: int = 2,  # 1x, 2x, 4x
+    background: str = "white",  # white, transparent
+    quality: str = "high",  # low, medium, high, ultra
+    db: Session = Depends(get_db)
+):
+    """Export diagram as PNG."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting diagram as PNG",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        scale=scale,
+        background=background
+    )
+    
+    # Get diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Call export service
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/png",
+                json={
+                    "diagram_id": diagram_id,
+                    "canvas_data": diagram.canvas_data or {},
+                    "format": "png",
+                    "scale": scale,
+                    "background": background,
+                    "quality": quality
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "PNG export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id
+                )
+                return Response(
+                    content=response.content,
+                    media_type="image/png",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}.png"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/{diagram_id}/export/svg")
+async def export_diagram_svg(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Export diagram as SVG."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting diagram as SVG",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id
+    )
+    
+    # Get diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Call export service
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/svg",
+                json={
+                    "diagram_id": diagram_id,
+                    "canvas_data": diagram.canvas_data or {},
+                    "format": "svg"
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "SVG export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id
+                )
+                return Response(
+                    content=response.content,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}.svg"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/{diagram_id}/export/pdf")
+async def export_diagram_pdf(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Export diagram as PDF."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting diagram as PDF",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id
+    )
+    
+    # Get diagram
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Call export service
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/pdf",
+                json={
+                    "diagram_id": diagram_id,
+                    "canvas_data": diagram.canvas_data or {},
+                    "format": "pdf"
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "PDF export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id
+                )
+                return Response(
+                    content=response.content,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}.pdf"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("DIAGRAM_SERVICE_PORT", "8082")))
