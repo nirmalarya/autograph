@@ -8,6 +8,7 @@ import os
 import io
 import json
 import logging
+import re
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
 import base64
@@ -104,6 +105,48 @@ def log_export_to_history(
         logger.error(f"Failed to log export to history: {e}")
         # Don't fail the export if logging fails
         return None
+
+def optimize_svg(svg_content: str, quality: str = "high") -> str:
+    """
+    Optimize SVG content by removing unnecessary whitespace and comments.
+    Feature #518: Quality optimization - optimize SVG
+    
+    Args:
+        svg_content: Raw SVG content string
+        quality: Quality level (low, medium, high, ultra)
+    
+    Returns:
+        Optimized SVG string with reduced file size
+    """
+    if quality == "low":
+        # Minimal optimization for low quality
+        return svg_content
+    
+    # Remove XML/HTML comments
+    svg_content = re.sub(r'<!--.*?-->', '', svg_content, flags=re.DOTALL)
+    
+    # Remove excessive whitespace between tags (but keep single spaces)
+    svg_content = re.sub(r'>\s+<', '><', svg_content)
+    
+    # Remove leading/trailing whitespace on each line
+    lines = [line.strip() for line in svg_content.split('\n') if line.strip()]
+    svg_content = '\n'.join(lines)
+    
+    if quality in ['high', 'ultra']:
+        # More aggressive optimization for high quality exports
+        # Remove extra spaces in attributes
+        svg_content = re.sub(r'\s+', ' ', svg_content)
+        
+        # Optimize numeric precision (round to 2 decimal places)
+        # This can significantly reduce file size
+        def round_numbers(match):
+            num = float(match.group(0))
+            return str(round(num, 2))
+        
+        # Find standalone numbers (with word boundaries)
+        svg_content = re.sub(r'\b\d+\.\d{3,}\b', round_numbers, svg_content)
+    
+    return svg_content
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -482,16 +525,20 @@ async def export_png(request: ExportRequest):
         draw.text(position, text, fill='#333333', align='center')
         
         # Convert to PNG bytes with optimal settings for anti-aliasing
+        # Feature #517: Quality optimization - compress PNG
         img_byte_arr = io.BytesIO()
         
         # PNG format doesn't have a 'quality' parameter like JPEG
         # Instead, we use 'compress_level' (0-9) and 'optimize' for best quality
-        # compress_level: 6 is a good balance (0=no compression, 9=max compression)
-        # optimize=True enables additional compression optimization
+        # For quality optimization (Feature #517):
+        # - compress_level=9 for maximum compression (slower but smaller files)
+        # - optimize=True enables additional compression optimization
+        # - This maintains image quality while significantly reducing file size
+        compress_level = 9 if request.quality in ['high', 'ultra'] else 6
         img.save(
             img_byte_arr,
             format='PNG',
-            compress_level=6,
+            compress_level=compress_level,
             optimize=True
         )
         img_byte_arr.seek(0)
@@ -669,6 +716,9 @@ async def export_svg(request: ExportRequest):
   </g>
 </svg>'''
         
+        # Feature #518: Optimize SVG to reduce file size
+        svg_content = optimize_svg(svg_content, request.quality)
+        
         # Log export to history
         file_size = len(svg_content.encode('utf-8'))
         export_settings = {
@@ -805,8 +855,19 @@ async def export_pdf(request: ExportRequest):
                     pdf.drawString(page_width - 100, page_height - 30, f"Page {page_num}/{total_pages}")
                     
                     # Draw the image on the page
+                    # Feature #519: Optimize PNG compression for smaller PDF file sizes
                     img_buffer = io.BytesIO()
-                    page_img.save(img_buffer, format='PNG')
+                    # Use JPEG for better compression if quality is not ultra
+                    if request.quality in ['low', 'medium']:
+                        # Convert to RGB (JPEG doesn't support transparency)
+                        if page_img.mode == 'RGBA':
+                            rgb_img = Image.new('RGB', page_img.size, 'white')
+                            rgb_img.paste(page_img, mask=page_img.split()[3])
+                            page_img = rgb_img
+                        page_img.save(img_buffer, format='JPEG', quality=85, optimize=True)
+                    else:
+                        # Use PNG with high compression for high/ultra quality
+                        page_img.save(img_buffer, format='PNG', compress_level=9, optimize=True)
                     img_buffer.seek(0)
                     
                     img_reader = ImageReader(img_buffer)
@@ -842,8 +903,19 @@ async def export_pdf(request: ExportRequest):
             pdf.drawString(page_width - 150, page_height - 30, f"Exported: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
             
             # Convert PIL image to BytesIO for reportlab
+            # Feature #519: Optimize image compression for smaller PDF file sizes
             img_buffer = io.BytesIO()
-            img.save(img_buffer, format='PNG')
+            # Use JPEG for better compression if quality is not ultra
+            if request.quality in ['low', 'medium']:
+                # Convert to RGB (JPEG doesn't support transparency)
+                if img.mode == 'RGBA':
+                    rgb_img = Image.new('RGB', img.size, 'white')
+                    rgb_img.paste(img, mask=img.split()[3])
+                    img = rgb_img
+                img.save(img_buffer, format='JPEG', quality=85, optimize=True)
+            else:
+                # Use PNG with high compression for high/ultra quality
+                img.save(img_buffer, format='PNG', compress_level=9, optimize=True)
             img_buffer.seek(0)
             
             img_reader = ImageReader(img_buffer)
