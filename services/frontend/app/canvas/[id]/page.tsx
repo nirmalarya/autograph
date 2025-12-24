@@ -29,6 +29,7 @@ export default function CanvasEditorPage() {
   const [user, setUser] = useState<{ email?: string; sub?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   
   // Offline storage hook
   const {
@@ -56,6 +57,12 @@ export default function CanvasEditorPage() {
       console.error('Failed to decode token:', err);
       router.push('/login');
       return;
+    }
+
+    // Load canvas theme preference from localStorage
+    const savedCanvasTheme = localStorage.getItem(`canvas_theme_${diagramId}`) as 'light' | 'dark' | null;
+    if (savedCanvasTheme) {
+      setCanvasTheme(savedCanvasTheme);
     }
 
     // Fetch diagram data
@@ -252,6 +259,12 @@ export default function CanvasEditorPage() {
     router.push('/dashboard');
   };
 
+  const toggleCanvasTheme = () => {
+    const newTheme = canvasTheme === 'light' ? 'dark' : 'light';
+    setCanvasTheme(newTheme);
+    localStorage.setItem(`canvas_theme_${diagramId}`, newTheme);
+  };
+
   // Add Ctrl+S / Cmd+S keyboard shortcut for manual save
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -349,6 +362,23 @@ export default function CanvasEditorPage() {
                 </span>
               )}
               <span className="text-sm text-gray-600">{user?.email}</span>
+              {/* Canvas Theme Toggle */}
+              <button
+                onClick={toggleCanvasTheme}
+                className="p-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition"
+                title={`Canvas theme: ${canvasTheme}`}
+                aria-label="Toggle canvas theme"
+              >
+                {canvasTheme === 'dark' ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
               <button 
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition"
                 title="Share (coming soon)"
@@ -377,6 +407,7 @@ export default function CanvasEditorPage() {
         <TLDrawCanvas 
           initialData={diagram?.canvas_data}
           onSave={handleSave}
+          theme={canvasTheme}
         />
       </div>
     </main>
