@@ -16,6 +16,8 @@ import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, cast, String, func
 import httpx
+import gzip
+import base64
 
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -146,6 +148,132 @@ class ShutdownState:
     def can_shutdown(self):
         """Check if safe to shutdown (no in-flight requests)."""
         return self.in_flight_requests == 0
+
+
+# Compression utilities for version history
+def compress_data(data: Any) -> tuple[str, int, int]:
+    """Compress data using gzip and return base64-encoded string with sizes.
+    
+    Args:
+        data: Any JSON-serializable data
+        
+    Returns:
+        Tuple of (compressed_base64_string, original_size, compressed_size)
+    """
+    if data is None:
+        return None, 0, 0
+    
+    # Convert to JSON string
+    json_str = json.dumps(data, separators=(',', ':'))  # No whitespace
+    original_bytes = json_str.encode('utf-8')
+    original_size = len(original_bytes)
+    
+    # Compress with gzip (level 9 = maximum compression)
+    compressed_bytes = gzip.compress(original_bytes, compresslevel=9)
+    compressed_size = len(compressed_bytes)
+    
+    # Base64 encode for storage in TEXT column
+    compressed_b64 = base64.b64encode(compressed_bytes).decode('utf-8')
+    
+    return compressed_b64, original_size, compressed_size
+
+
+def decompress_data(compressed_b64: str) -> Any:
+    """Decompress base64-encoded gzipped data.
+    
+    Args:
+        compressed_b64: Base64-encoded gzipped JSON string
+        
+    Returns:
+        Original data (parsed JSON)
+    """
+    if not compressed_b64:
+        return None
+    
+    # Decode base64
+    compressed_bytes = base64.b64decode(compressed_b64)
+    
+    # Decompress
+    original_bytes = gzip.decompress(compressed_bytes)
+    
+    # Parse JSON
+    json_str = original_bytes.decode('utf-8')
+    return json.loads(json_str)
+
+
+def compress_version(version: Version, db: Session) -> dict:
+    """Compress a version's content and update database.
+    
+    Args:
+        version: Version object to compress
+        db: Database session
+        
+    Returns:
+        Dict with compression statistics
+    """
+    if version.is_compressed:
+        return {"status": "already_compressed", "version_id": version.id}
+    
+    total_original_size = 0
+    total_compressed_size = 0
+    
+    # Compress canvas_data if present
+    if version.canvas_data:
+        compressed_canvas, canvas_orig, canvas_comp = compress_data(version.canvas_data)
+        version.compressed_canvas_data = compressed_canvas
+        total_original_size += canvas_orig
+        total_compressed_size += canvas_comp
+        # Clear original data to save space
+        version.canvas_data = None
+    
+    # Compress note_content if present
+    if version.note_content:
+        compressed_note, note_orig, note_comp = compress_data(version.note_content)
+        version.compressed_note_content = compressed_note
+        total_original_size += note_orig
+        total_compressed_size += note_comp
+        # Clear original data to save space
+        version.note_content = None
+    
+    # Update compression metadata
+    version.is_compressed = True
+    version.original_size = total_original_size
+    version.compressed_size = total_compressed_size
+    version.compression_ratio = total_compressed_size / total_original_size if total_original_size > 0 else 0.0
+    version.compressed_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    
+    return {
+        "status": "compressed",
+        "version_id": version.id,
+        "original_size": total_original_size,
+        "compressed_size": total_compressed_size,
+        "compression_ratio": version.compression_ratio,
+        "savings_bytes": total_original_size - total_compressed_size,
+        "savings_percent": ((total_original_size - total_compressed_size) / total_original_size * 100) if total_original_size > 0 else 0
+    }
+
+
+def get_version_content(version: Version) -> tuple[Any, Optional[str]]:
+    """Get version content, decompressing if necessary.
+    
+    Args:
+        version: Version object
+        
+    Returns:
+        Tuple of (canvas_data, note_content)
+    """
+    if version.is_compressed:
+        # Decompress data
+        canvas_data = decompress_data(version.compressed_canvas_data) if version.compressed_canvas_data else None
+        note_content = decompress_data(version.compressed_note_content) if version.compressed_note_content else None
+    else:
+        # Use original data
+        canvas_data = version.canvas_data
+        note_content = version.note_content
+    
+    return canvas_data, note_content
 
 shutdown_state = ShutdownState()
 
@@ -3599,9 +3727,12 @@ async def compare_versions(
     if not version1 or not version2:
         raise HTTPException(status_code=404, detail="One or both versions not found")
     
-    # Compare canvas data
-    canvas1 = version1.canvas_data or {}
-    canvas2 = version2.canvas_data or {}
+    # Get canvas data (decompress if necessary)
+    canvas1, _ = get_version_content(version1)
+    canvas2, _ = get_version_content(version2)
+    
+    canvas1 = canvas1 or {}
+    canvas2 = canvas2 or {}
     
     # Extract elements from canvas data
     # Try different common keys for elements (shapes, elements, objects, etc.)
@@ -3831,8 +3962,19 @@ async def get_version(
     
     # Include full content if requested
     if include_content:
-        response_data["canvas_data"] = version.canvas_data
-        response_data["note_content"] = version.note_content
+        # Use decompression helper if version is compressed
+        canvas_data, note_content = get_version_content(version)
+        response_data["canvas_data"] = canvas_data
+        response_data["note_content"] = note_content
+        response_data["is_compressed"] = version.is_compressed
+        if version.is_compressed:
+            response_data["compression_info"] = {
+                "original_size": version.original_size,
+                "compressed_size": version.compressed_size,
+                "compression_ratio": version.compression_ratio,
+                "savings_percent": round((1 - version.compression_ratio) * 100, 1) if version.compression_ratio else 0,
+                "compressed_at": version.compressed_at.isoformat() if version.compressed_at else None
+            }
     
     logger.info(
         "Version retrieved successfully",
@@ -4695,6 +4837,289 @@ async def export_diagram_pdf(
             error=str(e)
         )
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/versions/compress/all")
+async def compress_all_old_versions(
+    request: Request,
+    min_age_days: int = 30,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Background task to compress old versions across all diagrams.
+    
+    This is a system-level endpoint for background compression jobs.
+    Compresses versions older than min_age_days (default 30 days).
+    
+    Args:
+        min_age_days: Minimum age in days (versions older than this will be compressed)
+        limit: Maximum number of versions to compress in one batch (default 100)
+    
+    Returns:
+        Statistics about compression batch
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    logger.info(
+        "Starting background compression",
+        correlation_id=correlation_id,
+        min_age_days=min_age_days,
+        limit=limit
+    )
+    
+    # Find old uncompressed versions
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=min_age_days)
+    old_versions = db.query(Version).filter(
+        Version.is_compressed == False,
+        Version.created_at < cutoff_date
+    ).limit(limit).all()
+    
+    logger.info(
+        "Found old versions to compress",
+        correlation_id=correlation_id,
+        count=len(old_versions)
+    )
+    
+    # Compress each version
+    results = []
+    total_original = 0
+    total_compressed = 0
+    errors = 0
+    
+    for version in old_versions:
+        try:
+            result = compress_version(version, db)
+            results.append(result)
+            if result["status"] == "compressed":
+                total_original += result["original_size"]
+                total_compressed += result["compressed_size"]
+        except Exception as e:
+            logger.error(
+                "Failed to compress version",
+                correlation_id=correlation_id,
+                version_id=version.id,
+                error=str(e)
+            )
+            errors += 1
+    
+    total_savings = total_original - total_compressed
+    overall_ratio = total_compressed / total_original if total_original > 0 else 0.0
+    
+    summary = {
+        "versions_found": len(old_versions),
+        "versions_compressed": len([r for r in results if r["status"] == "compressed"]),
+        "versions_skipped": len([r for r in results if r["status"] == "already_compressed"]),
+        "errors": errors,
+        "total_original_size": total_original,
+        "total_compressed_size": total_compressed,
+        "total_savings_bytes": total_savings,
+        "total_savings_mb": round(total_savings / (1024 * 1024), 2),
+        "overall_compression_ratio": round(overall_ratio, 3),
+        "savings_percent": round((total_savings / total_original * 100) if total_original > 0 else 0, 1)
+    }
+    
+    logger.info(
+        "Background compression complete",
+        correlation_id=correlation_id,
+        versions_found=summary["versions_found"],
+        versions_compressed=summary["versions_compressed"],
+        total_savings_mb=summary["total_savings_mb"]
+    )
+    
+    return summary
+
+
+@app.post("/versions/compress/diagram/{diagram_id}")
+async def compress_diagram_versions(
+    diagram_id: str,
+    request: Request,
+    min_age_days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Compress all old versions of a specific diagram.
+    
+    Compresses versions older than min_age_days (default 30 days).
+    This is useful for manual compression of a specific diagram's history.
+    
+    Args:
+        diagram_id: Diagram ID
+        min_age_days: Minimum age in days (versions older than this will be compressed)
+    
+    Returns:
+        Statistics about compression (how many versions compressed, total savings)
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Compressing diagram versions",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        min_age_days=min_age_days,
+        user_id=user_id
+    )
+    
+    # Verify user owns the diagram
+    diagram = db.query(File).filter(File.id == diagram_id, File.owner_id == user_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found or not authorized")
+    
+    # Find old uncompressed versions
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=min_age_days)
+    old_versions = db.query(Version).filter(
+        Version.file_id == diagram_id,
+        Version.is_compressed == False,
+        Version.created_at < cutoff_date
+    ).all()
+    
+    # Compress each version
+    results = []
+    total_original = 0
+    total_compressed = 0
+    
+    for version in old_versions:
+        result = compress_version(version, db)
+        results.append(result)
+        if result["status"] == "compressed":
+            total_original += result["original_size"]
+            total_compressed += result["compressed_size"]
+    
+    total_savings = total_original - total_compressed
+    overall_ratio = total_compressed / total_original if total_original > 0 else 0.0
+    
+    summary = {
+        "diagram_id": diagram_id,
+        "versions_compressed": len([r for r in results if r["status"] == "compressed"]),
+        "versions_skipped": len([r for r in results if r["status"] == "already_compressed"]),
+        "total_original_size": total_original,
+        "total_compressed_size": total_compressed,
+        "total_savings_bytes": total_savings,
+        "total_savings_mb": round(total_savings / (1024 * 1024), 2),
+        "overall_compression_ratio": round(overall_ratio, 3),
+        "savings_percent": round((total_savings / total_original * 100) if total_original > 0 else 0, 1)
+    }
+    
+    logger.info(
+        "Diagram versions compressed",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        versions_compressed=summary["versions_compressed"],
+        total_savings_mb=summary["total_savings_mb"]
+    )
+    
+    return summary
+
+
+@app.post("/versions/compress/{version_id}")
+async def compress_specific_version(
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Manually compress a specific version.
+    
+    This endpoint compresses a single version's canvas_data and note_content using gzip.
+    Compressed data is stored as base64-encoded strings in separate columns.
+    Original uncompressed data is cleared after compression to save space.
+    
+    Returns compression statistics including size reduction.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Compressing specific version",
+        correlation_id=correlation_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(Version.id == version_id).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Verify user owns the diagram
+    diagram = db.query(File).filter(File.id == version.file_id).first()
+    if not diagram or diagram.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Compress the version
+    result = compress_version(version, db)
+    
+    logger.info(
+        "Version compressed",
+        correlation_id=correlation_id,
+        vid=version_id,
+        status=result.get("status"),
+        original_size=result.get("original_size"),
+        compressed_size=result.get("compressed_size")
+    )
+    
+    return result
+
+
+@app.get("/versions/compression/stats")
+async def get_compression_stats(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get overall compression statistics.
+    
+    Returns statistics about version compression across the entire system:
+    - Total versions
+    - Compressed vs uncompressed
+    - Total storage savings
+    - Average compression ratio
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    # Count versions
+    total_versions = db.query(func.count(Version.id)).scalar()
+    compressed_versions = db.query(func.count(Version.id)).filter(Version.is_compressed == True).scalar()
+    uncompressed_versions = total_versions - compressed_versions
+    
+    # Sum sizes
+    compressed_stats = db.query(
+        func.sum(Version.original_size).label('total_original'),
+        func.sum(Version.compressed_size).label('total_compressed'),
+        func.avg(Version.compression_ratio).label('avg_ratio')
+    ).filter(Version.is_compressed == True).first()
+    
+    total_original = int(compressed_stats.total_original or 0)
+    total_compressed = int(compressed_stats.total_compressed or 0)
+    avg_ratio = float(compressed_stats.avg_ratio) if compressed_stats.avg_ratio else 0.0
+    total_savings = total_original - total_compressed
+    
+    stats = {
+        "total_versions": total_versions,
+        "compressed_versions": compressed_versions,
+        "uncompressed_versions": uncompressed_versions,
+        "compression_percentage": round((compressed_versions / total_versions * 100) if total_versions > 0 else 0, 1),
+        "total_original_size_bytes": total_original,
+        "total_compressed_size_bytes": total_compressed,
+        "total_savings_bytes": total_savings,
+        "total_savings_mb": round(total_savings / (1024 * 1024), 2),
+        "total_savings_gb": round(total_savings / (1024 * 1024 * 1024), 2),
+        "average_compression_ratio": round(avg_ratio, 3),
+        "average_savings_percent": round((1 - avg_ratio) * 100, 1) if avg_ratio > 0 else 0
+    }
+    
+    logger.info(
+        "Compression stats retrieved",
+        correlation_id=correlation_id,
+        total_versions=stats["total_versions"],
+        compressed_versions=stats["compressed_versions"],
+        total_savings_mb=stats["total_savings_mb"]
+    )
+    
+    return stats
 
 
 if __name__ == "__main__":

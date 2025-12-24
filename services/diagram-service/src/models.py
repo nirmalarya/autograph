@@ -183,6 +183,15 @@ class Version(Base):
     canvas_data = Column(JSONB)  # JSONB for better performance
     note_content = Column(Text)
     
+    # Compression fields
+    is_compressed = Column(Boolean, default=False, nullable=False)  # Whether content is gzipped
+    compressed_canvas_data = Column(Text)  # Base64-encoded gzipped canvas_data
+    compressed_note_content = Column(Text)  # Base64-encoded gzipped note_content
+    original_size = Column(BigInteger)  # Size before compression (bytes)
+    compressed_size = Column(BigInteger)  # Size after compression (bytes)
+    compression_ratio = Column(Float)  # compressed_size / original_size
+    compressed_at = Column(DateTime(timezone=True))  # When compression was applied
+    
     # Version metadata
     description = Column(String(500))
     label = Column(String(100))
@@ -198,6 +207,8 @@ class Version(Base):
     __table_args__ = (
         Index('idx_versions_file', 'file_id'),
         Index('idx_versions_number', 'file_id', 'version_number'),
+        Index('idx_versions_compressed', 'is_compressed'),
+        Index('idx_versions_created', 'created_at'),
     )
 
 
