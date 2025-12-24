@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useWelcomeTour } from '../components/WelcomeTour';
 import { useInteractiveTutorial } from '../components/InteractiveTutorial';
 import Button from '../components/Button';
-import { Play, Shield, Bell, User, GraduationCap } from 'lucide-react';
+import { Play, Shield, Bell, User, GraduationCap, Keyboard } from 'lucide-react';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -234,6 +234,35 @@ export default function SettingsPage() {
               >
                 Edit Profile →
               </a>
+            </div>
+          </div>
+
+          {/* Keyboard Shortcuts */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700">
+            <div className="flex items-start gap-4 mb-4">
+              <div className="p-2 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
+                <Keyboard className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div className="flex-1">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                  Keyboard Shortcuts
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
+                  Customize shortcuts to match your workflow
+                </p>
+              </div>
+            </div>
+            
+            <div className="space-y-3">
+              <a
+                href="/settings/shortcuts"
+                className="block py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition"
+              >
+                Customize Shortcuts →
+              </a>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                50+ customizable keyboard shortcuts
+              </p>
             </div>
           </div>
         </div>
