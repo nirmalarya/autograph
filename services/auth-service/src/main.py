@@ -2620,12 +2620,18 @@ async def enable_mfa(
         
         # Enable MFA for user
         current_user.mfa_enabled = True
+        
+        # Generate backup codes (Feature #92)
+        plain_codes, hashed_codes = generate_backup_codes(10)
+        current_user.mfa_backup_codes = hashed_codes
+        
         db.commit()
         
         logger.info(
-            "MFA enabled successfully",
+            "MFA enabled successfully with backup codes",
             user_id=current_user.id,
-            email=current_user.email
+            email=current_user.email,
+            backup_codes_count=len(plain_codes)
         )
         
         # Log successful MFA enable
@@ -2635,12 +2641,14 @@ async def enable_mfa(
             user_id=current_user.id,
             ip_address=client_ip,
             user_agent=user_agent,
-            extra_data={"email": current_user.email}
+            extra_data={"email": current_user.email, "backup_codes_generated": len(plain_codes)}
         )
         
         return {
             "message": "MFA enabled successfully",
-            "detail": "You will now need to enter a code from your authenticator app when logging in."
+            "detail": "You will now need to enter a code from your authenticator app when logging in.",
+            "backup_codes": plain_codes,
+            "backup_codes_warning": "IMPORTANT: Save these backup codes in a secure location. Each code can only be used once. You will not be able to see these codes again."
         }
         
     except HTTPException:
@@ -2693,21 +2701,56 @@ async def verify_mfa(
         
         # Verify the TOTP code
         totp = pyotp.TOTP(user.mfa_secret)
+        used_backup_code = False
+        
         if not totp.verify(request_data.code, valid_window=1):
-            # Log failed MFA verification
-            create_audit_log(
-                db=db,
-                action="mfa_verify_failed",
-                user_id=user.id,
-                ip_address=client_ip,
-                user_agent=user_agent,
-                extra_data={"email": user.email, "reason": "invalid_code"}
-            )
-            
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid MFA code"
-            )
+            # Try backup code (Feature #92)
+            if user.mfa_backup_codes:
+                is_valid, remaining_codes = verify_backup_code(
+                    request_data.code, 
+                    user.mfa_backup_codes
+                )
+                if is_valid:
+                    # Valid backup code! Update user's remaining codes
+                    user.mfa_backup_codes = remaining_codes
+                    used_backup_code = True
+                    
+                    logger.info(
+                        "MFA backup code used",
+                        user_id=user.id,
+                        email=user.email,
+                        remaining_backup_codes=len(remaining_codes)
+                    )
+                else:
+                    # Neither TOTP nor backup code valid
+                    create_audit_log(
+                        db=db,
+                        action="mfa_verify_failed",
+                        user_id=user.id,
+                        ip_address=client_ip,
+                        user_agent=user_agent,
+                        extra_data={"email": user.email, "reason": "invalid_code"}
+                    )
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid MFA code or backup code"
+                    )
+            else:
+                # No backup codes and TOTP failed
+                create_audit_log(
+                    db=db,
+                    action="mfa_verify_failed",
+                    user_id=user.id,
+                    ip_address=client_ip,
+                    user_agent=user_agent,
+                    extra_data={"email": user.email, "reason": "invalid_code"}
+                )
+                
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid MFA code"
+                )
         
         # MFA verification successful - create tokens
         access_token = create_access_token(data={
@@ -2731,20 +2774,34 @@ async def verify_mfa(
         )
         
         # Log successful MFA verification
+        extra_data = {"email": user.email}
+        if used_backup_code:
+            extra_data["backup_code_used"] = True
+            extra_data["remaining_backup_codes"] = len(user.mfa_backup_codes) if user.mfa_backup_codes else 0
+        
         create_audit_log(
             db=db,
             action="mfa_verify_success",
             user_id=user.id,
             ip_address=client_ip,
             user_agent=user_agent,
-            extra_data={"email": user.email}
+            extra_data=extra_data
         )
         
-        return {
+        response = {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer"
         }
+        
+        # Warn user if they used a backup code
+        if used_backup_code:
+            remaining = len(user.mfa_backup_codes) if user.mfa_backup_codes else 0
+            response["warning"] = f"You used a backup code. {remaining} backup code(s) remaining."
+            if remaining <= 2:
+                response["warning"] += " Consider regenerating backup codes soon."
+        
+        return response
         
     except HTTPException:
         raise
@@ -2756,6 +2813,203 @@ async def verify_mfa(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify MFA"
+        )
+
+
+@app.post("/mfa/backup-codes/regenerate")
+async def regenerate_backup_codes(
+    request_data: MFAEnableRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Regenerate MFA backup codes.
+    
+    Feature #92: MFA backup codes for account recovery
+    
+    Generates a new set of 10 backup codes, invalidating all previous codes.
+    User must verify their current MFA code to regenerate backup codes.
+    """
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Check if user has MFA enabled
+        if not current_user.mfa_enabled or not current_user.mfa_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MFA is not enabled for this account"
+            )
+        
+        # Verify the TOTP code (security check)
+        totp = pyotp.TOTP(current_user.mfa_secret)
+        if not totp.verify(request_data.code, valid_window=1):
+            create_audit_log(
+                db=db,
+                action="mfa_backup_codes_regenerate_failed",
+                user_id=current_user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={"email": current_user.email, "reason": "invalid_code"}
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid MFA code. Please try again."
+            )
+        
+        # Generate new backup codes
+        plain_codes, hashed_codes = generate_backup_codes(10)
+        current_user.mfa_backup_codes = hashed_codes
+        
+        db.commit()
+        
+        logger.info(
+            "MFA backup codes regenerated",
+            user_id=current_user.id,
+            email=current_user.email,
+            backup_codes_count=len(plain_codes)
+        )
+        
+        # Log backup codes regeneration
+        create_audit_log(
+            db=db,
+            action="mfa_backup_codes_regenerated",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email, "backup_codes_generated": len(plain_codes)}
+        )
+        
+        return {
+            "message": "Backup codes regenerated successfully",
+            "backup_codes": plain_codes,
+            "backup_codes_warning": "IMPORTANT: Save these new backup codes in a secure location. All previous backup codes have been invalidated. Each code can only be used once."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error regenerating backup codes",
+            user_id=current_user.id,
+            exc=e
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to regenerate backup codes"
+        )
+
+
+@app.post("/mfa/disable")
+async def disable_mfa(
+    request_data: MFAEnableRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Disable MFA for user account.
+    
+    Feature #93: MFA recovery - disable MFA if lost device
+    
+    User must verify their current MFA code (or use a backup code via /mfa/verify) 
+    to disable MFA. This endpoint is for recovery when user has access to their 
+    authenticator app but wants to disable MFA.
+    """
+    client_ip = get_client_ip(request)
+    user_agent = get_user_agent(request)
+    
+    try:
+        # Check if user has MFA enabled
+        if not current_user.mfa_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="MFA is not enabled for this account"
+            )
+        
+        # Verify the TOTP code
+        if current_user.mfa_secret:
+            totp = pyotp.TOTP(current_user.mfa_secret)
+            if not totp.verify(request_data.code, valid_window=1):
+                # Code might be a backup code - check that too
+                if current_user.mfa_backup_codes:
+                    is_valid, remaining_codes = verify_backup_code(
+                        request_data.code, 
+                        current_user.mfa_backup_codes
+                    )
+                    if not is_valid:
+                        create_audit_log(
+                            db=db,
+                            action="mfa_disable_failed",
+                            user_id=current_user.id,
+                            ip_address=client_ip,
+                            user_agent=user_agent,
+                            extra_data={"email": current_user.email, "reason": "invalid_code"}
+                        )
+                        
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Invalid MFA code or backup code. Please try again."
+                        )
+                    # Valid backup code - update remaining codes
+                    current_user.mfa_backup_codes = remaining_codes
+                else:
+                    # No backup codes and invalid TOTP
+                    create_audit_log(
+                        db=db,
+                        action="mfa_disable_failed",
+                        user_id=current_user.id,
+                        ip_address=client_ip,
+                        user_agent=user_agent,
+                        extra_data={"email": current_user.email, "reason": "invalid_code"}
+                    )
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid MFA code. Please try again."
+                    )
+        
+        # Disable MFA for user
+        current_user.mfa_enabled = False
+        current_user.mfa_secret = None
+        current_user.mfa_backup_codes = None
+        
+        db.commit()
+        
+        logger.info(
+            "MFA disabled successfully",
+            user_id=current_user.id,
+            email=current_user.email
+        )
+        
+        # Log MFA disable
+        create_audit_log(
+            db=db,
+            action="mfa_disabled",
+            user_id=current_user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={"email": current_user.email}
+        )
+        
+        return {
+            "message": "MFA disabled successfully",
+            "detail": "Two-factor authentication has been disabled for your account."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error disabling MFA",
+            user_id=current_user.id,
+            exc=e
+        )
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to disable MFA"
         )
 
 
@@ -3343,6 +3597,64 @@ def verify_api_key(plain_key: str, key_hash: str) -> bool:
         True if key is valid, False otherwise
     """
     return pwd_context.verify(plain_key, key_hash)
+
+
+def generate_backup_codes(count: int = 10) -> tuple[list[str], list[str]]:
+    """
+    Generate MFA backup codes.
+    
+    Feature #92: MFA backup codes for account recovery
+    
+    Args:
+        count: Number of backup codes to generate (default 10)
+        
+    Returns:
+        Tuple of (plain_codes, hashed_codes)
+        - plain_codes: List of plain text codes to show user (one time only)
+        - hashed_codes: List of bcrypt hashes to store in database
+    """
+    plain_codes = []
+    hashed_codes = []
+    
+    for _ in range(count):
+        # Generate 8-character alphanumeric code (uppercase for readability)
+        # Using secrets module for cryptographic randomness
+        code = ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(8))
+        plain_codes.append(code)
+        
+        # Hash the code for secure storage (same as passwords)
+        hashed_codes.append(pwd_context.hash(code))
+    
+    return plain_codes, hashed_codes
+
+
+def verify_backup_code(plain_code: str, hashed_codes: list[str]) -> tuple[bool, list[str]]:
+    """
+    Verify a backup code and mark it as used.
+    
+    Feature #92: MFA backup codes (one-time use)
+    
+    Args:
+        plain_code: Plain text backup code entered by user
+        hashed_codes: List of hashed backup codes from database
+        
+    Returns:
+        Tuple of (is_valid, remaining_codes)
+        - is_valid: True if code matches and hasn't been used
+        - remaining_codes: Updated list with used code removed
+    """
+    if not hashed_codes:
+        return False, []
+    
+    # Try to find matching code
+    for i, hashed_code in enumerate(hashed_codes):
+        if pwd_context.verify(plain_code, hashed_code):
+            # Code is valid! Remove it from list (one-time use)
+            remaining_codes = hashed_codes[:i] + hashed_codes[i+1:]
+            return True, remaining_codes
+    
+    # No match found
+    return False, hashed_codes
 
 
 async def get_current_user_from_api_key(

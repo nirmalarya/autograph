@@ -37,6 +37,7 @@ class User(Base):
     # MFA fields
     mfa_enabled = Column(Boolean, default=False, nullable=False)
     mfa_secret = Column(String(255))  # Base32-encoded TOTP secret
+    mfa_backup_codes = Column(JSON)  # List of hashed backup codes (one-time use)
     
     # Account lockout fields
     failed_login_attempts = Column(Integer, default=0, nullable=False)
