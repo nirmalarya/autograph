@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import OptimizedImage from './OptimizedImage';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -191,10 +192,13 @@ export default function PWAInstaller() {
           <div className="flex items-start space-x-3">
             {/* Icon */}
             <div className="flex-shrink-0">
-              <img
+              <OptimizedImage
                 src="/icons/icon-96x96.png"
                 alt="AutoGraph"
                 className="w-12 h-12 rounded-lg"
+                width={48}
+                height={48}
+                priority={true}
               />
             </div>
 
