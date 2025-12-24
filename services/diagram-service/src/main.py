@@ -24,7 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory
 
 load_dotenv()
 
@@ -6604,6 +6604,177 @@ async def apply_all_retention_policies(
     )
     
     return result
+
+
+# ============================================================================
+# EXPORT HISTORY ENDPOINTS
+# ============================================================================
+
+@app.get("/export-history/{file_id}")
+async def get_file_export_history(
+    file_id: str,
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """
+    Get export history for a specific file.
+    
+    Feature #514: Export history tracking
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    try:
+        logger.info(
+            f"Getting export history for file {file_id}",
+            correlation_id=correlation_id,
+            file_id=file_id,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Query export history from the export_history table
+        from .models import ExportHistory
+        
+        history = db.query(ExportHistory).filter(
+            ExportHistory.file_id == file_id
+        ).order_by(
+            ExportHistory.created_at.desc()
+        ).limit(limit).offset(offset).all()
+        
+        # Get total count
+        total_count = db.query(func.count(ExportHistory.id)).filter(
+            ExportHistory.file_id == file_id
+        ).scalar()
+        
+        # Format response
+        exports = []
+        for record in history:
+            exports.append({
+                "id": record.id,
+                "file_id": record.file_id,
+                "user_id": record.user_id,
+                "export_format": record.export_format,
+                "export_type": record.export_type,
+                "export_settings": record.export_settings,
+                "file_size": record.file_size,
+                "status": record.status,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "expires_at": record.expires_at.isoformat() if record.expires_at else None
+            })
+        
+        logger.info(
+            f"Retrieved {len(exports)} export records",
+            correlation_id=correlation_id,
+            total=total_count
+        )
+        
+        return {
+            "file_id": file_id,
+            "exports": exports,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error getting export history: {str(e)}",
+            correlation_id=correlation_id,
+            file_id=file_id
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/export-history/user/{user_id}")
+async def get_user_export_history(
+    user_id: str,
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    export_format: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get export history for a specific user across all files.
+    
+    Feature #514: Export history tracking
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    
+    try:
+        logger.info(
+            f"Getting export history for user {user_id}",
+            correlation_id=correlation_id,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            format=export_format
+        )
+        
+        from .models import ExportHistory
+        
+        # Build query
+        query = db.query(ExportHistory).filter(
+            ExportHistory.user_id == user_id
+        )
+        
+        # Filter by format if specified
+        if export_format:
+            query = query.filter(ExportHistory.export_format == export_format)
+        
+        # Order by date and paginate
+        history = query.order_by(
+            ExportHistory.created_at.desc()
+        ).limit(limit).offset(offset).all()
+        
+        # Get total count
+        total_query = db.query(func.count(ExportHistory.id)).filter(
+            ExportHistory.user_id == user_id
+        )
+        if export_format:
+            total_query = total_query.filter(ExportHistory.export_format == export_format)
+        total_count = total_query.scalar()
+        
+        # Format response
+        exports = []
+        for record in history:
+            exports.append({
+                "id": record.id,
+                "file_id": record.file_id,
+                "user_id": record.user_id,
+                "export_format": record.export_format,
+                "export_type": record.export_type,
+                "export_settings": record.export_settings,
+                "file_size": record.file_size,
+                "status": record.status,
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "expires_at": record.expires_at.isoformat() if record.expires_at else None
+            })
+        
+        logger.info(
+            f"Retrieved {len(exports)} export records for user",
+            correlation_id=correlation_id,
+            total=total_count
+        )
+        
+        return {
+            "user_id": user_id,
+            "exports": exports,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "format_filter": export_format
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error getting user export history: {str(e)}",
+            correlation_id=correlation_id,
+            user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

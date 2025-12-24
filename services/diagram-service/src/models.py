@@ -518,3 +518,45 @@ class Template(Base):
         Index('idx_templates_public', 'is_public'),
         Index('idx_templates_category', 'category'),
     )
+
+
+class ExportHistory(Base):
+    """Export history table for tracking all exports."""
+    __tablename__ = "export_history"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    file_id = Column(String(36), ForeignKey("files.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Export details
+    export_format = Column(String(20), nullable=False)  # png, svg, pdf, json, md, html
+    export_type = Column(String(50), default="full")  # full, selection, figure
+    
+    # Export settings (stored as JSON for flexibility)
+    export_settings = Column(JSON, default={})  # Resolution, quality, background, etc.
+    
+    # File information
+    file_size = Column(BigInteger)  # Size in bytes
+    file_path = Column(String(1024))  # Path in storage (MinIO or S3)
+    download_url = Column(String(1024))  # Temporary download URL
+    
+    # Status
+    status = Column(String(20), default="completed", nullable=False)  # pending, completed, failed
+    error_message = Column(Text)  # Error details if failed
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at = Column(DateTime(timezone=True))  # When the exported file expires (cleanup)
+    
+    # Relationships
+    file = relationship("File")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index('idx_export_history_file', 'file_id'),
+        Index('idx_export_history_user', 'user_id'),
+        Index('idx_export_history_created', 'created_at'),
+        Index('idx_export_history_format', 'export_format'),
+        Index('idx_export_history_status', 'status'),
+        Index('idx_export_history_expires', 'expires_at'),
+    )
