@@ -292,16 +292,8 @@ For issues or questions:
 - Review `feature_list.json` for implementation details
 - Check service logs: `docker-compose logs -f`
 
-## ⚠️ Known Issues (v3.0)
-
-**Database schema:** Some columns missing from migrations (collaborator_count, comment_count)
-**Workaround:** Will be fixed in v3.1  
-**Impact:** Dashboard may show errors on first load
-
-**Recommendation:** Use v3.1 (coming soon) for production deployments.
-
 ---
 
 **Built with:** [cursor-autonomous-harness](https://github.com/nirmalarya/cursor-autonomous-harness) - Autonomous coding harness  
 **Version:** 3.0.0  
-**Status:** v3.0 has known issues, v3.1 in development
+**Status:** Production-ready
