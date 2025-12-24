@@ -8,6 +8,8 @@ interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   resolvedTheme: 'light' | 'dark';
+  highContrast: boolean;
+  setHighContrast: (enabled: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -15,6 +17,7 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>('system');
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
+  const [highContrast, setHighContrastState] = useState<boolean>(false);
 
   // Initialize theme from localStorage or system preference
   useEffect(() => {
@@ -24,6 +27,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } else {
       // Default to system preference
       setThemeState('system');
+    }
+
+    // Initialize high contrast mode from localStorage
+    const storedHighContrast = localStorage.getItem('highContrast');
+    if (storedHighContrast === 'true') {
+      setHighContrastState(true);
     }
   }, []);
 
@@ -47,8 +56,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       root.classList.remove('light', 'dark');
       root.classList.add(resolved);
       
+      // Apply high contrast mode
+      if (highContrast) {
+        root.classList.add('high-contrast');
+      } else {
+        root.classList.remove('high-contrast');
+      }
+      
       // Also set data attribute for compatibility
       root.setAttribute('data-theme', resolved);
+      root.setAttribute('data-high-contrast', highContrast.toString());
     };
 
     updateResolvedTheme();
@@ -63,15 +80,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [theme]);
+  }, [theme, highContrast]);
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
     localStorage.setItem('theme', newTheme);
   };
 
+  const setHighContrast = (enabled: boolean) => {
+    setHighContrastState(enabled);
+    localStorage.setItem('highContrast', enabled.toString());
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme, highContrast, setHighContrast }}>
       {children}
     </ThemeContext.Provider>
   );

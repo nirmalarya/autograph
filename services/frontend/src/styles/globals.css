@@ -47,6 +47,53 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
   }
+
+  /* High Contrast Mode - WCAG AA Compliant */
+  /* Light mode high contrast: 7:1 contrast ratio for normal text, 4.5:1 for large text */
+  .high-contrast:not(.dark) {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 95%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 0 0% 90%;
+    --muted-foreground: 0 0% 20%;
+    --accent: 210 100% 30%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 100% 35%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 0%;
+  }
+
+  /* Dark mode high contrast: 7:1 contrast ratio for normal text, 4.5:1 for large text */
+  .high-contrast.dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 0%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 0%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 85%;
+    --accent: 210 100% 70%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 100% 65%;
+    --destructive-foreground: 0 0% 0%;
+    --border: 0 0% 80%;
+    --input: 0 0% 80%;
+    --ring: 0 0% 100%;
+  }
 }
 
 @layer base {
@@ -267,4 +314,74 @@
       transform: translateX(100%);
     }
   }
+}
+
+/* High Contrast Mode Enhancements */
+.high-contrast {
+  /* Increase border visibility */
+  --border-width: 2px;
+}
+
+.high-contrast button,
+.high-contrast a,
+.high-contrast input,
+.high-contrast select,
+.high-contrast textarea {
+  /* Stronger borders for interactive elements */
+  border-width: 2px !important;
+}
+
+.high-contrast button:focus,
+.high-contrast a:focus,
+.high-contrast input:focus,
+.high-contrast select:focus,
+.high-contrast textarea:focus {
+  /* High visibility focus indicators */
+  outline: 3px solid hsl(var(--ring)) !important;
+  outline-offset: 2px !important;
+}
+
+.high-contrast button:hover,
+.high-contrast a:hover {
+  /* Clear hover states */
+  text-decoration: underline;
+}
+
+/* High contrast link styling */
+.high-contrast a {
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+/* High contrast disabled state */
+.high-contrast button:disabled,
+.high-contrast input:disabled,
+.high-contrast select:disabled,
+.high-contrast textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* High contrast card borders */
+.high-contrast .border {
+  border-width: 2px !important;
+}
+
+/* High contrast shadows (remove or strengthen) */
+.high-contrast {
+  --shadow: none;
+}
+
+/* Ensure text is always readable in high contrast */
+.high-contrast * {
+  text-shadow: none !important;
+}
+
+/* High contrast button states */
+.high-contrast button:not(:disabled):hover {
+  filter: brightness(0.9);
+}
+
+.high-contrast.dark button:not(:disabled):hover {
+  filter: brightness(1.1);
 }
