@@ -545,3 +545,122 @@ class EmailVerificationToken(Base):
         Index('idx_email_verification_tokens_token', 'token'),
         Index('idx_email_verification_tokens_expires', 'expires_at'),
     )
+
+
+class OAuthApp(Base):
+    """OAuth 2.0 applications table (third-party apps)."""
+    __tablename__ = "oauth_apps"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # App details
+    client_id = Column(String(255), unique=True, nullable=False, index=True)
+    client_secret_hash = Column(String(255), nullable=False)  # Hashed with bcrypt
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    logo_url = Column(String(512))
+    homepage_url = Column(String(512))
+    
+    # Redirect URIs (comma-separated or JSON array)
+    redirect_uris = Column(JSON, nullable=False)  # List of allowed redirect URIs
+    
+    # Permissions
+    allowed_scopes = Column(JSON, default=["read"])  # List of scopes: read, write, admin
+    
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    authorization_codes = relationship("OAuthAuthorizationCode", back_populates="app", cascade="all, delete-orphan")
+    access_tokens = relationship("OAuthAccessToken", back_populates="app", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_oauth_apps_user', 'user_id'),
+        Index('idx_oauth_apps_client_id', 'client_id'),
+    )
+
+
+class OAuthAuthorizationCode(Base):
+    """OAuth 2.0 authorization codes table."""
+    __tablename__ = "oauth_authorization_codes"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    app_id = Column(String(36), ForeignKey("oauth_apps.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Code details
+    code = Column(String(255), unique=True, nullable=False, index=True)
+    
+    # Authorization details
+    redirect_uri = Column(String(512), nullable=False)
+    scopes = Column(JSON, nullable=False)  # List of granted scopes
+    
+    # PKCE (Proof Key for Code Exchange) support
+    code_challenge = Column(String(255))
+    code_challenge_method = Column(String(10))  # S256 or plain
+    
+    # Status
+    is_used = Column(Boolean, default=False, nullable=False)
+    used_at = Column(DateTime(timezone=True))
+    
+    # Expiration (10 minutes from creation)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    app = relationship("OAuthApp", back_populates="authorization_codes")
+    
+    __table_args__ = (
+        Index('idx_oauth_codes_app', 'app_id'),
+        Index('idx_oauth_codes_user', 'user_id'),
+        Index('idx_oauth_codes_code', 'code'),
+        Index('idx_oauth_codes_expires', 'expires_at'),
+    )
+
+
+class OAuthAccessToken(Base):
+    """OAuth 2.0 access tokens table."""
+    __tablename__ = "oauth_access_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    app_id = Column(String(36), ForeignKey("oauth_apps.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Token details
+    token_jti = Column(String(255), unique=True, nullable=False, index=True)  # JWT ID
+    refresh_token_jti = Column(String(255), unique=True, index=True)  # Refresh token JWT ID
+    
+    # Permissions
+    scopes = Column(JSON, nullable=False)  # List of granted scopes
+    
+    # Status
+    is_revoked = Column(Boolean, default=False, nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    
+    # Expiration
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    refresh_token_expires_at = Column(DateTime(timezone=True))
+    
+    # Usage tracking
+    last_used_at = Column(DateTime(timezone=True))
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    app = relationship("OAuthApp", back_populates="access_tokens")
+    
+    __table_args__ = (
+        Index('idx_oauth_tokens_app', 'app_id'),
+        Index('idx_oauth_tokens_user', 'user_id'),
+        Index('idx_oauth_tokens_jti', 'token_jti'),
+        Index('idx_oauth_tokens_refresh_jti', 'refresh_token_jti'),
+        Index('idx_oauth_tokens_expires', 'expires_at'),
+    )

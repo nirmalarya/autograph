@@ -928,6 +928,7 @@ PUBLIC_ROUTES = [
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
+    "/api/auth/oauth/",  # OAuth endpoints (Feature #112-115)
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints
     "/api/diagrams/shared/",  # Public shared diagram access

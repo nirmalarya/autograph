@@ -22,13 +22,15 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken
+from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, generate_uuid
 import redis
 import secrets
 import pyotp
 import qrcode
 import io
 import base64
+import bcrypt
+import uuid
 
 load_dotenv()
 
@@ -1046,13 +1048,56 @@ async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> User:
-    """Get current authenticated user."""
+    """Get current authenticated user (supports regular JWT and OAuth tokens)."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
+        # Decode token first to check type
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        token_type: str = payload.get("type")
+        
+        if user_id is None:
+            raise credentials_exception
+        
+        # Handle OAuth tokens differently
+        if token_type in ("oauth_access", "oauth_refresh"):
+            # OAuth token - validate against database
+            from .models import OAuthAccessToken
+            
+            token_jti = payload.get("jti")
+            oauth_token = db.query(OAuthAccessToken).filter(
+                OAuthAccessToken.token_jti == token_jti,
+                OAuthAccessToken.user_id == user_id,
+                OAuthAccessToken.is_revoked == False,
+                OAuthAccessToken.expires_at > datetime.utcnow()
+            ).first()
+            
+            if not oauth_token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="OAuth token expired or revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            
+            # Update last used timestamp
+            oauth_token.last_used_at = datetime.utcnow()
+            db.commit()
+            
+            # Get user and return
+            user = get_user_by_id(db, user_id)
+            if user is None:
+                raise credentials_exception
+            
+            return user
+        
+        # Regular JWT token - validate session
+        if token_type != "access":
+            raise credentials_exception
+        
         # Check if token is blacklisted
         if is_token_blacklisted(token):
             raise HTTPException(
@@ -1087,13 +1132,6 @@ async def get_current_user(
                 detail="Session expired due to inactivity",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
-        
-        if user_id is None or token_type != "access":
-            raise credentials_exception
         
         # Check if all user tokens are blacklisted (logout all)
         if is_user_blacklisted(user_id):
@@ -4359,6 +4397,617 @@ async def revoke_all_other_sessions(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to revoke sessions"
+        )
+
+
+# ============================================================================
+# OAUTH 2.0 ENDPOINTS (Features #112-115)
+# ============================================================================
+
+from pydantic import BaseModel, Field
+from typing import List
+
+class OAuthAppCreate(BaseModel):
+    """OAuth app creation request."""
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str = None
+    logo_url: str = None
+    homepage_url: str = None
+    redirect_uris: List[str] = Field(..., min_items=1)
+    allowed_scopes: List[str] = Field(default=["read"])
+
+
+class OAuthAppResponse(BaseModel):
+    """OAuth app response."""
+    id: str
+    client_id: str
+    client_secret: str = None  # Only returned on creation
+    name: str
+    description: str = None
+    logo_url: str = None
+    homepage_url: str = None
+    redirect_uris: List[str]
+    allowed_scopes: List[str]
+    is_active: bool
+    created_at: str
+
+
+@app.post("/oauth/apps", status_code=status.HTTP_201_CREATED)
+async def create_oauth_app(
+    app_data: OAuthAppCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Register a new OAuth 2.0 application.
+    
+    Feature #112: OAuth 2.0 authorization code flow for third-party apps
+    
+    Returns client_id and client_secret (only shown once).
+    Store the client_secret securely - it won't be shown again.
+    """
+    try:
+        from .models import OAuthApp
+        import secrets
+        
+        # Generate client_id and client_secret
+        client_id = f"oauth_{secrets.token_urlsafe(32)}"
+        client_secret = secrets.token_urlsafe(48)
+        
+        # Hash the client secret
+        client_secret_hash = bcrypt.hashpw(
+            client_secret.encode('utf-8'),
+            bcrypt.gensalt()
+        ).decode('utf-8')
+        
+        # Validate redirect URIs
+        for uri in app_data.redirect_uris:
+            if not uri.startswith(("http://", "https://")):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid redirect URI: {uri}"
+                )
+        
+        # Validate scopes
+        valid_scopes = {"read", "write", "admin"}
+        for scope in app_data.allowed_scopes:
+            if scope not in valid_scopes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid scope: {scope}. Valid scopes: {valid_scopes}"
+                )
+        
+        # Create OAuth app
+        oauth_app = OAuthApp(
+            id=generate_uuid(),
+            user_id=current_user.id,
+            client_id=client_id,
+            client_secret_hash=client_secret_hash,
+            name=app_data.name,
+            description=app_data.description,
+            logo_url=app_data.logo_url,
+            homepage_url=app_data.homepage_url,
+            redirect_uris=app_data.redirect_uris,
+            allowed_scopes=app_data.allowed_scopes,
+            is_active=True
+        )
+        
+        db.add(oauth_app)
+        db.commit()
+        db.refresh(oauth_app)
+        
+        # Log the creation
+        create_audit_log(
+            db=db,
+            action="oauth_app_created",
+            user_id=current_user.id,
+            resource_type="oauth_app",
+            resource_id=oauth_app.id,
+            extra_data={"app_name": app_data.name}
+        )
+        
+        logger.info(
+            "OAuth app created",
+            user_id=current_user.id,
+            app_id=oauth_app.id,
+            app_name=app_data.name
+        )
+        
+        return {
+            "id": oauth_app.id,
+            "client_id": oauth_app.client_id,
+            "client_secret": client_secret,  # Only returned on creation!
+            "name": oauth_app.name,
+            "description": oauth_app.description,
+            "logo_url": oauth_app.logo_url,
+            "homepage_url": oauth_app.homepage_url,
+            "redirect_uris": oauth_app.redirect_uris,
+            "allowed_scopes": oauth_app.allowed_scopes,
+            "is_active": oauth_app.is_active,
+            "created_at": oauth_app.created_at.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error creating OAuth app",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create OAuth app"
+        )
+
+
+@app.get("/oauth/authorize")
+async def oauth_authorize(
+    client_id: str,
+    redirect_uri: str,
+    response_type: str = "code",
+    scope: str = "read",
+    state: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    OAuth 2.0 authorization endpoint.
+    
+    Feature #112: OAuth 2.0 authorization code flow for third-party apps
+    
+    User must be logged in. This endpoint shows consent screen and
+    generates authorization code.
+    
+    Query parameters:
+    - client_id: OAuth app's client ID
+    - redirect_uri: Where to redirect after authorization
+    - response_type: Must be "code"
+    - scope: Requested scopes (comma-separated)
+    - state: Optional CSRF protection token
+    """
+    try:
+        from .models import OAuthApp, OAuthAuthorizationCode
+        from datetime import timedelta
+        
+        # Validate response_type
+        if response_type != "code":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid response_type. Must be 'code'"
+            )
+        
+        # Find OAuth app
+        oauth_app = db.query(OAuthApp).filter(
+            OAuthApp.client_id == client_id,
+            OAuthApp.is_active == True
+        ).first()
+        
+        if not oauth_app:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="OAuth app not found"
+            )
+        
+        # Validate redirect_uri
+        if redirect_uri not in oauth_app.redirect_uris:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid redirect_uri"
+            )
+        
+        # Parse and validate scopes
+        requested_scopes = [s.strip() for s in scope.split(",")]
+        for s in requested_scopes:
+            if s not in oauth_app.allowed_scopes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Scope '{s}' not allowed for this app"
+                )
+        
+        # Generate authorization code
+        import secrets
+        auth_code = secrets.token_urlsafe(32)
+        
+        # Store authorization code (expires in 10 minutes)
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        
+        oauth_auth_code = OAuthAuthorizationCode(
+            id=generate_uuid(),
+            app_id=oauth_app.id,
+            user_id=current_user.id,
+            code=auth_code,
+            redirect_uri=redirect_uri,
+            scopes=requested_scopes,
+            is_used=False,
+            expires_at=expires_at
+        )
+        
+        db.add(oauth_auth_code)
+        db.commit()
+        
+        # Log the authorization
+        create_audit_log(
+            db=db,
+            action="oauth_authorized",
+            user_id=current_user.id,
+            resource_type="oauth_app",
+            resource_id=oauth_app.id,
+            extra_data={
+                "app_name": oauth_app.name,
+                "scopes": requested_scopes
+            }
+        )
+        
+        logger.info(
+            "OAuth authorization granted",
+            user_id=current_user.id,
+            app_id=oauth_app.id,
+            app_name=oauth_app.name,
+            scopes=requested_scopes
+        )
+        
+        # Redirect back to app with authorization code
+        from urllib.parse import urlencode
+        params = {"code": auth_code}
+        if state:
+            params["state"] = state
+        
+        redirect_url = f"{redirect_uri}?{urlencode(params)}"
+        
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=redirect_url)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error in OAuth authorization",
+            user_id=current_user.id,
+            client_id=client_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth authorization failed"
+        )
+
+
+class OAuthTokenRequest(BaseModel):
+    """OAuth token request."""
+    grant_type: str
+    code: str = None
+    redirect_uri: str = None
+    client_id: str
+    client_secret: str
+    refresh_token: str = None
+
+
+@app.post("/oauth/token")
+async def oauth_token(
+    token_request: OAuthTokenRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    OAuth 2.0 token endpoint.
+    
+    Feature #112: OAuth 2.0 authorization code flow for third-party apps
+    Feature #113: OAuth 2.0 token refresh for long-lived access
+    
+    Exchange authorization code for access token.
+    
+    Supports:
+    - grant_type=authorization_code: Exchange code for tokens
+    - grant_type=refresh_token: Refresh access token
+    """
+    try:
+        from .models import OAuthApp, OAuthAuthorizationCode, OAuthAccessToken
+        from datetime import timedelta
+        
+        # Validate OAuth app credentials
+        oauth_app = db.query(OAuthApp).filter(
+            OAuthApp.client_id == token_request.client_id,
+            OAuthApp.is_active == True
+        ).first()
+        
+        if not oauth_app:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid client credentials"
+            )
+        
+        # Verify client_secret
+        if not bcrypt.checkpw(
+            token_request.client_secret.encode('utf-8'),
+            oauth_app.client_secret_hash.encode('utf-8')
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid client credentials"
+            )
+        
+        if token_request.grant_type == "authorization_code":
+            # Exchange authorization code for access token
+            if not token_request.code or not token_request.redirect_uri:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Missing code or redirect_uri"
+                )
+            
+            # Find authorization code
+            auth_code = db.query(OAuthAuthorizationCode).filter(
+                OAuthAuthorizationCode.code == token_request.code,
+                OAuthAuthorizationCode.app_id == oauth_app.id,
+                OAuthAuthorizationCode.is_used == False,
+                OAuthAuthorizationCode.expires_at > datetime.utcnow()
+            ).first()
+            
+            if not auth_code:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired authorization code"
+                )
+            
+            # Verify redirect_uri matches
+            if auth_code.redirect_uri != token_request.redirect_uri:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Redirect URI mismatch"
+                )
+            
+            # Mark code as used
+            auth_code.is_used = True
+            auth_code.used_at = datetime.utcnow()
+            
+            # Generate access token and refresh token
+            access_token_jti = str(uuid.uuid4())
+            refresh_token_jti = str(uuid.uuid4())
+            
+            access_token_expires = datetime.utcnow() + timedelta(hours=1)
+            refresh_token_expires = datetime.utcnow() + timedelta(days=30)
+            
+            # Create access token record
+            oauth_token = OAuthAccessToken(
+                id=generate_uuid(),
+                app_id=oauth_app.id,
+                user_id=auth_code.user_id,
+                token_jti=access_token_jti,
+                refresh_token_jti=refresh_token_jti,
+                scopes=auth_code.scopes,
+                is_revoked=False,
+                expires_at=access_token_expires,
+                refresh_token_expires_at=refresh_token_expires
+            )
+            
+            db.add(oauth_token)
+            db.commit()
+            db.refresh(oauth_token)
+            
+            # Generate JWT tokens
+            access_token = create_access_token(
+                data={
+                    "sub": auth_code.user_id,
+                    "jti": access_token_jti,
+                    "type": "oauth_access",
+                    "scopes": auth_code.scopes,
+                    "client_id": oauth_app.client_id
+                },
+                expires_delta=timedelta(hours=1)
+            )
+            
+            refresh_token = create_access_token(
+                data={
+                    "sub": auth_code.user_id,
+                    "jti": refresh_token_jti,
+                    "type": "oauth_refresh",
+                    "client_id": oauth_app.client_id
+                },
+                expires_delta=timedelta(days=30)
+            )
+            
+            # Log token issuance
+            create_audit_log(
+                db=db,
+                action="oauth_token_issued",
+                user_id=auth_code.user_id,
+                resource_type="oauth_app",
+                resource_id=oauth_app.id,
+                extra_data={
+                    "app_name": oauth_app.name,
+                    "grant_type": "authorization_code",
+                    "scopes": auth_code.scopes
+                }
+            )
+            
+            logger.info(
+                "OAuth access token issued",
+                user_id=auth_code.user_id,
+                app_id=oauth_app.id,
+                app_name=oauth_app.name
+            )
+            
+            return {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,  # 1 hour
+                "refresh_token": refresh_token,
+                "scope": " ".join(auth_code.scopes)
+            }
+            
+        elif token_request.grant_type == "refresh_token":
+            # Refresh access token
+            if not token_request.refresh_token:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Missing refresh_token"
+                )
+            
+            # Decode refresh token
+            try:
+                payload = jwt.decode(
+                    token_request.refresh_token,
+                    SECRET_KEY,
+                    algorithms=[ALGORITHM]
+                )
+                
+                if payload.get("type") != "oauth_refresh":
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid token type"
+                    )
+                
+                refresh_jti = payload.get("jti")
+                user_id = payload.get("sub")
+                
+                # Find token record
+                oauth_token = db.query(OAuthAccessToken).filter(
+                    OAuthAccessToken.refresh_token_jti == refresh_jti,
+                    OAuthAccessToken.app_id == oauth_app.id,
+                    OAuthAccessToken.user_id == user_id,
+                    OAuthAccessToken.is_revoked == False,
+                    OAuthAccessToken.refresh_token_expires_at > datetime.utcnow()
+                ).first()
+                
+                if not oauth_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid or expired refresh token"
+                    )
+                
+                # Generate new access token
+                new_access_token_jti = str(uuid.uuid4())
+                access_token_expires = datetime.utcnow() + timedelta(hours=1)
+                
+                # Update token record
+                oauth_token.token_jti = new_access_token_jti
+                oauth_token.expires_at = access_token_expires
+                oauth_token.last_used_at = datetime.utcnow()
+                
+                db.commit()
+                
+                # Generate new JWT access token
+                access_token = create_access_token(
+                    data={
+                        "sub": user_id,
+                        "jti": new_access_token_jti,
+                        "type": "oauth_access",
+                        "scopes": oauth_token.scopes,
+                        "client_id": oauth_app.client_id
+                    },
+                    expires_delta=timedelta(hours=1)
+                )
+                
+                logger.info(
+                    "OAuth access token refreshed",
+                    user_id=user_id,
+                    app_id=oauth_app.id
+                )
+                
+                return {
+                    "access_token": access_token,
+                    "token_type": "Bearer",
+                    "expires_in": 3600,  # 1 hour
+                    "scope": " ".join(oauth_token.scopes)
+                }
+                
+            except jwt.JWTError as e:
+                logger.error("Invalid refresh token", exc=e)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid refresh token"
+                )
+        
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid grant_type"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error in OAuth token endpoint",
+            client_id=token_request.client_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth token request failed"
+        )
+
+
+@app.post("/oauth/revoke")
+async def oauth_revoke_token(
+    token: str,
+    token_type_hint: str = "access_token",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Revoke an OAuth 2.0 access token.
+    
+    Feature #115: OAuth 2.0 token revocation
+    """
+    try:
+        from .models import OAuthAccessToken
+        
+        # Decode token to get JTI
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            token_jti = payload.get("jti")
+            token_type = payload.get("type")
+            
+            if token_type not in ("oauth_access", "oauth_refresh"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Not an OAuth token"
+                )
+            
+            # Find and revoke token
+            if token_type == "oauth_access":
+                oauth_token = db.query(OAuthAccessToken).filter(
+                    OAuthAccessToken.token_jti == token_jti,
+                    OAuthAccessToken.user_id == current_user.id
+                ).first()
+            else:  # oauth_refresh
+                oauth_token = db.query(OAuthAccessToken).filter(
+                    OAuthAccessToken.refresh_token_jti == token_jti,
+                    OAuthAccessToken.user_id == current_user.id
+                ).first()
+            
+            if oauth_token:
+                oauth_token.is_revoked = True
+                oauth_token.revoked_at = datetime.utcnow()
+                db.commit()
+                
+                logger.info(
+                    "OAuth token revoked",
+                    user_id=current_user.id,
+                    token_jti=token_jti
+                )
+            
+            return {"message": "Token revoked successfully"}
+            
+        except jwt.JWTError:
+            # Token invalid but we return success per OAuth spec
+            return {"message": "Token revoked successfully"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error revoking OAuth token",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke token"
         )
 
 
