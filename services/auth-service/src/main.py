@@ -7562,6 +7562,1125 @@ async def run_data_retention_cleanup(
         )
 
 
+# ============================================================================
+# API RATE LIMITING PER PLAN
+# ============================================================================
+
+class RateLimitConfig(BaseModel):
+    """Rate limit configuration per plan."""
+    plan: str
+    requests_per_hour: int
+    requests_per_day: int
+    burst_limit: int
+
+
+@app.get("/admin/rate-limit/config")
+async def get_rate_limit_config(
+    plan: str = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get API rate limit configuration per plan.
+    
+    Feature #555: Enterprise: API rate limiting: configurable per plan
+    
+    Returns rate limits for:
+    - Free plan: 100 req/hour
+    - Pro plan: 1000 req/hour  
+    - Enterprise: unlimited
+    """
+    try:
+        # Default rate limits per plan
+        rate_limits = {
+            "free": {
+                "plan": "free",
+                "requests_per_hour": 100,
+                "requests_per_day": 1000,
+                "burst_limit": 10
+            },
+            "pro": {
+                "plan": "pro",
+                "requests_per_hour": 1000,
+                "requests_per_day": 10000,
+                "burst_limit": 50
+            },
+            "enterprise": {
+                "plan": "enterprise",
+                "requests_per_hour": -1,  # unlimited
+                "requests_per_day": -1,    # unlimited
+                "burst_limit": -1          # unlimited
+            }
+        }
+        
+        # Check Redis for custom configuration
+        for plan_name in rate_limits.keys():
+            redis_key = f"rate_limit:config:{plan_name}"
+            config_json = redis_client.get(redis_key)
+            if config_json:
+                rate_limits[plan_name] = json.loads(config_json)
+        
+        if plan:
+            if plan not in rate_limits:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid plan: {plan}"
+                )
+            return rate_limits[plan]
+        else:
+            return {
+                "plans": rate_limits
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching rate limit config", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch rate limit configuration"
+        )
+
+
+@app.post("/admin/rate-limit/config")
+async def set_rate_limit_config(
+    plan: str,
+    config: RateLimitConfig,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Configure API rate limits for a plan.
+    
+    Feature #555: Enterprise: API rate limiting: configurable per plan
+    """
+    try:
+        if plan not in ["free", "pro", "enterprise"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid plan. Must be: free, pro, or enterprise"
+            )
+        
+        # Store configuration in Redis
+        config_data = {
+            "plan": plan,
+            "requests_per_hour": config.requests_per_hour,
+            "requests_per_day": config.requests_per_day,
+            "burst_limit": config.burst_limit
+        }
+        
+        redis_client.set(f"rate_limit:config:{plan}", json.dumps(config_data))
+        
+        # Log configuration change
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="config_change",
+            resource_type="rate_limit",
+            resource_id=plan,
+            extra_data=config_data
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Rate limit configuration updated",
+            correlation_id=correlation_id,
+            plan=plan,
+            config=config_data
+        )
+        
+        return {
+            "message": f"Rate limit configuration updated for {plan} plan",
+            "config": config_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error setting rate limit config", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to set rate limit configuration"
+        )
+
+
+# ============================================================================
+# WEBHOOK MANAGEMENT
+# ============================================================================
+
+class WebhookCreate(BaseModel):
+    """Webhook creation request."""
+    url: str
+    events: list[str]  # e.g., ["diagram.created", "diagram.updated", "diagram.deleted"]
+    description: str = ""
+    is_active: bool = True
+
+
+class WebhookUpdate(BaseModel):
+    """Webhook update request."""
+    url: str = None
+    events: list[str] = None
+    description: str = None
+    is_active: bool = None
+
+
+@app.get("/webhooks")
+async def list_webhooks(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all webhooks for the current user/team.
+    
+    Feature #556: Enterprise: Webhook management: configure webhooks
+    """
+    try:
+        # For simplicity, store webhooks in Redis with user_id as key
+        # In production, this would be in a database table
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if webhooks_json:
+            webhooks = json.loads(webhooks_json)
+        else:
+            webhooks = []
+        
+        return {
+            "webhooks": webhooks,
+            "count": len(webhooks)
+        }
+        
+    except Exception as e:
+        logger.error("Error listing webhooks", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list webhooks"
+        )
+
+
+@app.post("/webhooks")
+async def create_webhook(
+    webhook: WebhookCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Create a new webhook.
+    
+    Feature #556: Enterprise: Webhook management: configure webhooks
+    
+    Steps:
+    1. Navigate to /settings/webhooks
+    2. Add webhook URL
+    3. Select events: diagram.created
+    4. Test webhook
+    5. Verify POST sent
+    """
+    try:
+        # Validate URL
+        if not webhook.url.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Webhook URL must start with http:// or https://"
+            )
+        
+        # Validate events
+        valid_events = [
+            "diagram.created", "diagram.updated", "diagram.deleted",
+            "diagram.shared", "comment.created", "export.completed"
+        ]
+        for event in webhook.events:
+            if event not in valid_events:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid event: {event}. Valid events: {', '.join(valid_events)}"
+                )
+        
+        # Get existing webhooks
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if webhooks_json:
+            webhooks = json.loads(webhooks_json)
+        else:
+            webhooks = []
+        
+        # Create new webhook
+        webhook_id = str(uuid.uuid4())
+        new_webhook = {
+            "id": webhook_id,
+            "url": webhook.url,
+            "events": webhook.events,
+            "description": webhook.description,
+            "is_active": webhook.is_active,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": current_user.id,
+            "last_triggered_at": None,
+            "success_count": 0,
+            "failure_count": 0
+        }
+        
+        webhooks.append(new_webhook)
+        
+        # Store back in Redis
+        redis_client.set(webhooks_key, json.dumps(webhooks))
+        
+        # Log webhook creation
+        audit = AuditLog(
+            user_id=current_user.id,
+            action="webhook_created",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            extra_data={
+                "url": webhook.url,
+                "events": webhook.events
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Webhook created",
+            correlation_id=correlation_id,
+            webhook_id=webhook_id,
+            url=webhook.url,
+            events=webhook.events
+        )
+        
+        return {
+            "message": "Webhook created successfully",
+            "webhook": new_webhook
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error creating webhook", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create webhook"
+        )
+
+
+@app.get("/webhooks/{webhook_id}")
+async def get_webhook(
+    webhook_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get webhook by ID."""
+    try:
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if not webhooks_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        webhooks = json.loads(webhooks_json)
+        webhook = next((w for w in webhooks if w["id"] == webhook_id), None)
+        
+        if not webhook:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        return webhook
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching webhook", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch webhook"
+        )
+
+
+@app.put("/webhooks/{webhook_id}")
+async def update_webhook(
+    webhook_id: str,
+    webhook_update: WebhookUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """Update an existing webhook."""
+    try:
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if not webhooks_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        webhooks = json.loads(webhooks_json)
+        webhook_index = next((i for i, w in enumerate(webhooks) if w["id"] == webhook_id), None)
+        
+        if webhook_index is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        # Update webhook fields
+        webhook = webhooks[webhook_index]
+        if webhook_update.url is not None:
+            webhook["url"] = webhook_update.url
+        if webhook_update.events is not None:
+            webhook["events"] = webhook_update.events
+        if webhook_update.description is not None:
+            webhook["description"] = webhook_update.description
+        if webhook_update.is_active is not None:
+            webhook["is_active"] = webhook_update.is_active
+        
+        webhook["updated_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Store back
+        redis_client.set(webhooks_key, json.dumps(webhooks))
+        
+        # Log update
+        audit = AuditLog(
+            user_id=current_user.id,
+            action="webhook_updated",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            extra_data=webhook
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Webhook updated",
+            correlation_id=correlation_id,
+            webhook_id=webhook_id
+        )
+        
+        return {
+            "message": "Webhook updated successfully",
+            "webhook": webhook
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error updating webhook", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update webhook"
+        )
+
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(
+    webhook_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """Delete a webhook."""
+    try:
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if not webhooks_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        webhooks = json.loads(webhooks_json)
+        webhook_index = next((i for i, w in enumerate(webhooks) if w["id"] == webhook_id), None)
+        
+        if webhook_index is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        # Remove webhook
+        deleted_webhook = webhooks.pop(webhook_index)
+        
+        # Store back
+        redis_client.set(webhooks_key, json.dumps(webhooks))
+        
+        # Log deletion
+        audit = AuditLog(
+            user_id=current_user.id,
+            action="webhook_deleted",
+            resource_type="webhook",
+            resource_id=webhook_id,
+            extra_data=deleted_webhook
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Webhook deleted",
+            correlation_id=correlation_id,
+            webhook_id=webhook_id
+        )
+        
+        return {
+            "message": "Webhook deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting webhook", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete webhook"
+        )
+
+
+@app.post("/webhooks/{webhook_id}/test")
+async def test_webhook(
+    webhook_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Test a webhook by sending a test payload.
+    
+    Feature #556: Enterprise: Webhook management: test webhook
+    """
+    try:
+        import httpx
+        
+        # Get webhook
+        webhooks_key = f"webhooks:user:{current_user.id}"
+        webhooks_json = redis_client.get(webhooks_key)
+        
+        if not webhooks_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        webhooks = json.loads(webhooks_json)
+        webhook = next((w for w in webhooks if w["id"] == webhook_id), None)
+        
+        if not webhook:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Webhook not found"
+            )
+        
+        # Create test payload
+        test_payload = {
+            "event": "webhook.test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "webhook_id": webhook_id,
+            "data": {
+                "message": "This is a test webhook event",
+                "user_id": current_user.id,
+                "user_email": current_user.email
+            }
+        }
+        
+        # Send test request
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.post(
+                    webhook["url"],
+                    json=test_payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Webhook-ID": webhook_id,
+                        "X-Correlation-ID": correlation_id or "test"
+                    }
+                )
+                
+                success = response.status_code < 400
+                
+                # Update webhook stats
+                webhook["last_triggered_at"] = datetime.now(timezone.utc).isoformat()
+                if success:
+                    webhook["success_count"] = webhook.get("success_count", 0) + 1
+                else:
+                    webhook["failure_count"] = webhook.get("failure_count", 0) + 1
+                
+                # Save updated webhook
+                webhook_index = next(i for i, w in enumerate(webhooks) if w["id"] == webhook_id)
+                webhooks[webhook_index] = webhook
+                redis_client.set(webhooks_key, json.dumps(webhooks))
+                
+                logger.info(
+                    "Webhook test sent",
+                    correlation_id=correlation_id,
+                    webhook_id=webhook_id,
+                    status_code=response.status_code,
+                    success=success
+                )
+                
+                return {
+                    "message": "Webhook test completed",
+                    "success": success,
+                    "status_code": response.status_code,
+                    "response_body": response.text[:500]  # Truncate response
+                }
+                
+            except httpx.RequestError as e:
+                logger.error("Webhook test failed", exc=e, correlation_id=correlation_id)
+                
+                # Update failure count
+                webhook["failure_count"] = webhook.get("failure_count", 0) + 1
+                webhook_index = next(i for i, w in enumerate(webhooks) if w["id"] == webhook_id)
+                webhooks[webhook_index] = webhook
+                redis_client.set(webhooks_key, json.dumps(webhooks))
+                
+                return {
+                    "message": "Webhook test failed",
+                    "success": False,
+                    "error": str(e)
+                }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error testing webhook", exc=e, correlation_id=correlation_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to test webhook"
+        )
+
+
+# ============================================================================
+# LICENSE MANAGEMENT
+# ============================================================================
+
+class LicenseInfo(BaseModel):
+    """License information for an organization/team."""
+    plan: str  # free, pro, enterprise
+    total_seats: int
+    used_seats: int
+    available_seats: int
+    seat_utilization_percentage: float
+
+
+@app.get("/admin/license/seat-count")
+async def get_seat_count(
+    team_id: str = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get seat count tracking for license management.
+    
+    Feature #550: Enterprise: License management: seat count
+    
+    Returns:
+    - Total seats allocated
+    - Used seats (active team members)
+    - Available seats
+    - Utilization percentage
+    """
+    try:
+        from .models import Team, TeamMember
+        
+        if team_id:
+            # Get specific team
+            team = db.query(Team).filter(Team.id == team_id).first()
+            if not team:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Team not found"
+                )
+            
+            # Count active members
+            used_seats = db.query(TeamMember).filter(
+                TeamMember.team_id == team_id,
+                TeamMember.invitation_status == "active"
+            ).count()
+            
+            # Add owner to seat count
+            used_seats += 1
+            
+            total_seats = team.max_members
+            available_seats = max(0, total_seats - used_seats)
+            utilization = (used_seats / total_seats * 100) if total_seats > 0 else 0
+            
+            return {
+                "team_id": team_id,
+                "team_name": team.name,
+                "plan": team.plan,
+                "total_seats": total_seats,
+                "used_seats": used_seats,
+                "available_seats": available_seats,
+                "utilization_percentage": round(utilization, 2)
+            }
+        else:
+            # Get all teams summary
+            teams = db.query(Team).all()
+            team_licenses = []
+            
+            total_all_seats = 0
+            total_used_seats = 0
+            
+            for team in teams:
+                used_seats = db.query(TeamMember).filter(
+                    TeamMember.team_id == team.id,
+                    TeamMember.invitation_status == "active"
+                ).count()
+                used_seats += 1  # Add owner
+                
+                total_seats = team.max_members
+                available_seats = max(0, total_seats - used_seats)
+                utilization = (used_seats / total_seats * 100) if total_seats > 0 else 0
+                
+                team_licenses.append({
+                    "team_id": team.id,
+                    "team_name": team.name,
+                    "plan": team.plan,
+                    "total_seats": total_seats,
+                    "used_seats": used_seats,
+                    "available_seats": available_seats,
+                    "utilization_percentage": round(utilization, 2)
+                })
+                
+                total_all_seats += total_seats
+                total_used_seats += used_seats
+            
+            overall_utilization = (total_used_seats / total_all_seats * 100) if total_all_seats > 0 else 0
+            
+            return {
+                "summary": {
+                    "total_teams": len(teams),
+                    "total_seats": total_all_seats,
+                    "used_seats": total_used_seats,
+                    "available_seats": total_all_seats - total_used_seats,
+                    "overall_utilization_percentage": round(overall_utilization, 2)
+                },
+                "teams": team_licenses
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching seat count", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch seat count"
+        )
+
+
+@app.get("/admin/license/utilization")
+async def get_license_utilization(
+    days: int = 30,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get license utilization tracking over time.
+    
+    Feature #551: Enterprise: License management: utilization tracking
+    
+    Tracks:
+    - Active users per day
+    - Diagrams created
+    - AI generations
+    - Exports
+    - Storage usage
+    """
+    try:
+        from datetime import timedelta
+        from sqlalchemy import func
+        
+        # Calculate date range
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+        
+        # Get active users (users who logged in during period)
+        active_users = db.query(User).filter(
+            User.last_login_at >= start_date,
+            User.last_login_at <= end_date
+        ).count()
+        
+        # Get usage metrics
+        from .models import UsageMetric, File
+        
+        diagrams_created = db.query(UsageMetric).filter(
+            UsageMetric.metric_type == "diagram_created",
+            UsageMetric.created_at >= start_date,
+            UsageMetric.created_at <= end_date
+        ).count()
+        
+        ai_generations = db.query(UsageMetric).filter(
+            UsageMetric.metric_type == "ai_generation",
+            UsageMetric.created_at >= start_date,
+            UsageMetric.created_at <= end_date
+        ).count()
+        
+        exports = db.query(UsageMetric).filter(
+            UsageMetric.metric_type == "export",
+            UsageMetric.created_at >= start_date,
+            UsageMetric.created_at <= end_date
+        ).count()
+        
+        # Get total diagrams and users
+        total_users = db.query(User).filter(User.is_active == True).count()
+        total_diagrams = db.query(File).filter(File.is_deleted == False).count()
+        
+        # Calculate utilization metrics
+        user_utilization = (active_users / total_users * 100) if total_users > 0 else 0
+        
+        # Get per-user averages
+        diagrams_per_active_user = (diagrams_created / active_users) if active_users > 0 else 0
+        ai_per_active_user = (ai_generations / active_users) if active_users > 0 else 0
+        exports_per_active_user = (exports / active_users) if active_users > 0 else 0
+        
+        # Get team breakdown
+        from .models import Team
+        teams = db.query(Team).all()
+        team_utilization = []
+        
+        for team in teams:
+            # Get team member IDs
+            from .models import TeamMember
+            team_member_ids = [m.user_id for m in db.query(TeamMember).filter(
+                TeamMember.team_id == team.id,
+                TeamMember.invitation_status == "active"
+            ).all()]
+            team_member_ids.append(team.owner_id)  # Add owner
+            
+            # Count active team members in period
+            active_team_members = db.query(User).filter(
+                User.id.in_(team_member_ids),
+                User.last_login_at >= start_date,
+                User.last_login_at <= end_date
+            ).count()
+            
+            total_team_seats = len(team_member_ids)
+            team_util = (active_team_members / total_team_seats * 100) if total_team_seats > 0 else 0
+            
+            team_utilization.append({
+                "team_id": team.id,
+                "team_name": team.name,
+                "plan": team.plan,
+                "total_seats": total_team_seats,
+                "active_users": active_team_members,
+                "utilization_percentage": round(team_util, 2)
+            })
+        
+        return {
+            "period_days": days,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "overall_metrics": {
+                "total_users": total_users,
+                "active_users": active_users,
+                "user_utilization_percentage": round(user_utilization, 2),
+                "total_diagrams": total_diagrams
+            },
+            "activity_metrics": {
+                "diagrams_created": diagrams_created,
+                "ai_generations": ai_generations,
+                "exports": exports,
+                "diagrams_per_active_user": round(diagrams_per_active_user, 2),
+                "ai_per_active_user": round(ai_per_active_user, 2),
+                "exports_per_active_user": round(exports_per_active_user, 2)
+            },
+            "team_utilization": team_utilization
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching license utilization", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch utilization metrics"
+        )
+
+
+class QuotaLimits(BaseModel):
+    """Quota limits per plan tier."""
+    plan: str  # free, pro, enterprise
+    max_diagrams: int
+    max_storage_mb: int
+    max_team_members: int
+    max_ai_generations_per_month: int
+    max_exports_per_month: int
+
+
+@app.get("/admin/quota/limits")
+async def get_quota_limits(
+    plan: str = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get quota limits per plan tier.
+    
+    Feature #552: Enterprise: Quota management: limits per plan tier
+    
+    Returns quota limits for:
+    - Free plan
+    - Pro plan
+    - Enterprise plan
+    """
+    try:
+        # Define plan limits (stored in Redis or database in production)
+        plan_limits = {
+            "free": {
+                "plan": "free",
+                "max_diagrams": 10,
+                "max_storage_mb": 100,
+                "max_team_members": 5,
+                "max_ai_generations_per_month": 50,
+                "max_exports_per_month": 20,
+                "max_api_calls_per_day": 100
+            },
+            "pro": {
+                "plan": "pro",
+                "max_diagrams": 100,
+                "max_storage_mb": 1000,
+                "max_team_members": 20,
+                "max_ai_generations_per_month": 500,
+                "max_exports_per_month": 200,
+                "max_api_calls_per_day": 1000
+            },
+            "enterprise": {
+                "plan": "enterprise",
+                "max_diagrams": -1,  # unlimited
+                "max_storage_mb": -1,  # unlimited
+                "max_team_members": -1,  # unlimited
+                "max_ai_generations_per_month": -1,  # unlimited
+                "max_exports_per_month": -1,  # unlimited
+                "max_api_calls_per_day": -1  # unlimited
+            }
+        }
+        
+        if plan:
+            if plan not in plan_limits:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid plan: {plan}"
+                )
+            return plan_limits[plan]
+        else:
+            return {
+                "plans": plan_limits
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching quota limits", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch quota limits"
+        )
+
+
+@app.get("/admin/quota/usage")
+async def get_quota_usage(
+    user_id: str = None,
+    team_id: str = None,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current quota usage for a user or team.
+    
+    Feature #553: Enterprise: Quota management: track usage against limits
+    """
+    try:
+        from datetime import timedelta
+        from .models import Team, File, UsageMetric
+        
+        if user_id:
+            # Get user's quota usage
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Get user's plan (from their team or default to free)
+            team = db.query(Team).filter(Team.owner_id == user_id).first()
+            plan = team.plan if team else "free"
+            
+            # Count diagrams
+            diagram_count = db.query(File).filter(
+                File.owner_id == user_id,
+                File.is_deleted == False
+            ).count()
+            
+            # Count AI generations this month
+            month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            ai_count = db.query(UsageMetric).filter(
+                UsageMetric.user_id == user_id,
+                UsageMetric.metric_type == "ai_generation",
+                UsageMetric.created_at >= month_start
+            ).count()
+            
+            # Count exports this month
+            export_count = db.query(UsageMetric).filter(
+                UsageMetric.user_id == user_id,
+                UsageMetric.metric_type == "export",
+                UsageMetric.created_at >= month_start
+            ).count()
+            
+            return {
+                "user_id": user_id,
+                "email": user.email,
+                "plan": plan,
+                "usage": {
+                    "diagrams": diagram_count,
+                    "ai_generations_this_month": ai_count,
+                    "exports_this_month": export_count,
+                    "storage_mb": 0  # Would need to calculate actual storage
+                }
+            }
+            
+        elif team_id:
+            # Get team's quota usage
+            team = db.query(Team).filter(Team.id == team_id).first()
+            if not team:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Team not found"
+                )
+            
+            # Get all team member IDs
+            from .models import TeamMember
+            member_ids = [m.user_id for m in db.query(TeamMember).filter(
+                TeamMember.team_id == team_id,
+                TeamMember.invitation_status == "active"
+            ).all()]
+            member_ids.append(team.owner_id)
+            
+            # Count team diagrams
+            diagram_count = db.query(File).filter(
+                File.owner_id.in_(member_ids),
+                File.is_deleted == False
+            ).count()
+            
+            # Count AI generations this month
+            month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            ai_count = db.query(UsageMetric).filter(
+                UsageMetric.user_id.in_(member_ids),
+                UsageMetric.metric_type == "ai_generation",
+                UsageMetric.created_at >= month_start
+            ).count()
+            
+            # Count exports this month
+            export_count = db.query(UsageMetric).filter(
+                UsageMetric.user_id.in_(member_ids),
+                UsageMetric.metric_type == "export",
+                UsageMetric.created_at >= month_start
+            ).count()
+            
+            return {
+                "team_id": team_id,
+                "team_name": team.name,
+                "plan": team.plan,
+                "members": len(member_ids),
+                "usage": {
+                    "diagrams": diagram_count,
+                    "ai_generations_this_month": ai_count,
+                    "exports_this_month": export_count,
+                    "storage_mb": 0  # Would need to calculate actual storage
+                }
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either user_id or team_id must be provided"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching quota usage", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch quota usage"
+        )
+
+
+@app.post("/admin/quota/set-limits")
+async def set_quota_limits(
+    plan: str,
+    limits: QuotaLimits,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Set quota limits for a plan tier.
+    
+    Feature #554: Enterprise: Quota management: configurable limits
+    """
+    try:
+        if plan not in ["free", "pro", "enterprise"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid plan. Must be: free, pro, or enterprise"
+            )
+        
+        # Store limits in Redis
+        limits_data = {
+            "plan": plan,
+            "max_diagrams": limits.max_diagrams,
+            "max_storage_mb": limits.max_storage_mb,
+            "max_team_members": limits.max_team_members,
+            "max_ai_generations_per_month": limits.max_ai_generations_per_month,
+            "max_exports_per_month": limits.max_exports_per_month
+        }
+        
+        redis_client.set(f"quota:limits:{plan}", json.dumps(limits_data))
+        
+        # Log configuration change
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="config_change",
+            resource_type="quota_limits",
+            resource_id=plan,
+            extra_data=limits_data
+        )
+        db.add(audit)
+        db.commit()
+        
+        logger.info(
+            "Quota limits configured",
+            correlation_id=correlation_id,
+            plan=plan,
+            limits=limits_data
+        )
+        
+        return {
+            "message": f"Quota limits updated for {plan} plan",
+            "limits": limits_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error setting quota limits", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to set quota limits"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AUTH_SERVICE_PORT", "8085")))
