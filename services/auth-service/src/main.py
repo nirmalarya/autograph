@@ -5011,6 +5011,492 @@ async def oauth_revoke_token(
         )
 
 
+# ========================================
+# Team Management Endpoints (Features #528-530)
+# ========================================
+
+class CreateTeamRequest(BaseModel):
+    """Request model for creating a team."""
+    name: str
+    slug: str = None
+    plan: str = "free"
+    max_members: int = 5
+
+class InviteMemberRequest(BaseModel):
+    """Request model for inviting a team member."""
+    email: EmailStr
+    role: str = "viewer"
+
+class UpdateMemberRoleRequest(BaseModel):
+    """Request model for updating member role."""
+    role: str
+
+class TeamResponse(BaseModel):
+    """Response model for team."""
+    id: str
+    name: str
+    slug: str
+    owner_id: str
+    plan: str
+    max_members: int
+    created_at: datetime
+    updated_at: datetime
+    members_count: int = 0
+
+class TeamMemberResponse(BaseModel):
+    """Response model for team member."""
+    id: str
+    team_id: str
+    user_id: str
+    user_email: str
+    user_full_name: str = None
+    role: str
+    invitation_status: str
+    invited_by: str = None
+    created_at: datetime
+
+
+@app.post("/teams", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
+async def create_team(
+    request: CreateTeamRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Create a new team.
+    
+    Feature #528: Enterprise: Team management: create teams
+    
+    Steps:
+    1. Admin creates team: 'Engineering'
+    2. Add members
+    3. Verify team created
+    4. Verify members added
+    """
+    try:
+        # Import Team model
+        from .models import Team, TeamMember
+        
+        # Generate slug if not provided
+        slug = request.slug
+        if not slug:
+            # Create slug from name
+            import re
+            slug = re.sub(r'[^a-z0-9-]', '-', request.name.lower())
+            slug = re.sub(r'-+', '-', slug).strip('-')
+        
+        # Check if slug already exists
+        existing_team = db.query(Team).filter(Team.slug == slug).first()
+        if existing_team:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Team with slug '{slug}' already exists"
+            )
+        
+        # Create team
+        team = Team(
+            id=generate_uuid(),
+            name=request.name,
+            slug=slug,
+            owner_id=current_user.id,
+            plan=request.plan,
+            max_members=request.max_members
+        )
+        db.add(team)
+        
+        # Add owner as admin member
+        owner_member = TeamMember(
+            id=generate_uuid(),
+            team_id=team.id,
+            user_id=current_user.id,
+            role="admin",
+            invitation_status="active",
+            invited_by=current_user.id,
+            invitation_accepted_at=datetime.now(timezone.utc)
+        )
+        db.add(owner_member)
+        
+        db.commit()
+        db.refresh(team)
+        
+        logger.info(
+            "Team created",
+            correlation_id=correlation_id,
+            team_id=team.id,
+            team_name=team.name,
+            owner_id=current_user.id
+        )
+        
+        # Count members
+        members_count = db.query(TeamMember).filter(TeamMember.team_id == team.id).count()
+        
+        return TeamResponse(
+            id=team.id,
+            name=team.name,
+            slug=team.slug,
+            owner_id=team.owner_id,
+            plan=team.plan,
+            max_members=team.max_members,
+            created_at=team.created_at,
+            updated_at=team.updated_at,
+            members_count=members_count
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error creating team",
+            correlation_id=correlation_id,
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create team"
+        )
+
+
+@app.post("/teams/{team_id}/invite", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED)
+async def invite_team_member(
+    team_id: str,
+    request: InviteMemberRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Invite a member to join a team.
+    
+    Feature #529: Enterprise: Team management: invite members
+    
+    Steps:
+    1. Click 'Invite Member'
+    2. Enter email
+    3. Select role
+    4. Send invite
+    5. Verify email sent
+    6. User accepts
+    7. Verify added to team
+    """
+    try:
+        from .models import Team, TeamMember
+        
+        # Validate role
+        valid_roles = ['admin', 'editor', 'viewer']
+        if request.role not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}"
+            )
+        
+        # Check if team exists
+        team = db.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found"
+            )
+        
+        # Check if user is admin of the team
+        current_member = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == current_user.id,
+            TeamMember.role == "admin"
+        ).first()
+        
+        if not current_member and team.owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only team admins can invite members"
+            )
+        
+        # Check max members limit
+        current_members_count = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id
+        ).count()
+        
+        if current_members_count >= team.max_members:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Team has reached maximum member limit ({team.max_members})"
+            )
+        
+        # Find user by email
+        invited_user = db.query(User).filter(User.email == request.email).first()
+        if not invited_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with email '{request.email}' not found"
+            )
+        
+        # Check if user is already a member
+        existing_member = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == invited_user.id
+        ).first()
+        
+        if existing_member:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User is already a member of this team"
+            )
+        
+        # Generate invitation token
+        invitation_token = secrets.token_urlsafe(32)
+        
+        # Create team member
+        team_member = TeamMember(
+            id=generate_uuid(),
+            team_id=team_id,
+            user_id=invited_user.id,
+            role=request.role,
+            invitation_status="active",  # For now, auto-accept (email flow can be added later)
+            invitation_token=invitation_token,
+            invited_by=current_user.id,
+            invitation_sent_at=datetime.now(timezone.utc),
+            invitation_accepted_at=datetime.now(timezone.utc)
+        )
+        db.add(team_member)
+        db.commit()
+        db.refresh(team_member)
+        
+        logger.info(
+            "Team member invited",
+            correlation_id=correlation_id,
+            team_id=team_id,
+            invited_user_id=invited_user.id,
+            invited_by=current_user.id,
+            role=request.role
+        )
+        
+        # TODO: Send invitation email (Feature for later)
+        # For now, we auto-accept the invitation
+        
+        return TeamMemberResponse(
+            id=team_member.id,
+            team_id=team_member.team_id,
+            user_id=team_member.user_id,
+            user_email=invited_user.email,
+            user_full_name=invited_user.full_name,
+            role=team_member.role,
+            invitation_status=team_member.invitation_status,
+            invited_by=team_member.invited_by,
+            created_at=team_member.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error inviting team member",
+            correlation_id=correlation_id,
+            team_id=team_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to invite team member"
+        )
+
+
+@app.put("/teams/{team_id}/members/{user_id}/role", response_model=TeamMemberResponse)
+async def update_member_role(
+    team_id: str,
+    user_id: str,
+    request: UpdateMemberRoleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Update a team member's role.
+    
+    Feature #530: Enterprise: Team management: assign roles
+    
+    Steps:
+    1. Select user
+    2. Change role to 'Admin'
+    3. Save
+    4. Verify role updated
+    5. Verify permissions changed
+    """
+    try:
+        from .models import Team, TeamMember
+        
+        # Validate role
+        valid_roles = ['admin', 'editor', 'viewer']
+        if request.role not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}"
+            )
+        
+        # Check if team exists
+        team = db.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found"
+            )
+        
+        # Check if current user is admin of the team
+        current_member = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == current_user.id,
+            TeamMember.role == "admin"
+        ).first()
+        
+        if not current_member and team.owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only team admins can update member roles"
+            )
+        
+        # Find the team member to update
+        team_member = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == user_id
+        ).first()
+        
+        if not team_member:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team member not found"
+            )
+        
+        # Prevent owner from being demoted from admin
+        if team.owner_id == user_id and request.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Team owner must remain as admin"
+            )
+        
+        # Update role
+        old_role = team_member.role
+        team_member.role = request.role
+        team_member.updated_at = datetime.now(timezone.utc)
+        
+        db.commit()
+        db.refresh(team_member)
+        
+        logger.info(
+            "Team member role updated",
+            correlation_id=correlation_id,
+            team_id=team_id,
+            member_user_id=user_id,
+            old_role=old_role,
+            new_role=request.role,
+            updated_by=current_user.id
+        )
+        
+        # Get user info
+        member_user = db.query(User).filter(User.id == user_id).first()
+        
+        return TeamMemberResponse(
+            id=team_member.id,
+            team_id=team_member.team_id,
+            user_id=team_member.user_id,
+            user_email=member_user.email if member_user else "",
+            user_full_name=member_user.full_name if member_user else None,
+            role=team_member.role,
+            invitation_status=team_member.invitation_status,
+            invited_by=team_member.invited_by,
+            created_at=team_member.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Error updating member role",
+            correlation_id=correlation_id,
+            team_id=team_id,
+            user_id=user_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update member role"
+        )
+
+
+@app.get("/teams/{team_id}/members")
+async def get_team_members(
+    team_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """Get all members of a team."""
+    try:
+        from .models import Team, TeamMember
+        
+        # Check if team exists
+        team = db.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Team not found"
+            )
+        
+        # Check if user is a member of the team
+        is_member = db.query(TeamMember).filter(
+            TeamMember.team_id == team_id,
+            TeamMember.user_id == current_user.id
+        ).first()
+        
+        if not is_member and team.owner_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be a team member to view members"
+            )
+        
+        # Get all team members with user info
+        members = db.query(TeamMember, User).join(
+            User, TeamMember.user_id == User.id
+        ).filter(
+            TeamMember.team_id == team_id
+        ).all()
+        
+        result = []
+        for member, user in members:
+            result.append({
+                "id": member.id,
+                "team_id": member.team_id,
+                "user_id": member.user_id,
+                "user_email": user.email,
+                "user_full_name": user.full_name,
+                "role": member.role,
+                "invitation_status": member.invitation_status,
+                "invited_by": member.invited_by,
+                "created_at": member.created_at.isoformat()
+            })
+        
+        return {
+            "members": result,
+            "total": len(result)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error getting team members",
+            correlation_id=correlation_id,
+            team_id=team_id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get team members"
+        )
+
+
 @app.get("/test/api-key-auth")
 async def test_api_key_auth(
     current_user: User = Depends(get_current_user_from_api_key)

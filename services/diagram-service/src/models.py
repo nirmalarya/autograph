@@ -80,10 +80,45 @@ class Team(Base):
     # Relationships
     owner = relationship("User", back_populates="teams")
     files = relationship("File", back_populates="team")
+    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index('idx_teams_slug', 'slug'),
         Index('idx_teams_owner', 'owner_id'),
+    )
+
+
+class TeamMember(Base):
+    """Team membership table with roles."""
+    __tablename__ = "team_members"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    team_id = Column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(50), default="viewer", nullable=False)  # admin, editor, viewer
+    
+    # Invitation tracking
+    invited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    invitation_status = Column(String(50), default="active", nullable=False)  # pending, active, declined
+    invitation_token = Column(String(255), unique=True, index=True)
+    invitation_sent_at = Column(DateTime(timezone=True))
+    invitation_accepted_at = Column(DateTime(timezone=True))
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    team = relationship("Team", back_populates="members")
+    user = relationship("User", foreign_keys=[user_id])
+    inviter = relationship("User", foreign_keys=[invited_by])
+
+    __table_args__ = (
+        Index('idx_team_members_team', 'team_id'),
+        Index('idx_team_members_user', 'user_id'),
+        Index('idx_team_members_invitation_token', 'invitation_token'),
+        # Unique constraint: one user can only be in a team once
+        Index('idx_team_members_unique', 'team_id', 'user_id', unique=True),
     )
 
 
