@@ -2,8 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import ThemeToggle from '../components/ThemeToggle';
-import MobileBottomNav from '../components/MobileBottomNav';
+import dynamic from 'next/dynamic';
+
+// Lazy load components
+const ThemeToggle = dynamic(() => import('../components/ThemeToggle'), {
+  loading: () => <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />,
+});
+
+const MobileBottomNav = dynamic(() => import('../components/MobileBottomNav'), {
+  loading: () => <div className="h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700" />,
+});
 
 export default function ProfilePage() {
   const router = useRouter();

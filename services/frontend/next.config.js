@@ -7,6 +7,52 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
   },
+  // Optimize code splitting
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Split vendor chunks for better caching
+      config.optimization.splitChunks = {
+        ...config.optimization.splitChunks,
+        cacheGroups: {
+          ...config.optimization.splitChunks?.cacheGroups,
+          // Split React and React-DOM into separate chunk
+          react: {
+            test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/,
+            name: 'react-vendor',
+            chunks: 'all',
+            priority: 10,
+          },
+          // Split large libraries
+          tldraw: {
+            test: /[\\/]node_modules[\\/](@tldraw|tldraw)[\\/]/,
+            name: 'tldraw-vendor',
+            chunks: 'async',
+            priority: 9,
+          },
+          mermaid: {
+            test: /[\\/]node_modules[\\/](mermaid)[\\/]/,
+            name: 'mermaid-vendor',
+            chunks: 'async',
+            priority: 9,
+          },
+          monaco: {
+            test: /[\\/]node_modules[\\/](@monaco-editor|monaco-editor)[\\/]/,
+            name: 'monaco-vendor',
+            chunks: 'async',
+            priority: 9,
+          },
+          // Split other node_modules
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendor',
+            chunks: 'all',
+            priority: 5,
+          },
+        },
+      };
+    }
+    return config;
+  },
   // API Gateway proxy
   async rewrites() {
     return [
