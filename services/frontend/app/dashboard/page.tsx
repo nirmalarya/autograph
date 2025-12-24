@@ -8,6 +8,7 @@ import CommandPalette from '../components/CommandPalette';
 import KeyboardShortcutsDialog from '../components/KeyboardShortcutsDialog';
 import ThemeToggle from '../components/ThemeToggle';
 import MobileBottomNav from '../components/MobileBottomNav';
+import { SkeletonCard, SkeletonListItem } from '../components/SkeletonLoader';
 import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
 
 interface Diagram {
@@ -550,9 +551,53 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600">Loading...</p>
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        {/* Navigation skeleton */}
+        <nav className="bg-white dark:bg-gray-800 shadow-sm">
+          <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-14 sm:h-16">
+              <div className="flex items-center gap-2 sm:gap-4">
+                <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                <div className="w-32 h-6 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
+                <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+                <div className="w-20 h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        {/* Content skeleton */}
+        <div className="flex-1 flex">
+          {/* Sidebar skeleton */}
+          <aside className="hidden md:block w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 p-4">
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+              ))}
+            </div>
+          </aside>
+
+          {/* Main content skeleton */}
+          <div className="flex-1 p-4 sm:p-6">
+            {/* Header skeleton */}
+            <div className="mb-6 space-y-4">
+              <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 animate-pulse"></div>
+              <div className="flex gap-4">
+                <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded w-64 animate-pulse"></div>
+                <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded w-32 animate-pulse"></div>
+              </div>
+            </div>
+
+            {/* Grid skeleton */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+          </div>
         </div>
       </main>
     );
@@ -1074,10 +1119,19 @@ export default function DashboardPage() {
 
         {/* Diagrams List */}
         {loadingDiagrams ? (
-          <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Loading diagrams...</p>
-          </div>
+          viewMode === 'grid' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <SkeletonListItem key={i} />
+              ))}
+            </div>
+          )
         ) : diagrams.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
             <p className="text-gray-600 text-lg mb-4">
