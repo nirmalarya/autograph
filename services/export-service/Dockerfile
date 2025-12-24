@@ -33,8 +33,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers (commented out for now - will be enabled when export features are implemented)
-# RUN python -m playwright install --with-deps chromium
+# Install Playwright browsers for pixel-perfect rendering
+RUN python -m playwright install --with-deps chromium
 
 # Copy application code
 COPY src/ ./src/
