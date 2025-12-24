@@ -55,10 +55,10 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Inject Bayer brand colors as CSS custom properties
-  const brandStyles = isBayerBranding ? {
-    '--bayer-primary-color': primaryColor,
-    '--bayer-secondary-color': secondaryColor,
+  // Inject brand colors as CSS custom properties
+  const brandStyles = isCustomBranding ? {
+    '--brand-primary-color': primaryColor,
+    '--brand-secondary-color': secondaryColor,
   } as React.CSSProperties : {};
 
   return (
