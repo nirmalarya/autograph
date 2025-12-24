@@ -3477,6 +3477,209 @@ async def get_versions(
     }
 
 
+@app.get("/{diagram_id}/versions/compare")
+async def compare_versions(
+    diagram_id: str,
+    v1: int,
+    v2: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Compare two versions and return differences.
+    
+    Args:
+        diagram_id: The diagram ID
+        v1: First version number
+        v2: Second version number
+    
+    Returns:
+        Comparison data with additions, deletions, and modifications
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Comparing versions",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        v1=v1,
+        v2=v2,
+        user_id=user_id
+    )
+    
+    # Get both versions
+    version1 = db.query(Version).filter(
+        Version.file_id == diagram_id,
+        Version.version_number == v1
+    ).first()
+    
+    version2 = db.query(Version).filter(
+        Version.file_id == diagram_id,
+        Version.version_number == v2
+    ).first()
+    
+    if not version1 or not version2:
+        raise HTTPException(status_code=404, detail="One or both versions not found")
+    
+    # Compare canvas data
+    canvas1 = version1.canvas_data or {}
+    canvas2 = version2.canvas_data or {}
+    
+    # Extract elements from canvas data
+    # Try different common keys for elements (shapes, elements, objects, etc.)
+    elements1 = {}
+    elements2 = {}
+    
+    # Get elements from canvas1
+    if isinstance(canvas1, dict):
+        if 'shapes' in canvas1:
+            elements1 = {str(s.get('id', i)): s for i, s in enumerate(canvas1.get('shapes', []))}
+        elif 'elements' in canvas1:
+            elements1 = {str(e.get('id', i)): e for i, e in enumerate(canvas1.get('elements', []))}
+        elif 'objects' in canvas1:
+            elements1 = {str(o.get('id', i)): o for i, o in enumerate(canvas1.get('objects', []))}
+    
+    # Get elements from canvas2
+    if isinstance(canvas2, dict):
+        if 'shapes' in canvas2:
+            elements2 = {str(s.get('id', i)): s for i, s in enumerate(canvas2.get('shapes', []))}
+        elif 'elements' in canvas2:
+            elements2 = {str(e.get('id', i)): e for i, e in enumerate(canvas2.get('elements', []))}
+        elif 'objects' in canvas2:
+            elements2 = {str(o.get('id', i)): o for i, o in enumerate(canvas2.get('objects', []))}
+    
+    # Calculate differences
+    ids1 = set(elements1.keys())
+    ids2 = set(elements2.keys())
+    
+    # Additions: in v2 but not in v1
+    added_ids = ids2 - ids1
+    additions = [elements2[id] for id in added_ids]
+    
+    # Deletions: in v1 but not in v2
+    deleted_ids = ids1 - ids2
+    deletions = [elements1[id] for id in deleted_ids]
+    
+    # Modifications: in both but different
+    common_ids = ids1 & ids2
+    modifications = []
+    for id in common_ids:
+        elem1 = elements1[id]
+        elem2 = elements2[id]
+        # Simple comparison - consider different if not equal
+        if elem1 != elem2:
+            modifications.append({
+                "id": id,
+                "before": elem1,
+                "after": elem2,
+                "changes": _detect_element_changes(elem1, elem2)
+            })
+    
+    # Compare note content
+    note1 = version1.note_content or ""
+    note2 = version2.note_content or ""
+    note_changed = note1 != note2
+    
+    # Get user info for both versions
+    user1 = db.query(User).filter(User.id == version1.created_by).first()
+    user2 = db.query(User).filter(User.id == version2.created_by).first()
+    
+    logger.info(
+        "Version comparison completed",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        additions=len(additions),
+        deletions=len(deletions),
+        modifications=len(modifications),
+        note_changed=note_changed
+    )
+    
+    return {
+        "diagram_id": diagram_id,
+        "version1": {
+            "id": version1.id,
+            "version_number": version1.version_number,
+            "description": version1.description,
+            "label": version1.label,
+            "thumbnail_url": version1.thumbnail_url,
+            "created_by": version1.created_by,
+            "created_at": version1.created_at.isoformat(),
+            "user": {
+                "id": user1.id if user1 else None,
+                "full_name": user1.full_name if user1 else "Unknown"
+            },
+            "canvas_data": canvas1,
+            "note_content": note1
+        },
+        "version2": {
+            "id": version2.id,
+            "version_number": version2.version_number,
+            "description": version2.description,
+            "label": version2.label,
+            "thumbnail_url": version2.thumbnail_url,
+            "created_by": version2.created_by,
+            "created_at": version2.created_at.isoformat(),
+            "user": {
+                "id": user2.id if user2 else None,
+                "full_name": user2.full_name if user2 else "Unknown"
+            },
+            "canvas_data": canvas2,
+            "note_content": note2
+        },
+        "differences": {
+            "additions": additions,
+            "deletions": deletions,
+            "modifications": modifications,
+            "note_changed": note_changed,
+            "summary": {
+                "total_changes": len(additions) + len(deletions) + len(modifications),
+                "added_count": len(additions),
+                "deleted_count": len(deletions),
+                "modified_count": len(modifications)
+            }
+        }
+    }
+
+
+def _detect_element_changes(elem1: dict, elem2: dict) -> list:
+    """Detect what changed between two elements.
+    
+    Returns list of change descriptions.
+    """
+    changes = []
+    
+    # Compare common properties
+    for key in set(elem1.keys()) | set(elem2.keys()):
+        val1 = elem1.get(key)
+        val2 = elem2.get(key)
+        
+        if val1 != val2:
+            if key not in elem1:
+                changes.append(f"Added {key}: {val2}")
+            elif key not in elem2:
+                changes.append(f"Removed {key}: {val1}")
+            else:
+                # Property changed
+                if key == "x" or key == "y":
+                    changes.append(f"Moved")
+                elif key == "width" or key == "height":
+                    changes.append(f"Resized")
+                elif key == "rotation":
+                    changes.append(f"Rotated")
+                elif key == "color" or key == "fill" or key == "stroke":
+                    changes.append(f"Color changed")
+                elif key == "text" or key == "label":
+                    changes.append(f"Text changed")
+                else:
+                    changes.append(f"Changed {key}")
+    
+    # Deduplicate changes
+    return list(set(changes))
+
+
 @app.get("/{diagram_id}/versions/{version_id}")
 async def get_version(
     diagram_id: str,
@@ -3542,6 +3745,8 @@ async def get_version(
     )
     
     return response_data
+
+
 
 
 @app.post("/{diagram_id}/versions/{version_id}/restore")
