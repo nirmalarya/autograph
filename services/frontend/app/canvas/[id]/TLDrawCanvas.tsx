@@ -7,9 +7,10 @@ import '@tldraw/tldraw/tldraw.css';
 interface TLDrawCanvasProps {
   initialData?: any;
   onSave?: (editor: any) => void;
+  theme?: 'light' | 'dark';
 }
 
-export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps) {
+export default function TLDrawCanvas({ initialData, onSave, theme = 'light' }: TLDrawCanvasProps) {
   const [mounted, setMounted] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
 
@@ -32,6 +33,17 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
       clearInterval(autoSaveInterval);
     };
   }, [onSave, mounted]);
+
+  // Update theme when it changes
+  useEffect(() => {
+    if (!editor || !mounted) return;
+    
+    if (theme === 'dark') {
+      editor.user.updateUserPreferences({ colorScheme: 'dark' });
+    } else {
+      editor.user.updateUserPreferences({ colorScheme: 'light' });
+    }
+  }, [theme, editor, mounted]);
 
   // Touch gesture handling
   useEffect(() => {
@@ -101,30 +113,39 @@ export default function TLDrawCanvas({ initialData, onSave }: TLDrawCanvasProps)
   }
 
   return (
-    <Tldraw
-      snapshot={initialData}
-      overrides={uiOverrides}
-      onMount={(editor: Editor) => {
-        // Store editor reference globally for save button
-        (window as any).tldrawEditor = editor;
-        setEditor(editor);
-        
-        // Load existing canvas data if available
-        if (initialData) {
-          try {
-            editor.store.loadSnapshot(initialData);
-          } catch (err) {
-            console.error('Failed to load canvas snapshot:', err);
+    <div className={theme === 'dark' ? 'tldraw__editor--dark' : ''} style={{ width: '100%', height: '100%' }}>
+      <Tldraw
+        snapshot={initialData}
+        overrides={uiOverrides}
+        onMount={(editor: Editor) => {
+          // Store editor reference globally for save button
+          (window as any).tldrawEditor = editor;
+          setEditor(editor);
+          
+          // Load existing canvas data if available
+          if (initialData) {
+            try {
+              editor.store.loadSnapshot(initialData);
+            } catch (err) {
+              console.error('Failed to load canvas snapshot:', err);
+            }
           }
-        }
 
-        // Configure touch-friendly settings
-        // TLDraw 2.4.0 has built-in touch gesture support:
-        // - Pinch to zoom (2 fingers pinch in/out)
-        // - Two-finger pan (2 fingers drag)
-        // - Single finger to draw/select
-        // These are enabled by default in TLDraw
-      }}
-    />
+          // Configure touch-friendly settings
+          // TLDraw 2.4.0 has built-in touch gesture support:
+          // - Pinch to zoom (2 fingers pinch in/out)
+          // - Two-finger pan (2 fingers drag)
+          // - Single finger to draw/select
+          // These are enabled by default in TLDraw
+          
+          // Apply theme to editor
+          if (theme === 'dark') {
+            editor.user.updateUserPreferences({ colorScheme: 'dark' });
+          } else {
+            editor.user.updateUserPreferences({ colorScheme: 'light' });
+          }
+        }}
+      />
+    </div>
   );
 }
