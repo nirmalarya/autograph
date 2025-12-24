@@ -11,6 +11,7 @@ import logging
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw
 import base64
+import httpx
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas as pdf_canvas
@@ -31,6 +32,9 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "autograph")
+
+# Diagram service configuration
+DIAGRAM_SERVICE_URL = os.getenv("DIAGRAM_SERVICE_URL", "http://localhost:8082")
 
 def get_db_connection():
     """Get database connection."""
@@ -1675,6 +1679,199 @@ def generate_svg(canvas_data, width, height):
 </svg>'''
     
     return svg_content.encode('utf-8')
+
+
+class DiagramExportRequest(BaseModel):
+    """Request model for programmatic diagram export via API."""
+    format: str  # png, svg, pdf, json, markdown, html
+    # PNG options
+    width: Optional[int] = 1920
+    height: Optional[int] = 1080
+    scale: Optional[int] = 2
+    quality: Optional[str] = "high"
+    background: Optional[str] = "white"
+    # PDF options
+    pdf_page_size: Optional[str] = "letter"
+    pdf_multi_page: Optional[bool] = False
+    pdf_embed_fonts: Optional[bool] = True
+    pdf_vector_graphics: Optional[bool] = True
+    # User for logging
+    user_id: Optional[str] = None
+
+
+@app.post("/api/diagrams/{diagram_id}/export")
+async def export_diagram_by_id(diagram_id: str, request: DiagramExportRequest):
+    """
+    Programmatic export of a diagram by ID via API.
+    
+    This endpoint allows programmatic access to export diagrams.
+    It fetches the diagram data from the diagram service and exports it
+    in the requested format.
+    
+    Supported formats: PNG, SVG, PDF, JSON, Markdown, HTML
+    
+    Returns the exported file as binary data with appropriate content-type.
+    """
+    try:
+        logger.info(f"API export request for diagram {diagram_id}, format: {request.format}")
+        
+        # Validate format
+        valid_formats = ["png", "svg", "pdf", "json", "markdown", "html"]
+        if request.format not in valid_formats:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid format. Must be one of: {', '.join(valid_formats)}"
+            )
+        
+        # Fetch diagram from diagram service
+        async with httpx.AsyncClient() as client:
+            try:
+                headers = {}
+                if request.user_id:
+                    headers["X-User-ID"] = request.user_id
+                
+                response = await client.get(
+                    f"{DIAGRAM_SERVICE_URL}/{diagram_id}",
+                    headers=headers,
+                    timeout=10.0
+                )
+                
+                if response.status_code == 404:
+                    raise HTTPException(status_code=404, detail=f"Diagram {diagram_id} not found")
+                
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"Failed to fetch diagram: {response.text}"
+                    )
+                
+                diagram_data = response.json()
+                
+            except httpx.RequestError as e:
+                logger.error(f"Error fetching diagram from diagram service: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Diagram service unavailable"
+                )
+        
+        # Extract canvas data
+        canvas_data = diagram_data.get("canvas_data", {})
+        if not canvas_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Diagram has no canvas data"
+            )
+        
+        # Export based on format
+        if request.format == "png":
+            file_data = await export_diagram_png(
+                canvas_data,
+                request.width,
+                request.height,
+                request.scale,
+                request.quality,
+                request.background
+            )
+            content_type = "image/png"
+            filename = f"{diagram_id}.png"
+            
+        elif request.format == "svg":
+            file_data = generate_svg(
+                canvas_data,
+                request.width,
+                request.height
+            )
+            content_type = "image/svg+xml"
+            filename = f"{diagram_id}.svg"
+            
+        elif request.format == "pdf":
+            file_data = await export_diagram_pdf(
+                canvas_data,
+                request.width,
+                request.height,
+                request.pdf_page_size,
+                request.pdf_multi_page,
+                request.pdf_embed_fonts,
+                request.pdf_vector_graphics,
+                request.background
+            )
+            content_type = "application/pdf"
+            filename = f"{diagram_id}.pdf"
+            
+        elif request.format == "json":
+            file_data = json.dumps(canvas_data, indent=2).encode('utf-8')
+            content_type = "application/json"
+            filename = f"{diagram_id}.json"
+            
+        elif request.format == "markdown":
+            # Use existing markdown export logic
+            markdown_content = f"# {diagram_data.get('title', 'Diagram')}\n\n"
+            markdown_content += f"Created: {diagram_data.get('created_at', 'Unknown')}\n\n"
+            markdown_content += f"## Canvas Data\n\n"
+            markdown_content += f"```json\n{json.dumps(canvas_data, indent=2)}\n```\n"
+            file_data = markdown_content.encode('utf-8')
+            content_type = "text/markdown"
+            filename = f"{diagram_id}.md"
+            
+        elif request.format == "html":
+            # Use existing HTML export logic
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{diagram_data.get('title', 'Diagram')}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        pre {{ background: #f5f5f5; padding: 10px; border-radius: 4px; }}
+    </style>
+</head>
+<body>
+    <h1>{diagram_data.get('title', 'Diagram')}</h1>
+    <p>Created: {diagram_data.get('created_at', 'Unknown')}</p>
+    <h2>Canvas Data</h2>
+    <pre>{json.dumps(canvas_data, indent=2)}</pre>
+</body>
+</html>"""
+            file_data = html_content.encode('utf-8')
+            content_type = "text/html"
+            filename = f"{diagram_id}.html"
+        
+        # Log export to history
+        export_settings = {
+            "width": request.width,
+            "height": request.height,
+            "scale": request.scale,
+            "quality": request.quality,
+            "background": request.background,
+            "api_export": True
+        }
+        
+        log_export_to_history(
+            file_id=diagram_id,
+            user_id=request.user_id or "api",
+            export_format=request.format,
+            export_type="api",
+            export_settings=export_settings,
+            file_size=len(file_data),
+            status="completed"
+        )
+        
+        logger.info(f"Successfully exported diagram {diagram_id} as {request.format} ({len(file_data)} bytes)")
+        
+        # Return file
+        return Response(
+            content=file_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(file_data))
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting diagram {diagram_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 if __name__ == "__main__":
