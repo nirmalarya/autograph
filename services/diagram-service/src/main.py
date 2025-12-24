@@ -4909,6 +4909,294 @@ async def export_diagram_pdf(
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
+@app.post("/{diagram_id}/versions/{version_id}/export/png")
+async def export_version_png(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    scale: int = 2,  # 1x, 2x, 4x
+    background: str = "white",  # white, transparent
+    quality: str = "high",  # low, medium, high, ultra
+    db: Session = Depends(get_db)
+):
+    """Export specific version as PNG.
+    
+    Allows exporting historical versions of a diagram, not just the current version.
+    The exported PNG will reflect the canvas_data from the specified version.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting version as PNG",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        scale=scale,
+        background=background
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram to check permissions and increment export count
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count on the diagram
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Get version content (handles compressed versions)
+    canvas_data, note_content = get_version_content(version)
+    
+    # Call export service with version data
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/png",
+                json={
+                    "diagram_id": diagram_id,
+                    "version_id": version_id,
+                    "version_number": version.version_number,
+                    "canvas_data": canvas_data or {},
+                    "format": "png",
+                    "scale": scale,
+                    "background": background,
+                    "quality": quality
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "Version PNG export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    version_id=version_id,
+                    version_number=version.version_number
+                )
+                return Response(
+                    content=response.content,
+                    media_type="image/png",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}_v{version.version_number}.png"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Version export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/{diagram_id}/versions/{version_id}/export/svg")
+async def export_version_svg(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Export specific version as SVG."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting version as SVG",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram to increment export count
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Get version content
+    canvas_data, note_content = get_version_content(version)
+    
+    # Call export service
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/svg",
+                json={
+                    "diagram_id": diagram_id,
+                    "version_id": version_id,
+                    "version_number": version.version_number,
+                    "canvas_data": canvas_data or {},
+                    "format": "svg"
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "Version SVG export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    version_id=version_id,
+                    version_number=version.version_number
+                )
+                return Response(
+                    content=response.content,
+                    media_type="image/svg+xml",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}_v{version.version_number}.svg"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Version export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@app.post("/{diagram_id}/versions/{version_id}/export/pdf")
+async def export_version_pdf(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Export specific version as PDF."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    logger.info(
+        "Exporting version as PDF",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram to increment export count
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Increment export count
+    diagram.export_count = (diagram.export_count or 0) + 1
+    db.commit()
+    
+    # Get version content
+    canvas_data, note_content = get_version_content(version)
+    
+    # Call export service
+    export_service_url = os.getenv("EXPORT_SERVICE_URL", "http://localhost:8097")
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{export_service_url}/export/pdf",
+                json={
+                    "diagram_id": diagram_id,
+                    "version_id": version_id,
+                    "version_number": version.version_number,
+                    "canvas_data": canvas_data or {},
+                    "format": "pdf"
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(
+                    "Version PDF export generated",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    version_id=version_id,
+                    version_number=version.version_number
+                )
+                return Response(
+                    content=response.content,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=diagram_{diagram_id}_v{version.version_number}.pdf"
+                    }
+                )
+            else:
+                logger.error(
+                    "Export service error",
+                    correlation_id=correlation_id,
+                    status_code=response.status_code
+                )
+                raise HTTPException(status_code=500, detail="Export service error")
+    except httpx.TimeoutException:
+        logger.error("Export service timeout", correlation_id=correlation_id)
+        raise HTTPException(status_code=504, detail="Export service timeout")
+    except Exception as e:
+        logger.error(
+            "Version export failed",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
 @app.post("/versions/compress/all")
 async def compress_all_old_versions(
     request: Request,
