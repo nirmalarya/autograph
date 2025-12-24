@@ -599,6 +599,22 @@ async def list_diagrams(
                     )
                 ).subquery()
                 query = query.filter(File.owner_id.in_(user_subquery))
+            elif filter_key.lower() == 'after':
+                # Filter by date (created after)
+                try:
+                    from datetime import datetime
+                    date_obj = datetime.fromisoformat(filter_value)
+                    query = query.filter(File.created_at >= date_obj)
+                except ValueError:
+                    pass  # Invalid date format, skip filter
+            elif filter_key.lower() == 'before':
+                # Filter by date (created before)
+                try:
+                    from datetime import datetime
+                    date_obj = datetime.fromisoformat(filter_value)
+                    query = query.filter(File.created_at <= date_obj)
+                except ValueError:
+                    pass  # Invalid date format, skip filter
         
         # If there are remaining search terms (after filters removed), apply search
         if search_terms:
