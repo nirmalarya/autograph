@@ -8,20 +8,25 @@ interface ExportDialogProps {
   onClose: () => void;
   diagramId: string;
   canvasData: any;
+  selectedShapes?: string[]; // IDs of selected shapes
 }
 
 type BackgroundType = 'transparent' | 'white' | 'custom';
 type ExportFormat = 'png' | 'svg' | 'pdf' | 'json' | 'markdown' | 'html';
 type Resolution = '1x' | '2x' | '3x' | '4x';
 type Quality = 'low' | 'medium' | 'high' | 'ultra';
+type ExportScope = 'full' | 'selection';
 
-export default function ExportDialog({ isOpen, onClose, diagramId, canvasData }: ExportDialogProps) {
+export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, selectedShapes }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [backgroundType, setBackgroundType] = useState<BackgroundType>('white');
   const [customColor, setCustomColor] = useState('#f0f0f0');
   const [resolution, setResolution] = useState<Resolution>('2x');
   const [quality, setQuality] = useState<Quality>('high');
+  const [exportScope, setExportScope] = useState<ExportScope>('full');
   const [exporting, setExporting] = useState(false);
+  
+  const hasSelection = selectedShapes && selectedShapes.length > 0;
 
   if (!isOpen) return null;
 
@@ -54,6 +59,8 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData }:
         quality,
         background: getBackgroundValue(),
         scale: getScaleValue(),
+        export_scope: exportScope,
+        selected_shapes: exportScope === 'selection' ? selectedShapes : undefined,
       };
 
       const response = await fetch(`http://localhost:8097/export/${format}`, {
@@ -137,6 +144,47 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData }:
               ))}
             </div>
           </div>
+
+          {/* Export Scope - Full Canvas or Selection Only */}
+          {hasSelection && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Export Scope
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setExportScope('full')}
+                  className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
+                    exportScope === 'full'
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="font-semibold">Full Canvas</div>
+                  <div className="text-xs text-gray-500 mt-1">Export entire diagram</div>
+                </button>
+                <button
+                  onClick={() => setExportScope('selection')}
+                  className={`px-4 py-3 text-sm font-medium rounded-lg border-2 transition ${
+                    exportScope === 'selection'
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="font-semibold">Selection Only</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    {selectedShapes?.length || 0} shape{selectedShapes?.length !== 1 ? 's' : ''} selected
+                  </div>
+                </button>
+              </div>
+              <p className="mt-2 text-sm text-gray-500">
+                {exportScope === 'selection' 
+                  ? 'Export will be tightly cropped to selected shapes'
+                  : 'Export will include the entire canvas'
+                }
+              </p>
+            </div>
+          )}
 
           {/* Background Options */}
           <div>
@@ -278,6 +326,12 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData }:
               <div className="flex justify-between">
                 <span>Format:</span>
                 <span className="font-medium">{format.toUpperCase()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Scope:</span>
+                <span className="font-medium">
+                  {exportScope === 'full' ? 'Full Canvas' : `Selection (${selectedShapes?.length || 0} shapes)`}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span>Background:</span>
