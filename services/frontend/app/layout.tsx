@@ -15,17 +15,17 @@ import { NotificationProvider, NotificationCenter } from './components/Notificat
 
 const inter = Inter({ subsets: ['latin'] });
 
-// Branding configuration - supports Bayer branding via environment variables
-const isBayerBranding = process.env.NEXT_PUBLIC_ENABLE_BAYER_BRANDING === 'true';
-const logoUrl = isBayerBranding ? (process.env.NEXT_PUBLIC_BAYER_LOGO_URL || '/bayer-logo.svg') : '/icons/icon-192x192.png';
-const primaryColor = isBayerBranding ? (process.env.NEXT_PUBLIC_BAYER_PRIMARY_COLOR || '#00A0E3') : '#3b82f6';
-const secondaryColor = isBayerBranding ? (process.env.NEXT_PUBLIC_BAYER_SECONDARY_COLOR || '#0066B2') : '#2563eb';
-const productName = isBayerBranding ? 'AutoGraph v3 for Bayer' : 'AutoGraph v3';
-const companyName = isBayerBranding ? 'Bayer' : 'AutoGraph';
+// Branding configuration - supports white-label branding via environment variables
+const isCustomBranding = process.env.NEXT_PUBLIC_ENABLE_CUSTOM_BRANDING === 'true';
+const logoUrl = isCustomBranding ? (process.env.NEXT_PUBLIC_CUSTOM_LOGO_URL || '/icons/icon-192x192.png') : '/icons/icon-192x192.png';
+const primaryColor = isCustomBranding ? (process.env.NEXT_PUBLIC_PRIMARY_COLOR || '#3b82f6') : '#3b82f6';
+const secondaryColor = isCustomBranding ? (process.env.NEXT_PUBLIC_SECONDARY_COLOR || '#2563eb') : '#2563eb';
+const productName = isCustomBranding ? (process.env.NEXT_PUBLIC_PRODUCT_NAME || 'AutoGraph') : 'AutoGraph';
+const companyName = isCustomBranding ? (process.env.NEXT_PUBLIC_COMPANY_NAME || 'AutoGraph') : 'AutoGraph';
 
 export const metadata: Metadata = {
   title: `${productName} - AI-Powered Diagramming Platform`,
-  description: `Create professional diagrams with AI assistance. Architecture diagrams, flowcharts, ERDs, and more. ${isBayerBranding ? `Powered by ${companyName}.` : ''}`,
+  description: `Create professional diagrams with AI assistance. Architecture diagrams, flowcharts, ERDs, and more. ${isCustomBranding ? `Powered by ${companyName}.` : ''}`,
   applicationName: productName,
   appleWebApp: {
     capable: true,
