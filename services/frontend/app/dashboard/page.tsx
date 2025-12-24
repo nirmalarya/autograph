@@ -540,27 +540,30 @@ export default function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+      {/* Responsive Navigation */}
       <nav className="bg-white dark:bg-gray-800 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-14 sm:h-16">
+            <div className="flex items-center gap-2 sm:gap-4">
               <button
                 onClick={() => setShowFolderSidebar(!showFolderSidebar)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition touch-manipulation"
                 title={showFolderSidebar ? 'Hide sidebar' : 'Show sidebar'}
               >
                 <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">AutoGraph v3</h1>
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-gray-900 dark:text-gray-100">AutoGraph v3</h1>
             </div>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600 dark:text-gray-300">{user?.email}</span>
+            <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
+              {/* Hide email on mobile */}
+              <span className="hidden sm:inline text-xs sm:text-sm text-gray-600 dark:text-gray-300">{user?.email}</span>
               <ThemeToggle />
+              {/* Hide keyboard shortcuts button on mobile */}
               <button
                 onClick={() => setShowKeyboardShortcuts(true)}
-                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-gray-100 dark:hover:bg-gray-700 rounded-md transition"
+                className="hidden sm:block p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-gray-100 dark:hover:bg-gray-700 rounded-md transition"
                 title="Keyboard shortcuts (⌘?)"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -569,7 +572,7 @@ export default function DashboardPage() {
               </button>
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition"
+                className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100 transition touch-manipulation"
               >
                 Sign Out
               </button>
@@ -598,37 +601,37 @@ export default function DashboardPage() {
           />
         )}
 
-        {/* Main Content */}
+        {/* Main Content - Responsive */}
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="mb-8 flex justify-between items-center">
+          <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8 lg:py-12">
+        <div className="mb-4 sm:mb-6 md:mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-0">
           <div>
-            <h2 className="text-3xl font-bold text-gray-900 mb-2">
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1 sm:mb-2">
               My Diagrams
             </h2>
-            <p className="text-gray-600">
+            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
               {total} diagram{total !== 1 ? 's' : ''} total
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
             <button 
               onClick={() => router.push('/ai-generate')}
-              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-md font-medium hover:from-purple-700 hover:to-blue-700 transition shadow-sm"
+              className="px-4 sm:px-6 py-2.5 sm:py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-md font-medium hover:from-purple-700 hover:to-blue-700 transition shadow-sm text-sm sm:text-base touch-manipulation"
             >
               ✨ AI Generate
             </button>
             <button 
               onClick={() => setShowCreateModal(true)}
-              className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition"
+              className="px-4 sm:px-6 py-2.5 sm:py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition text-sm sm:text-base touch-manipulation"
             >
               + Create Diagram
             </button>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mb-6 border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+        {/* Tabs - Responsive with horizontal scroll on mobile */}
+        <div className="mb-4 sm:mb-6 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
+          <nav className="-mb-px flex space-x-4 sm:space-x-8 min-w-max sm:min-w-0" aria-label="Tabs">
             <button
               onClick={() => {
                 setActiveTab('all');
@@ -636,9 +639,9 @@ export default function DashboardPage() {
               }}
               className={`${
                 activeTab === 'all'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+              } whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition touch-manipulation`}
             >
               All Diagrams
             </button>
@@ -649,9 +652,9 @@ export default function DashboardPage() {
               }}
               className={`${
                 activeTab === 'recent'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+              } whitespace-nowrap py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition touch-manipulation`}
             >
               Recent
             </button>
@@ -1087,14 +1090,14 @@ export default function DashboardPage() {
                   </label>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                   {diagrams.map((diagram) => (
                     <div
                       key={diagram.id}
-                      className={`bg-white rounded-lg shadow-sm overflow-hidden border-2 transition ${
+                      className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm overflow-hidden border-2 transition ${
                         selectedDiagrams.has(diagram.id)
                           ? 'border-blue-500 shadow-md'
-                          : 'border-gray-200 hover:shadow-md hover:border-blue-300'
+                          : 'border-gray-200 dark:border-gray-700 hover:shadow-md hover:border-blue-300 dark:hover:border-blue-600'
                       }`}
                     >
                       {/* Checkbox Overlay */}
