@@ -1,6 +1,6 @@
 """Auth Service - User authentication and authorization."""
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Header
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
@@ -23,6 +23,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 from .database import get_db
 from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, generate_uuid
+from .saml_handler import SAMLHandler
 import redis
 import secrets
 import pyotp
@@ -9484,6 +9485,594 @@ async def remove_folder_permission(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to remove folder permission"
+        )
+
+
+# =============================================================================
+# SAML SSO ENDPOINTS
+# =============================================================================
+
+# Initialize SAML handler
+saml_handler = SAMLHandler(redis_client)
+
+
+# Pydantic models for SAML
+class SAMLProviderConfig(BaseModel):
+    """SAML provider configuration."""
+    name: str
+    enabled: bool = True
+    entity_id: str
+    sso_url: str
+    slo_url: str = ""
+    x509_cert: str
+    attribute_mapping: dict = {
+        "email": "email",
+        "firstName": "firstName",
+        "lastName": "lastName",
+        "groups": "groups"
+    }
+    jit_provisioning: dict = {
+        "enabled": False,
+        "default_role": "viewer"
+    }
+    group_mapping: dict = {}
+
+
+class SAMLJITConfig(BaseModel):
+    """SAML JIT provisioning configuration."""
+    enabled: bool
+    default_role: str = "viewer"
+    create_team: bool = False
+    team_name: str = ""
+
+
+class SAMLGroupMapping(BaseModel):
+    """SAML group to role mapping."""
+    mappings: dict
+
+
+@app.post("/admin/saml/providers", tags=["SAML SSO"])
+async def configure_saml_provider(
+    config: SAMLProviderConfig,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Configure a SAML SSO provider (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        # Build full SAML configuration
+        saml_config = {
+            "enabled": config.enabled,
+            "sp": {
+                "entityId": f"{os.getenv('BASE_URL', 'http://localhost:3000')}/saml/metadata",
+                "assertionConsumerService": {
+                    "url": f"{os.getenv('BASE_URL', 'http://localhost:3000')}/api/auth/saml/acs"
+                }
+            },
+            "idp": {
+                "entityId": config.entity_id,
+                "singleSignOnService": {
+                    "url": config.sso_url
+                },
+                "singleLogoutService": {
+                    "url": config.slo_url
+                },
+                "x509cert": config.x509_cert
+            },
+            "attribute_mapping": config.attribute_mapping,
+            "jit_provisioning": config.jit_provisioning,
+            "group_mapping": config.group_mapping
+        }
+        
+        # Save configuration
+        saml_handler.set_saml_config(config.name, saml_config)
+        
+        # Audit log
+        audit_entry = AuditLog(
+            user_id=current_user.id,
+            action="saml_provider_configured",
+            resource_type="saml",
+            resource_id=config.name,
+            extra_data={
+                "provider": config.name,
+                "entity_id": config.entity_id
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return {
+            "message": "SAML provider configured successfully",
+            "provider": config.name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to configure SAML provider", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to configure SAML provider: {str(e)}"
+        )
+
+
+@app.get("/admin/saml/providers", tags=["SAML SSO"])
+async def list_saml_providers(
+    current_user: User = Depends(get_current_user)
+):
+    """List all configured SAML providers."""
+    try:
+        providers = saml_handler.get_all_providers()
+        return {
+            "providers": providers,
+            "count": len(providers)
+        }
+        
+    except Exception as e:
+        logger.error("Failed to list SAML providers", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list SAML providers"
+        )
+
+
+@app.get("/admin/saml/providers/{provider}", tags=["SAML SSO"])
+async def get_saml_provider(
+    provider: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get SAML provider configuration (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        config = saml_handler.get_saml_config(provider)
+        if not config:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SAML provider '{provider}' not found"
+            )
+        
+        # Don't expose sensitive data
+        safe_config = {
+            "name": provider,
+            "enabled": config.get("enabled", True),
+            "entity_id": config.get("idp", {}).get("entityId", ""),
+            "sso_url": config.get("idp", {}).get("singleSignOnService", {}).get("url", ""),
+            "slo_url": config.get("idp", {}).get("singleLogoutService", {}).get("url", ""),
+            "attribute_mapping": config.get("attribute_mapping", {}),
+            "jit_provisioning": config.get("jit_provisioning", {}),
+            "group_mapping": config.get("group_mapping", {})
+        }
+        
+        return safe_config
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get SAML provider", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get SAML provider"
+        )
+
+
+@app.delete("/admin/saml/providers/{provider}", tags=["SAML SSO"])
+async def delete_saml_provider(
+    provider: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete SAML provider configuration (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        # Delete configuration
+        deleted = saml_handler.delete_saml_config(provider)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SAML provider '{provider}' not found"
+            )
+        
+        # Audit log
+        audit_entry = AuditLog(
+            user_id=current_user.id,
+            action="saml_provider_deleted",
+            resource_type="saml",
+            resource_id=provider,
+            extra_data={"provider": provider},
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return {"message": "SAML provider deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete SAML provider", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete SAML provider"
+        )
+
+
+@app.get("/auth/saml/login/{provider}", tags=["SAML SSO"])
+async def saml_login(provider: str, request: Request):
+    """Initiate SAML SSO login (SP-initiated flow)."""
+    try:
+        # Check if provider is configured
+        config = saml_handler.get_saml_config(provider)
+        if not config:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SAML provider '{provider}' not configured"
+            )
+        
+        if not config.get("enabled", True):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SAML provider '{provider}' is disabled"
+            )
+        
+        # Prepare request data for SAML library
+        request_data = {
+            "https": "on" if str(request.url).startswith("https") else "off",
+            "http_host": request.url.hostname,
+            "script_name": request.url.path,
+            "server_port": request.url.port or (443 if str(request.url).startswith("https") else 80),
+            "get_data": dict(request.query_params)
+        }
+        
+        # Get SAML SSO URL
+        result = saml_handler.prepare_saml_request(provider, request_data)
+        
+        # Store request ID in Redis for validation
+        redis_client.setex(
+            f"saml:request:{result['request_id']}",
+            300,  # 5 minutes
+            json.dumps({"provider": provider, "timestamp": datetime.utcnow().isoformat()})
+        )
+        
+        # Redirect to IdP
+        return RedirectResponse(url=result["sso_url"])
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("SAML login failed", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SAML login failed: {str(e)}"
+        )
+
+
+@app.post("/auth/saml/acs", tags=["SAML SSO"])
+async def saml_acs(request: Request, db: Session = Depends(get_db)):
+    """
+    SAML Assertion Consumer Service (ACS) endpoint.
+    Receives SAML response after authentication.
+    """
+    try:
+        # Get form data
+        form_data = await request.form()
+        saml_response = form_data.get("SAMLResponse")
+        relay_state = form_data.get("RelayState", "")
+        
+        if not saml_response:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing SAML response"
+            )
+        
+        # Prepare request data for SAML library
+        request_data = {
+            "https": "on" if str(request.url).startswith("https") else "off",
+            "http_host": request.url.hostname,
+            "script_name": request.url.path,
+            "server_port": request.url.port or (443 if str(request.url).startswith("https") else 80),
+            "post_data": {"SAMLResponse": saml_response, "RelayState": relay_state}
+        }
+        
+        # Try each configured provider (IdP-initiated flow support)
+        providers = saml_handler.get_all_providers()
+        last_error = None
+        
+        for provider_info in providers:
+            if not provider_info.get("enabled", True):
+                continue
+                
+            provider_name = provider_info["name"]
+            
+            try:
+                # Process SAML response
+                result = saml_handler.process_saml_response(provider_name, request_data)
+                
+                if result["authenticated"]:
+                    user_info = result["user_info"]
+                    
+                    # Check if user exists
+                    user = db.query(User).filter(User.email == user_info["email"]).first()
+                    
+                    # JIT provisioning if enabled and user doesn't exist
+                    if not user:
+                        jit_config = saml_handler.get_jit_config(provider_name)
+                        if jit_config.get("enabled", False):
+                            # Create user
+                            role = saml_handler.map_groups_to_role(
+                                user_info.get("groups", []),
+                                provider_name
+                            )
+                            
+                            user = User(
+                                email=user_info["email"],
+                                full_name=f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip(),
+                                role=role,
+                                email_verified=True,  # Trust SSO
+                                created_at=datetime.utcnow()
+                            )
+                            db.add(user)
+                            db.commit()
+                            db.refresh(user)
+                            
+                            # Audit log
+                            audit_entry = AuditLog(
+                                user_id=user.id,
+                                action="user_created_jit",
+                                resource_type="user",
+                                resource_id=user.id,
+                                extra_data={
+                                    "provider": provider_name,
+                                    "role": role,
+                                    "groups": user_info.get("groups", [])
+                                },
+                                ip_address="system"
+                            )
+                            db.add(audit_entry)
+                            db.commit()
+                        else:
+                            raise HTTPException(
+                                status_code=status.HTTP_403_FORBIDDEN,
+                                detail="User not found and JIT provisioning is disabled"
+                            )
+                    
+                    # Update user role from group mapping if user exists
+                    else:
+                        new_role = saml_handler.map_groups_to_role(
+                            user_info.get("groups", []),
+                            provider_name
+                        )
+                        if new_role != user.role:
+                            user.role = new_role
+                            db.commit()
+                    
+                    # Generate JWT token
+                    access_token_expires = timedelta(hours=1)
+                    access_token = create_access_token(
+                        data={"sub": user.email, "user_id": user.id},
+                        expires_delta=access_token_expires
+                    )
+                    
+                    # Generate refresh token
+                    refresh_token_value = secrets.token_urlsafe(32)
+                    refresh_token = RefreshToken(
+                        token=refresh_token_value,
+                        user_id=user.id,
+                        expires_at=datetime.utcnow() + timedelta(days=30)
+                    )
+                    db.add(refresh_token)
+                    db.commit()
+                    
+                    # Audit log
+                    audit_entry = AuditLog(
+                        user_id=user.id,
+                        action="saml_login",
+                        resource_type="user",
+                        resource_id=user.id,
+                        extra_data={
+                            "provider": provider_name,
+                            "method": "saml_sso"
+                        },
+                        ip_address="system"
+                    )
+                    db.add(audit_entry)
+                    db.commit()
+                    
+                    # Redirect to frontend with tokens
+                    redirect_url = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/callback?access_token={access_token}&refresh_token={refresh_token_value}"
+                    return RedirectResponse(url=redirect_url)
+                    
+            except Exception as provider_error:
+                last_error = provider_error
+                continue
+        
+        # If we get here, no provider worked
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"SAML authentication failed: {str(last_error)}"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("SAML ACS failed", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SAML ACS failed: {str(e)}"
+        )
+
+
+@app.get("/auth/saml/metadata/{provider}", tags=["SAML SSO"])
+async def saml_metadata(provider: str, request: Request):
+    """Get SAML metadata XML for a provider."""
+    try:
+        # Prepare request data
+        request_data = {
+            "https": "on" if str(request.url).startswith("https") else "off",
+            "http_host": request.url.hostname,
+            "script_name": request.url.path,
+            "server_port": request.url.port or (443 if str(request.url).startswith("https") else 80)
+        }
+        
+        # Get metadata
+        metadata = saml_handler.get_metadata(provider, request_data)
+        
+        return Response(content=metadata, media_type="application/xml")
+        
+    except Exception as e:
+        logger.error("Failed to get SAML metadata", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get SAML metadata: {str(e)}"
+        )
+
+
+@app.put("/admin/saml/providers/{provider}/jit", tags=["SAML SSO"])
+async def update_jit_config(
+    provider: str,
+    config: SAMLJITConfig,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update JIT provisioning configuration (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        # Update configuration
+        success = saml_handler.set_jit_config(provider, config.dict())
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SAML provider '{provider}' not found"
+            )
+        
+        # Audit log
+        audit_entry = AuditLog(
+            user_id=current_user.id,
+            action="saml_jit_updated",
+            resource_type="saml",
+            resource_id=provider,
+            extra_data={
+                "provider": provider,
+                "enabled": config.enabled,
+                "default_role": config.default_role
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return {"message": "JIT configuration updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update JIT configuration", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update JIT configuration"
+        )
+
+
+@app.put("/admin/saml/providers/{provider}/groups", tags=["SAML SSO"])
+async def update_group_mapping(
+    provider: str,
+    mapping: SAMLGroupMapping,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update SAML group to role mapping (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        # Update configuration
+        success = saml_handler.set_group_mapping(provider, mapping.mappings)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SAML provider '{provider}' not found"
+            )
+        
+        # Audit log
+        audit_entry = AuditLog(
+            user_id=current_user.id,
+            action="saml_groups_updated",
+            resource_type="saml",
+            resource_id=provider,
+            extra_data={
+                "provider": provider,
+                "mappings": mapping.mappings
+            },
+            ip_address="system"
+        )
+        db.add(audit_entry)
+        db.commit()
+        
+        return {"message": "Group mapping updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update group mapping", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update group mapping"
+        )
+
+
+@app.get("/admin/saml/providers/{provider}/groups", tags=["SAML SSO"])
+async def get_group_mapping(
+    provider: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Get SAML group to role mapping (admin only)."""
+    try:
+        # Check admin permission
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin permission required"
+            )
+        
+        mappings = saml_handler.get_group_mapping(provider)
+        
+        return {"mappings": mappings}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get group mapping", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get group mapping"
         )
 
 
