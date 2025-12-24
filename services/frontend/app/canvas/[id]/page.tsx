@@ -32,6 +32,7 @@ export default function CanvasEditorPage() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [canvasTheme, setCanvasTheme] = useState<'light' | 'dark'>('light');
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [selectedShapes, setSelectedShapes] = useState<string[]>([]);
   
   // Offline storage hook
   const {
@@ -388,7 +389,15 @@ export default function CanvasEditorPage() {
                 Share
               </button>
               <button 
-                onClick={() => setShowExportDialog(true)}
+                onClick={() => {
+                  // Get selected shapes from editor
+                  const editor = (window as any).tldrawEditor;
+                  if (editor) {
+                    const selected = editor.getSelectedShapeIds();
+                    setSelectedShapes(selected);
+                  }
+                  setShowExportDialog(true);
+                }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition"
                 title="Export diagram"
               >
@@ -426,6 +435,7 @@ export default function CanvasEditorPage() {
         onClose={() => setShowExportDialog(false)}
         diagramId={diagramId}
         canvasData={diagram?.canvas_data}
+        selectedShapes={selectedShapes}
       />
     </main>
   );
