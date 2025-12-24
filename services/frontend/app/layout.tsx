@@ -9,6 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import PageTransition from './components/PageTransition';
 import WelcomeTour from './components/WelcomeTour';
 import InteractiveTutorial from './components/InteractiveTutorial';
+import GlobalHelpCenter from './components/GlobalHelpCenter';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -66,6 +67,7 @@ export default function RootLayout({
             <PushNotifications />
             <WelcomeTour />
             <InteractiveTutorial />
+            <GlobalHelpCenter />
             <PageTransition>
               {children}
             </PageTransition>
