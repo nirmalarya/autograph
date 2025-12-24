@@ -10,6 +10,7 @@ import PageTransition from './components/PageTransition';
 import WelcomeTour from './components/WelcomeTour';
 import InteractiveTutorial from './components/InteractiveTutorial';
 import GlobalHelpCenter from './components/GlobalHelpCenter';
+import { ContextualTooltipsProvider, ContextualTooltipsSettings, ContextualTooltipsToggle } from './components/ContextualTooltips';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -62,15 +63,19 @@ export default function RootLayout({
         </a>
         <ErrorBoundary>
           <ThemeProvider>
-            <OfflineStatusBanner />
-            <PWAInstaller />
-            <PushNotifications />
-            <WelcomeTour />
-            <InteractiveTutorial />
-            <GlobalHelpCenter />
-            <PageTransition>
-              {children}
-            </PageTransition>
+            <ContextualTooltipsProvider defaultEnabled={true}>
+              <OfflineStatusBanner />
+              <PWAInstaller />
+              <PushNotifications />
+              <WelcomeTour />
+              <InteractiveTutorial />
+              <GlobalHelpCenter />
+              <ContextualTooltipsToggle />
+              <ContextualTooltipsSettings />
+              <PageTransition>
+                {children}
+              </PageTransition>
+            </ContextualTooltipsProvider>
           </ThemeProvider>
         </ErrorBoundary>
       </body>
