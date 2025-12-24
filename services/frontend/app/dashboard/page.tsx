@@ -671,9 +671,9 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
+    <main id="main-content" role="main" aria-label="Dashboard" className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
       {/* Responsive Navigation */}
-      <nav className="bg-white dark:bg-gray-800 shadow-sm">
+      <nav role="navigation" aria-label="Main navigation" className="bg-white dark:bg-gray-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
           <div className="flex justify-between items-center h-14 sm:h-16">
             <div className="flex items-center gap-2 sm:gap-4">
