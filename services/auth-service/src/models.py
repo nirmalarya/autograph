@@ -53,7 +53,7 @@ class User(Base):
 
     # Relationships
     teams = relationship("Team", back_populates="owner")
-    files = relationship("File", back_populates="owner")
+    files = relationship("File", back_populates="owner", foreign_keys="File.owner_id")
     comments = relationship("Comment", back_populates="user", foreign_keys="Comment.user_id")
     folders = relationship("Folder", back_populates="owner")
     git_connections = relationship("GitConnection", back_populates="user")
@@ -208,7 +208,7 @@ class File(Base):
     last_auto_versioned_at = Column(DateTime(timezone=True))  # Last time an auto-version was created
     
     # Relationships
-    owner = relationship("User", back_populates="files")
+    owner = relationship("User", back_populates="files", foreign_keys=[owner_id])
     team = relationship("Team", back_populates="files")
     folder = relationship("Folder", back_populates="files")
     versions = relationship("Version", back_populates="file", cascade="all, delete-orphan")
