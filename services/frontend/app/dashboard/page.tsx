@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { SkeletonCard, SkeletonListItem } from '../components/SkeletonLoader';
 import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
+import { useFocusTrap } from '../../src/hooks/useFocusTrap';
 import OptimizedImage from '../components/OptimizedImage';
 import Tooltip from '../components/Tooltip';
 import Button from '../components/Button';
@@ -143,6 +144,11 @@ export default function DashboardPage() {
   // Keyboard shortcuts dialog state
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
 
+  // Focus trap for modals
+  const createModalRef = useFocusTrap(showCreateModal);
+  const deleteModalRef = useFocusTrap(showDeleteConfirm);
+  const moveModalRef = useFocusTrap(showMoveDialog);
+
   // Swipe gesture for sidebar on mobile
   useSwipeGesture({
     onSwipeRight: () => {
@@ -208,6 +214,53 @@ export default function DashboardPage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Additional keyboard shortcuts for common actions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+N or Ctrl+N - Create new diagram
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault();
+        setShowCreateModal(true);
+      }
+
+      // Cmd+F or Ctrl+F - Focus search
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+        if (searchInput) {
+          searchInput.focus();
+        }
+      }
+
+      // Escape - Close modals
+      if (e.key === 'Escape') {
+        if (showCreateModal) {
+          setShowCreateModal(false);
+          setDiagramTitle('');
+          setDiagramType('canvas');
+          setError('');
+        } else if (showDeleteConfirm) {
+          setShowDeleteConfirm(false);
+        } else if (showMoveDialog) {
+          setShowMoveDialog(false);
+        } else if (showCommandPalette) {
+          setShowCommandPalette(false);
+        } else if (showKeyboardShortcuts) {
+          setShowKeyboardShortcuts(false);
+        }
+      }
+
+      // Cmd+B or Ctrl+B - Toggle sidebar
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        setShowFolderSidebar((prev) => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showCreateModal, showDeleteConfirm, showMoveDialog, showCommandPalette, showKeyboardShortcuts]);
 
   // Instant search: debounce search input to trigger search automatically
   useEffect(() => {
@@ -1588,9 +1641,32 @@ export default function DashboardPage() {
 
       {/* Create Diagram Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Create New Diagram</h2>
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => {
+            setShowCreateModal(false);
+            setDiagramTitle('');
+            setDiagramType('canvas');
+            setError('');
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-modal-title"
+        >
+          <div 
+            ref={createModalRef}
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setShowCreateModal(false);
+                setDiagramTitle('');
+                setDiagramType('canvas');
+                setError('');
+              }
+            }}
+          >
+            <h2 id="create-modal-title" className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Create New Diagram</h2>
             
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
@@ -1714,9 +1790,24 @@ export default function DashboardPage() {
 
       {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Delete Diagrams?</h2>
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowDeleteConfirm(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-modal-title"
+        >
+          <div 
+            ref={deleteModalRef}
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setShowDeleteConfirm(false);
+              }
+            }}
+          >
+            <h2 id="delete-modal-title" className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Delete Diagrams?</h2>
             <p className="text-gray-700 mb-6">
               Are you sure you want to delete {selectedDiagrams.size} diagram{selectedDiagrams.size !== 1 ? 's' : ''}? 
               They will be moved to trash and can be restored within 30 days.
@@ -1748,9 +1839,24 @@ export default function DashboardPage() {
 
       {/* Move Dialog */}
       {showMoveDialog && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Move Diagrams</h2>
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowMoveDialog(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="move-modal-title"
+        >
+          <div 
+            ref={moveModalRef}
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setShowMoveDialog(false);
+              }
+            }}
+          >
+            <h2 id="move-modal-title" className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Move Diagrams</h2>
             <p className="text-gray-700 mb-4">
               Move {selectedDiagrams.size} diagram{selectedDiagrams.size !== 1 ? 's' : ''} to:
             </p>
