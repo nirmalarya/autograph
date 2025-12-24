@@ -8531,7 +8531,7 @@
       "  - redis",
       "  - minio"
     ],
-    "passes": false,
+    "passes": true,
     "test_method": "docker-compose ps | grep unhealthy should return nothing"
   },
   {
@@ -8547,7 +8547,7 @@
       "Search for 'IntegrityError'",
       "Verify zero matches found"
     ],
-    "passes": false,
+    "passes": true,
     "test_method": "grep -r 'column does not exist\\|schema error' logs/ returns nothing"
   },
   {
@@ -8566,7 +8566,7 @@
       "Verify zero API 4xx/5xx errors",
       "Verify zero CORS errors"
     ],
-    "passes": false,
+    "passes": true,
     "test_method": "E2E Playwright test: monitor console, verify no errors"
   },
   {
@@ -8581,7 +8581,7 @@
       "If any fail, fix immediately before continuing",
       "Document any regressions found"
     ],
-    "passes": false,
+    "passes": true,
     "test_method": "python3 regression_tester.py --sample 10 returns 100% pass rate"
   }
 ]
