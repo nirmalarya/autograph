@@ -12,8 +12,8 @@ AutoGraph is a comprehensive diagramming platform that provides:
 - **Real-Time Collaboration** with WebSocket-based cursor presence and live editing
 - **Version History** with unlimited versions and visual diff
 - **Enterprise Features** including SAML SSO, SCIM provisioning, audit logging
-- **Eraserbot** for codebase analysis and automatic diagram generation
-- **Integrations** with GitHub, GitLab, Azure DevOps, Notion, Confluence, Slack, Jira
+- **Codebase Analysis** for automatic diagram generation from code
+- **Integrations** with GitHub, GitLab, Azure DevOps, Notion, Confluence, Slack
 
 ## 🏗️ Architecture
 
