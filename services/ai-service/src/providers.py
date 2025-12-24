@@ -59,12 +59,12 @@ class AIProvider(ABC):
         pass
 
 
-class BayerMGAProvider(AIProvider):
-    """Bayer MGA (myGenAssist) AI provider."""
+class EnterpriseAIProvider(AIProvider):
+    """Enterprise AI (myGenAssist) AI provider."""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
-        self.endpoint = "https://chat.int.bayer.com/api/v2/chat/completions"
+        self.endpoint = "https://ENTERPRISE_AI_ENDPOINT/api/v2/chat/completions"
         self.default_model = "gpt-4.1"
     
     def get_default_model(self) -> str:
@@ -76,7 +76,7 @@ class BayerMGAProvider(AIProvider):
         diagram_type: Optional[DiagramType] = None,
         model: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate diagram using Bayer MGA."""
+        """Generate diagram using Enterprise AI."""
         model = model or self.default_model
         
         # Build enhanced prompt with examples
@@ -123,14 +123,14 @@ class BayerMGAProvider(AIProvider):
                 return {
                     "mermaid_code": mermaid_code,
                     "diagram_type": detected_type,
-                    "explanation": f"Generated {detected_type} diagram using Bayer MGA",
-                    "provider": "bayer_mga",
+                    "explanation": f"Generated {detected_type} diagram using Enterprise AI",
+                    "provider": "enterprise_ai",
                     "model": model,
                     "tokens_used": data.get("usage", {}).get("total_tokens", 0)
                 }
                 
             except Exception as e:
-                logger.error(f"Bayer MGA generation failed: {str(e)}")
+                logger.error(f"Enterprise AI generation failed: {str(e)}")
                 raise
     
     def _build_enhanced_prompt(self, prompt: str, diagram_type: Optional[DiagramType]) -> str:
@@ -443,14 +443,14 @@ class AIProviderFactory:
         """Create provider chain: MGA → OpenAI → Anthropic → Gemini."""
         providers = []
         
-        # Primary: Bayer MGA
+        # Primary: Enterprise AI
         mga_key = os.getenv("MGA_API_KEY")
         if mga_key:
             try:
-                providers.append(BayerMGAProvider(mga_key))
-                logger.info("Bayer MGA provider configured (PRIMARY)")
+                providers.append(EnterpriseAIProvider(mga_key))
+                logger.info("Enterprise AI provider configured (PRIMARY)")
             except Exception as e:
-                logger.warning(f"Failed to configure Bayer MGA: {e}")
+                logger.warning(f"Failed to configure Enterprise AI: {e}")
         
         # Fallback 1: OpenAI
         openai_key = os.getenv("OPENAI_API_KEY")

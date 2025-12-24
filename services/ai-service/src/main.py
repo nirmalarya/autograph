@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AutoGraph v3 AI Service",
-    description="AI diagram generation service with Bayer MGA primary provider",
+    description="AI diagram generation service with Enterprise MGA primary provider",
     version="1.0.0"
 )
 
@@ -246,7 +246,7 @@ async def get_providers_status():
     
     if mga_key:
         available.append("bayer_mga")
-        fallback_chain.append("Bayer MGA (PRIMARY)")
+        fallback_chain.append("Enterprise MGA (PRIMARY)")
     if openai_key:
         available.append("openai")
         fallback_chain.append("OpenAI (Fallback 1)")
@@ -273,7 +273,7 @@ async def generate_diagram(request: GenerateDiagramRequest):
     """
     Generate a diagram from natural language prompt.
     
-    Uses Bayer MGA as primary provider with automatic fallback chain:
+    Uses Enterprise MGA as primary provider with automatic fallback chain:
     MGA → OpenAI → Anthropic → Gemini
     
     New Features:
@@ -1209,7 +1209,7 @@ async def get_available_models():
             "bayer_mga": {
                 "models": ["gpt-4.1", "gpt-4-turbo", "gpt-3.5-turbo"],
                 "default": "gpt-4.1",
-                "description": "Bayer MGA (Primary Provider)",
+                "description": "Enterprise MGA (Primary Provider)",
             },
             "openai": {
                 "models": ["gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
