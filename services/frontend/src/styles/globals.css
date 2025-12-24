@@ -152,14 +152,35 @@
     @apply text-base leading-relaxed;
   }
   
-  /* Focus States for Accessibility */
+  /* Focus States for Accessibility - Enhanced for Keyboard Navigation */
   a:focus-visible,
   button:focus-visible,
   input:focus-visible,
   select:focus-visible,
   textarea:focus-visible,
-  [tabindex]:focus-visible {
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible,
+  [role="link"]:focus-visible,
+  [role="menuitem"]:focus-visible,
+  [role="tab"]:focus-visible {
     @apply outline-none ring-2 ring-blue-500 ring-offset-2 dark:ring-blue-400 dark:ring-offset-gray-900;
+  }
+  
+  /* Enhanced focus for keyboard users - visible focus indicator */
+  *:focus-visible {
+    outline: 2px solid hsl(217.2 91.2% 45%);
+    outline-offset: 2px;
+  }
+  
+  /* Ensure focus is always visible, never hidden */
+  *:focus {
+    outline: none; /* Remove default outline */
+  }
+  
+  /* High contrast focus for better visibility */
+  .high-contrast *:focus-visible {
+    outline: 3px solid hsl(var(--ring)) !important;
+    outline-offset: 3px !important;
   }
   
   /* Disabled States */
@@ -944,5 +965,64 @@
     overflow: visible;
     clip: auto;
     white-space: normal;
+  }
+  
+  /* Keyboard Navigation Utilities */
+  /* Skip to main content link - always visible when focused */
+  .skip-to-main {
+    @apply sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50;
+    @apply focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-md focus:shadow-lg;
+  }
+  
+  /* Focus trap for modals - prevent tab from leaving modal */
+  .focus-trap {
+    /* Container for focus trap */
+    position: relative;
+  }
+  
+  /* Keyboard-only visible elements */
+  .keyboard-only {
+    @apply sr-only focus-within:not-sr-only;
+  }
+  
+  /* Tab order helpers */
+  .tab-order-first {
+    order: -1;
+  }
+  
+  .tab-order-last {
+    order: 9999;
+  }
+  
+  /* Interactive element minimum size for keyboard users */
+  button,
+  a,
+  [role="button"],
+  [role="link"],
+  [tabindex="0"] {
+    min-height: 44px; /* WCAG 2.1 Level AAA - minimum touch target size */
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  /* Exception for inline links in text */
+  p a,
+  span a,
+  li a {
+    min-height: auto;
+    min-width: auto;
+    display: inline;
+  }
+  
+  /* Keyboard navigation hints */
+  .keyboard-hint {
+    @apply text-xs text-gray-500 dark:text-gray-400 italic;
+  }
+  
+  .keyboard-shortcut {
+    @apply inline-flex items-center px-2 py-1 text-xs font-mono bg-gray-100 dark:bg-gray-800;
+    @apply border border-gray-300 dark:border-gray-600 rounded shadow-sm;
   }
 }
