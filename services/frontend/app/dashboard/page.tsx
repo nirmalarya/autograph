@@ -2,15 +2,41 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Breadcrumbs from '../components/Breadcrumbs';
-import FolderTree from '../components/FolderTree';
-import CommandPalette from '../components/CommandPalette';
-import KeyboardShortcutsDialog from '../components/KeyboardShortcutsDialog';
-import ThemeToggle from '../components/ThemeToggle';
-import MobileBottomNav from '../components/MobileBottomNav';
+import dynamic from 'next/dynamic';
 import { SkeletonCard, SkeletonListItem } from '../components/SkeletonLoader';
 import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
 import OptimizedImage from '../components/OptimizedImage';
+
+// Lazy load heavy components with loading fallbacks
+const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
+  loading: () => <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-64" />,
+});
+
+const FolderTree = dynamic(() => import('../components/FolderTree'), {
+  loading: () => (
+    <div className="space-y-2">
+      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse ml-4" />
+      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse ml-4" />
+    </div>
+  ),
+});
+
+const CommandPalette = dynamic(() => import('../components/CommandPalette'), {
+  ssr: false,
+});
+
+const KeyboardShortcutsDialog = dynamic(() => import('../components/KeyboardShortcutsDialog'), {
+  ssr: false,
+});
+
+const ThemeToggle = dynamic(() => import('../components/ThemeToggle'), {
+  loading: () => <div className="h-10 w-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />,
+});
+
+const MobileBottomNav = dynamic(() => import('../components/MobileBottomNav'), {
+  loading: () => <div className="h-16 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700" />,
+});
 
 interface Diagram {
   id: string;
