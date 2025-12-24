@@ -146,6 +146,11 @@ class File(Base):
     current_version = Column(Integer, default=1)
     version_count = Column(Integer, default=1)  # Track total number of versions
     
+    # Version retention policy
+    retention_policy = Column(String(20), default="keep_all", nullable=False)  # keep_all, keep_last_n, keep_duration
+    retention_count = Column(Integer)  # For keep_last_n: number of versions to keep
+    retention_days = Column(Integer)  # For keep_duration: number of days to keep versions
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -168,6 +173,7 @@ class File(Base):
         Index('idx_files_deleted', 'is_deleted'),
         Index('idx_files_title', 'title'),
         Index('idx_files_last_activity', 'last_activity'),
+        Index('idx_files_retention_policy', 'retention_policy'),
     )
 
 
