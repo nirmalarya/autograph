@@ -2663,8 +2663,27 @@ async def proxy_request(service_name: str, path: str, request: Request):
             if circuit_breaker:
                 circuit_breaker._on_success()
             
+            # For binary content types (images, PDFs), pass through unchanged
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith(("image/", "application/pdf", "application/octet-stream")):
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=content_type
+                )
+            
+            # For JSON responses, return JSONResponse
+            if content_type.startswith("application/json"):
+                return JSONResponse(
+                    content=response.json(),
+                    status_code=response.status_code,
+                    headers=dict(response.headers)
+                )
+            
+            # For other text responses, wrap in JSON with data field
             return JSONResponse(
-                content=response.json() if response.headers.get("content-type", "").startswith("application/json") else {"data": response.text},
+                content={"data": response.text},
                 status_code=response.status_code,
                 headers=dict(response.headers)
             )
