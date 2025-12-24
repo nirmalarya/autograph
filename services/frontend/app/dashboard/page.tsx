@@ -71,6 +71,12 @@ export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [activeTab, setActiveTab] = useState<'all' | 'recent' | 'starred' | 'shared' | 'trash'>('all');
   
+  // Advanced filter state
+  const [filterAuthor, setFilterAuthor] = useState<string>('');
+  const [filterDateRange, setFilterDateRange] = useState<'all' | 'today' | 'week' | 'month' | 'year'>('all');
+  const [filterFolder, setFilterFolder] = useState<string>('');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  
   // Folder navigation state
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<any[]>([]);
@@ -155,7 +161,7 @@ export default function DashboardPage() {
     if (user?.sub) {
       fetchDiagrams();
     }
-  }, [user, page, filterType, searchQuery, sortBy, sortOrder, activeTab, currentFolderId]);
+  }, [user, page, filterType, searchQuery, sortBy, sortOrder, activeTab, currentFolderId, filterAuthor, filterDateRange, filterFolder]);
 
   // Fetch breadcrumbs when folder changes
   useEffect(() => {
@@ -215,8 +221,44 @@ export default function DashboardPage() {
           params.append('file_type', filterType);
         }
 
-        if (searchQuery) {
-          params.append('search', searchQuery);
+        // Build search query with advanced filters
+        let finalSearchQuery = searchQuery;
+        
+        // Add author filter to search query
+        if (filterAuthor) {
+          finalSearchQuery = finalSearchQuery 
+            ? `${finalSearchQuery} author:${filterAuthor}`
+            : `author:${filterAuthor}`;
+        }
+        
+        // Add date range filter
+        if (filterDateRange && filterDateRange !== 'all') {
+          const now = new Date();
+          let startDate = new Date();
+          
+          switch (filterDateRange) {
+            case 'today':
+              startDate.setHours(0, 0, 0, 0);
+              break;
+            case 'week':
+              startDate.setDate(now.getDate() - 7);
+              break;
+            case 'month':
+              startDate.setDate(now.getDate() - 30);
+              break;
+            case 'year':
+              startDate.setDate(now.getDate() - 365);
+              break;
+          }
+          
+          // Add date filter to search query
+          finalSearchQuery = finalSearchQuery 
+            ? `${finalSearchQuery} after:${startDate.toISOString().split('T')[0]}`
+            : `after:${startDate.toISOString().split('T')[0]}`;
+        }
+
+        if (finalSearchQuery) {
+          params.append('search', finalSearchQuery);
         }
 
         if (sortBy) {
@@ -227,8 +269,10 @@ export default function DashboardPage() {
           params.append('sort_order', sortOrder);
         }
 
-        // Add folder filter if a folder is selected
-        if (currentFolderId) {
+        // Add folder filter if a folder is selected (either from sidebar or filter dropdown)
+        if (filterFolder) {
+          params.append('folder_id', filterFolder);
+        } else if (currentFolderId) {
           params.append('folder_id', currentFolderId);
         }
       }
@@ -754,6 +798,28 @@ export default function DashboardPage() {
                 </button>
               </div>
 
+              {/* Advanced Filters Toggle */}
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  className={`px-3 py-1.5 text-sm rounded-md font-medium transition flex items-center gap-1 ${
+                    showAdvancedFilters || filterAuthor || filterDateRange !== 'all' || filterFolder
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                  </svg>
+                  Advanced Filters
+                  {(filterAuthor || filterDateRange !== 'all' || filterFolder) && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-white text-blue-600 rounded-full">
+                      {[filterAuthor, filterDateRange !== 'all', filterFolder].filter(Boolean).length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
               {/* Sort Controls */}
               <div className="flex gap-2 items-center">
                 <span className="text-sm font-medium text-gray-700 mr-2">Sort by:</span>
@@ -850,6 +916,100 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
+            
+            {/* Advanced Filters Panel */}
+            {showAdvancedFilters && (
+              <div className="mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Filter by Author */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Filter by Author
+                    </label>
+                    <input
+                      type="text"
+                      value={filterAuthor}
+                      onChange={(e) => {
+                        setFilterAuthor(e.target.value);
+                        setPage(1);
+                      }}
+                      placeholder="Enter author email or name"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                    {filterAuthor && (
+                      <button
+                        onClick={() => {
+                          setFilterAuthor('');
+                          setPage(1);
+                        }}
+                        className="mt-1 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filter by Date Range */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Filter by Date Range
+                    </label>
+                    <select
+                      value={filterDateRange}
+                      onChange={(e) => {
+                        setFilterDateRange(e.target.value as 'all' | 'today' | 'week' | 'month' | 'year');
+                        setPage(1);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    >
+                      <option value="all">All Time</option>
+                      <option value="today">Today</option>
+                      <option value="week">Last 7 Days</option>
+                      <option value="month">Last 30 Days</option>
+                      <option value="year">Last Year</option>
+                    </select>
+                  </div>
+
+                  {/* Filter by Folder */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Filter by Folder
+                    </label>
+                    <select
+                      value={filterFolder}
+                      onChange={(e) => {
+                        setFilterFolder(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    >
+                      <option value="">All Folders</option>
+                      {/* TODO: Load folders dynamically */}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Use sidebar to navigate folders
+                    </p>
+                  </div>
+                </div>
+
+                {/* Clear All Filters */}
+                {(filterAuthor || filterDateRange !== 'all' || filterFolder) && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <button
+                      onClick={() => {
+                        setFilterAuthor('');
+                        setFilterDateRange('all');
+                        setFilterFolder('');
+                        setPage(1);
+                      }}
+                      className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition"
+                    >
+                      Clear All Filters
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         )}
