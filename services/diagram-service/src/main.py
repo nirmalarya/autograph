@@ -24,7 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team
 
 load_dotenv()
 
@@ -936,6 +936,83 @@ async def list_shared_with_me(
     
     logger.info(
         "Shared with me diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        returned=len(result)
+    )
+    
+    return {
+        "diagrams": result,
+        "total": len(result)
+    }
+
+
+@app.get("/team")
+async def list_team_files(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """List all diagrams in team workspaces where user is a member.
+    
+    This endpoint returns diagrams that belong to teams where the current
+    user is either the owner or a member.
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing team files",
+        correlation_id=correlation_id,
+        user_id=user_id
+    )
+    
+    # Get all teams where user is the owner
+    user_teams = db.query(Team).filter(
+        Team.owner_id == user_id
+    ).all()
+    
+    team_ids = [team.id for team in user_teams]
+    
+    if not team_ids:
+        # User is not part of any team
+        logger.info(
+            "No teams found for user",
+            correlation_id=correlation_id,
+            user_id=user_id
+        )
+        return {
+            "diagrams": [],
+            "total": 0
+        }
+    
+    # Query all files that belong to user's teams
+    team_files = db.query(File).filter(
+        File.team_id.in_(team_ids),
+        File.is_deleted == False
+    ).order_by(
+        File.updated_at.desc()
+    ).all()
+    
+    # Enrich each diagram with owner info
+    result = []
+    for diagram in team_files:
+        # Get owner info
+        owner = db.query(User).filter(User.id == diagram.owner_id).first()
+        
+        diagram_data = enrich_diagram_response(diagram)
+        diagram_data['owner_email'] = owner.email if owner else 'Unknown'
+        
+        # Get team name
+        team = db.query(Team).filter(Team.id == diagram.team_id).first()
+        diagram_data['team_name'] = team.name if team else 'Unknown Team'
+        
+        result.append(diagram_data)
+    
+    logger.info(
+        "Team files listed successfully",
         correlation_id=correlation_id,
         user_id=user_id,
         returned=len(result)
