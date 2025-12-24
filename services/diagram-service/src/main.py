@@ -630,6 +630,7 @@ async def list_diagrams(
                 'last_accessed_at': File.last_accessed_at,
                 'last_activity': File.last_activity,
                 'last_activity_at': File.last_activity  # Alias
+                # Note: size_bytes is not a column, it's calculated dynamically in enrich_diagram_response
             }
             
             if sort_by.lower() not in valid_sort_fields:
@@ -731,6 +732,97 @@ async def list_recent_diagrams(
         "diagrams": [enrich_diagram_response(d) for d in diagrams],
         "total": len(diagrams),
         "limit": limit
+    }
+
+
+@app.get("/starred")
+async def list_starred_diagrams(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """List starred/favorited diagrams for the current user.
+    
+    This endpoint returns all diagrams where is_starred = True,
+    showing the user's favorite diagrams.
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing starred diagrams",
+        correlation_id=correlation_id,
+        user_id=user_id
+    )
+    
+    # Query starred diagrams
+    # Filter by owner, not deleted, and is_starred = True
+    # Sort by updated_at descending (most recently updated first)
+    diagrams = db.query(File).filter(
+        File.owner_id == user_id,
+        File.is_deleted == False,
+        File.is_starred == True
+    ).order_by(
+        File.updated_at.desc()
+    ).all()
+    
+    logger.info(
+        "Starred diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        returned=len(diagrams)
+    )
+    
+    return {
+        "diagrams": [enrich_diagram_response(d) for d in diagrams],
+        "total": len(diagrams)
+    }
+
+
+@app.get("/trash")
+async def list_trash_diagrams(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """List deleted diagrams in trash for the current user.
+    
+    This endpoint returns all diagrams where is_deleted = True,
+    showing diagrams that can be restored within 30 days.
+    """
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Listing trash diagrams",
+        correlation_id=correlation_id,
+        user_id=user_id
+    )
+    
+    # Query deleted diagrams (trash)
+    # Filter by owner and is_deleted = True
+    # Sort by deleted_at descending (most recently deleted first)
+    diagrams = db.query(File).filter(
+        File.owner_id == user_id,
+        File.is_deleted == True
+    ).order_by(
+        File.deleted_at.desc()
+    ).all()
+    
+    logger.info(
+        "Trash diagrams listed successfully",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        returned=len(diagrams)
+    )
+    
+    return {
+        "diagrams": [enrich_diagram_response(d) for d in diagrams],
+        "total": len(diagrams)
     }
 
 
