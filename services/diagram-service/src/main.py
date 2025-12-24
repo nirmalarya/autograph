@@ -1,7 +1,7 @@
 """Diagram Service - Diagram CRUD and storage."""
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, validator
 from typing import Optional, Dict, Any
 import os
@@ -3946,6 +3946,239 @@ async def update_version_description(
             "full_name": user.full_name if user else "Unknown",
             "email": user.email if user else None
         }
+    }
+
+@app.post("/{diagram_id}/versions/{version_id}/share")
+async def create_version_share_link(
+    diagram_id: str,
+    version_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a public share link for a specific version of a diagram.
+    
+    Request body (optional):
+    {
+        "permission": "view",  // Only view supported for versions (read-only)
+        "expires_in_days": 7   // Optional expiration
+    }
+    
+    Returns:
+    {
+        "share_id": "uuid",
+        "token": "unique_token",
+        "share_url": "http://localhost:3000/version-shared/{token}",
+        "version_number": 5,
+        "expires_at": "2025-12-30T00:00:00Z" or null
+    }
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+    
+    if not user_id:
+        logger.warning(
+            "Unauthorized version share creation attempt - no user ID",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            version_id=version_id
+        )
+        raise HTTPException(status_code=401, detail="User ID required")
+    
+    logger.info(
+        "Creating version share link",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        user_id=user_id
+    )
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == version_id,
+        Version.file_id == diagram_id
+    ).first()
+    
+    if not version:
+        logger.warning(
+            "Version share creation failed - version not found",
+            correlation_id=correlation_id,
+            version_id=version_id
+        )
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram to check ownership
+    diagram = db.query(File).filter(
+        File.id == diagram_id,
+        File.is_deleted == False
+    ).first()
+    
+    if not diagram:
+        logger.warning(
+            "Version share creation failed - diagram not found",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id
+        )
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Check authorization (only owner can share)
+    if diagram.owner_id != user_id:
+        logger.warning(
+            "Unauthorized version share creation attempt",
+            correlation_id=correlation_id,
+            diagram_id=diagram_id,
+            user_id=user_id,
+            owner_id=diagram.owner_id
+        )
+        raise HTTPException(status_code=403, detail="Only the owner can share this diagram")
+    
+    # Parse request body (optional)
+    body = {}
+    try:
+        body = await request.json()
+    except:
+        pass  # No body provided, use defaults
+    
+    expires_in_days = body.get("expires_in_days")
+    
+    # Version shares are always read-only
+    permission = "view"
+    
+    # Generate unique share token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    
+    # Calculate expiration
+    expires_at = None
+    if expires_in_days:
+        from datetime import timedelta, timezone as tz
+        expires_at = datetime.now(tz.utc) + timedelta(days=expires_in_days)
+    
+    # Create share record for this specific version
+    share = Share(
+        id=str(uuid.uuid4()),
+        file_id=diagram_id,
+        version_id=version_id,  # This makes it a version-specific share
+        token=token,
+        permission=permission,
+        is_public=True,
+        expires_at=expires_at,
+        view_count=0,
+        created_by=user_id,
+        created_at=datetime.now(timezone.utc)
+    )
+    
+    db.add(share)
+    db.commit()
+    db.refresh(share)
+    
+    # Build share URL (different from regular share)
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    share_url = f"{frontend_url}/version-shared/{token}"
+    
+    logger.info(
+        "Version share link created successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        version_id=version_id,
+        version_number=version.version_number,
+        share_id=share.id,
+        token=token[:10] + "..."
+    )
+    
+    return {
+        "share_id": share.id,
+        "token": token,
+        "share_url": share_url,
+        "version_number": version.version_number,
+        "permission": permission,
+        "expires_at": expires_at.isoformat() if expires_at else None
+    }
+
+@app.get("/version-shared/{token}")
+async def get_shared_version(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Access a shared version via its public token.
+    
+    Returns:
+    {
+        "id": "diagram_id",
+        "title": "Diagram Title",
+        "type": "canvas",
+        "version_number": 5,
+        "version_label": "Production Release",
+        "version_description": "Fixed authentication bug",
+        "canvas_data": {...},
+        "note_content": "...",
+        "created_at": "2025-12-24T00:00:00Z",
+        "permission": "view",
+        "is_read_only": true
+    }
+    """
+    logger.info("Accessing shared version", token=token[:10] + "...")
+    
+    # Find share by token
+    share = db.query(Share).filter(
+        Share.token == token,
+        Share.version_id.isnot(None)  # Must be a version share
+    ).first()
+    
+    if not share:
+        logger.warning("Shared version access failed - invalid token", token=token[:10] + "...")
+        raise HTTPException(status_code=404, detail="Invalid or expired share link")
+    
+    # Check expiration
+    if share.expires_at:
+        if datetime.now(timezone.utc) > share.expires_at:
+            logger.warning("Shared version access failed - link expired", token=token[:10] + "...")
+            raise HTTPException(status_code=403, detail="This share link has expired")
+    
+    # Get version
+    version = db.query(Version).filter(
+        Version.id == share.version_id
+    ).first()
+    
+    if not version:
+        logger.warning("Shared version access failed - version not found", version_id=share.version_id)
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Get diagram info
+    diagram = db.query(File).filter(File.id == share.file_id).first()
+    
+    if not diagram:
+        logger.warning("Shared version access failed - diagram not found", diagram_id=share.file_id)
+        raise HTTPException(status_code=404, detail="Diagram not found")
+    
+    # Update analytics
+    share.view_count += 1
+    share.last_accessed_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    logger.info(
+        "Shared version accessed successfully",
+        token=token[:10] + "...",
+        diagram_id=diagram.id,
+        version_id=version.id,
+        version_number=version.version_number,
+        view_count=share.view_count
+    )
+    
+    # Return version data (read-only)
+    return {
+        "id": diagram.id,
+        "title": diagram.title,
+        "type": diagram.file_type,
+        "version_number": version.version_number,
+        "version_label": version.label,
+        "version_description": version.description,
+        "canvas_data": version.canvas_data,
+        "note_content": version.note_content,
+        "created_at": version.created_at.isoformat(),
+        "permission": "view",
+        "is_read_only": True  # Versions are always read-only
     }
 
 @app.post("/{diagram_id}/versions/{version_id}/restore")

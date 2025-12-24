@@ -299,6 +299,9 @@ class Share(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     file_id = Column(String(36), ForeignKey("files.id", ondelete="CASCADE"), nullable=False)
     
+    # Version-specific sharing (optional - if set, share points to specific version)
+    version_id = Column(String(36), ForeignKey("versions.id", ondelete="CASCADE"))
+    
     # Share settings
     token = Column(String(255), unique=True, nullable=False, index=True)
     permission = Column(String(20), default="view", nullable=False)  # view, edit
@@ -326,6 +329,7 @@ class Share(Base):
         Index('idx_shares_file', 'file_id'),
         Index('idx_shares_token', 'token'),
         Index('idx_shares_user', 'shared_with_user_id'),
+        Index('idx_shares_version', 'version_id'),
     )
 
 
