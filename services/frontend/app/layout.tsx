@@ -8,6 +8,7 @@ import OfflineStatusBanner from './components/OfflineStatusBanner';
 import ErrorBoundary from './components/ErrorBoundary';
 import PageTransition from './components/PageTransition';
 import WelcomeTour from './components/WelcomeTour';
+import InteractiveTutorial from './components/InteractiveTutorial';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -64,6 +65,7 @@ export default function RootLayout({
             <PWAInstaller />
             <PushNotifications />
             <WelcomeTour />
+            <InteractiveTutorial />
             <PageTransition>
               {children}
             </PageTransition>

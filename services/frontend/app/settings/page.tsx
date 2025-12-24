@@ -3,15 +3,18 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWelcomeTour } from '../components/WelcomeTour';
+import { useInteractiveTutorial } from '../components/InteractiveTutorial';
 import Button from '../components/Button';
-import { Play, Shield, Bell, User } from 'lucide-react';
+import { Play, Shield, Bell, User, GraduationCap } from 'lucide-react';
 
 export default function SettingsPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ email?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const { restartTour, hasCompletedTour } = useWelcomeTour();
+  const { restartTutorial, hasCompletedTutorial } = useInteractiveTutorial();
   const [tourCompleted, setTourCompleted] = useState(false);
+  const [tutorialCompleted, setTutorialCompleted] = useState(false);
 
   useEffect(() => {
     // Check if user is authenticated
@@ -32,8 +35,9 @@ export default function SettingsPage() {
     }
 
     setTourCompleted(hasCompletedTour());
+    setTutorialCompleted(hasCompletedTutorial());
     setLoading(false);
-  }, [router, hasCompletedTour]);
+  }, [router, hasCompletedTour, hasCompletedTutorial]);
 
   const handleLogout = () => {
     localStorage.removeItem('access_token');
@@ -92,7 +96,7 @@ export default function SettingsPage() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700">
             <div className="flex items-start gap-4 mb-4">
               <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                <Play className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                <GraduationCap className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
               <div className="flex-1">
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
@@ -120,6 +124,24 @@ export default function SettingsPage() {
                   size="sm"
                 >
                   {tourCompleted ? 'Show Again' : 'Start Tour'}
+                </Button>
+              </div>
+              
+              <div className="flex items-center justify-between py-2 border-t border-gray-200 dark:border-gray-700 pt-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Interactive Tutorial
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {tutorialCompleted ? 'Completed' : 'Not completed'}
+                  </p>
+                </div>
+                <Button
+                  onClick={restartTutorial}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {tutorialCompleted ? 'Restart' : 'Start Tutorial'}
                 </Button>
               </div>
               
