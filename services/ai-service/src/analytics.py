@@ -508,7 +508,7 @@ class GenerationAnalytics:
         
         else:  # balance
             # Balance cost, quality, and speed
-            # Prefer Bayer MGA as primary
+            # Prefer Enterprise MGA as primary
             if "bayer_mga" in self.provider_stats:
                 stats = self.provider_stats["bayer_mga"]
                 if stats.success_rate >= 80:

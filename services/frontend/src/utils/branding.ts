@@ -1,9 +1,9 @@
 /**
- * Bayer Branding Configuration
+ * Branding Configuration
  * 
- * This utility manages Bayer-specific branding including:
- * - Corporate logo display
- * - Corporate colors (Bayer Blue: #00A0E3, #0066B2)
+ * White-label branding support:
+ * - Custom logo display
+ * - Custom colors
  * - Product name customization
  * - Theme customization
  */
@@ -31,19 +31,19 @@ export function getBrandingConfig(): BrandingConfig {
   
   // For server-side, we need to check process.env
   // For client-side, only NEXT_PUBLIC_* vars are available
-  const enableBayerBranding = isBrowser 
-    ? (window as any).__NEXT_PUBLIC_ENABLE_BAYER_BRANDING === 'true' || process.env.NEXT_PUBLIC_ENABLE_BAYER_BRANDING === 'true'
-    : process.env.NEXT_PUBLIC_ENABLE_BAYER_BRANDING === 'true';
+  const enableCustomBranding = isBrowser 
+    ? (window as any).__NEXT_PUBLIC_ENABLE_CUSTOM_BRANDING === 'true' || process.env.NEXT_PUBLIC_ENABLE_CUSTOM_BRANDING === 'true'
+    : process.env.NEXT_PUBLIC_ENABLE_CUSTOM_BRANDING === 'true';
   
-  if (enableBayerBranding) {
+  if (enableCustomBranding) {
     return {
       enabled: true,
-      logoUrl: process.env.NEXT_PUBLIC_BAYER_LOGO_URL || '/bayer-logo.svg',
-      productName: 'AutoGraph v3 for Bayer',
+      logoUrl: process.env.NEXT_PUBLIC_CUSTOM_LOGO_URL || '/icons/icon-192x192.png',
+      productName: process.env.NEXT_PUBLIC_PRODUCT_NAME || 'AutoGraph v3',
       tagline: 'AI-Powered Diagramming Platform',
-      primaryColor: process.env.NEXT_PUBLIC_BAYER_PRIMARY_COLOR || '#00A0E3',
-      secondaryColor: process.env.NEXT_PUBLIC_BAYER_SECONDARY_COLOR || '#0066B2',
-      companyName: 'Bayer',
+      primaryColor: process.env.NEXT_PUBLIC_PRIMARY_COLOR || '#3b82f6',
+      secondaryColor: process.env.NEXT_PUBLIC_SECONDARY_COLOR || '#2563eb',
+      companyName: process.env.NEXT_PUBLIC_COMPANY_NAME || 'AutoGraph',
     };
   }
   
@@ -60,9 +60,9 @@ export function getBrandingConfig(): BrandingConfig {
 }
 
 /**
- * Check if Bayer branding is enabled
+ * Check if custom branding is enabled
  */
-export function isBayerBrandingEnabled(): boolean {
+export function isCustomBrandingEnabled(): boolean {
   return getBrandingConfig().enabled;
 }
 

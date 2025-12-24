@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { getLogoUrl, getProductName, isBayerBrandingEnabled } from '../../src/utils/branding';
+import { getLogoUrl, getProductName, isCustomBrandingEnabled } from '../../src/utils/branding';
 
 interface LogoProps {
   className?: string;
@@ -27,7 +27,7 @@ const textSizeClasses = {
  * Logo Component
  * 
  * Displays the application logo based on branding configuration.
- * Supports both Bayer branding and default AutoGraph branding.
+ * Supports custom white-label branding via environment variables.
  * 
  * Features:
  * - Automatic branding switching via environment variables
@@ -39,13 +39,13 @@ const textSizeClasses = {
 export default function Logo({ className = '', showText = true, size = 'md' }: LogoProps) {
   const logoUrl = getLogoUrl();
   const productName = getProductName();
-  const isBayer = isBayerBrandingEnabled();
+  const isCustom = isCustomBrandingEnabled();
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       {/* Logo Image */}
       <div className={`relative ${sizeClasses[size]} flex-shrink-0`}>
-        {isBayer && logoUrl.endsWith('.svg') ? (
+        {isCustom && logoUrl.endsWith('.svg') ? (
           // For SVG logos, use img tag for better styling control
           <img
             src={logoUrl}
@@ -68,7 +68,7 @@ export default function Logo({ className = '', showText = true, size = 'md' }: L
       {showText && (
         <span 
           className={`font-bold ${textSizeClasses[size]} text-gray-900 dark:text-gray-100 whitespace-nowrap`}
-          style={isBayer ? { color: 'var(--bayer-primary-color, #00A0E3)' } : undefined}
+          style={isCustom ? { color: 'var(--brand-primary-color, #3b82f6)' } : undefined}
         >
           {productName}
         </span>

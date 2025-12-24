@@ -521,6 +521,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# CORS Middleware
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 def filter_canvas_data_by_selection(canvas_data: Dict[str, Any], selected_shapes: list) -> tuple[Dict[str, Any], tuple[int, int, int, int]]:
     """
