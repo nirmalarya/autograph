@@ -7311,6 +7311,257 @@ async def generate_gdpr_compliance_report(
         )
 
 
+# ============================================================================
+# DATA RETENTION POLICIES
+# ============================================================================
+
+class DataRetentionPolicy(BaseModel):
+    """Configuration for data retention policies."""
+    diagram_retention_days: int = 730  # Default: 2 years
+    deleted_retention_days: int = 30  # Default: 30 days in trash
+    version_retention_days: int = 365  # Default: 1 year for old versions
+    enabled: bool = True
+
+
+@app.get("/admin/config/data-retention")
+async def get_data_retention_policy(
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get data retention policy configuration.
+    
+    Feature #544: Enterprise: Data retention policies: auto-delete old data
+    """
+    try:
+        # Read from Redis
+        config_json = redis_client.get("config:data_retention")
+        if config_json:
+            return json.loads(config_json)
+        
+        # Default policy
+        return {
+            "diagram_retention_days": 730,  # 2 years
+            "deleted_retention_days": 30,   # 30 days
+            "version_retention_days": 365,  # 1 year
+            "enabled": True
+        }
+    except Exception as e:
+        logger.error("Error fetching data retention policy", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch configuration"
+        )
+
+
+@app.post("/admin/config/data-retention")
+async def set_data_retention_policy(
+    policy: DataRetentionPolicy,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Configure data retention policy.
+    
+    Feature #544: Enterprise: Data retention policies: auto-delete old data
+    
+    Steps:
+    1. Set policy: delete diagrams after 2 years
+    2. Verify diagrams older than 2 years deleted
+    3. Verify compliance
+    """
+    try:
+        # Validate retention periods
+        if policy.diagram_retention_days < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Diagram retention period must be at least 1 day"
+            )
+        
+        if policy.deleted_retention_days < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deleted items retention must be at least 1 day"
+            )
+        
+        if policy.version_retention_days < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Version retention must be at least 1 day"
+            )
+        
+        if policy.diagram_retention_days > 3650:  # 10 years max
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Diagram retention cannot exceed 10 years (3650 days)"
+            )
+        
+        # Store in Redis
+        redis_client.set("config:data_retention", json.dumps({
+            "diagram_retention_days": policy.diagram_retention_days,
+            "deleted_retention_days": policy.deleted_retention_days,
+            "version_retention_days": policy.version_retention_days,
+            "enabled": policy.enabled
+        }))
+        
+        # If enabled, trigger cleanup via diagram service
+        if policy.enabled:
+            # Note: Actual cleanup would be done by diagram-service
+            # For now, just log the policy change
+            logger.info(
+                "Data retention policy configured",
+                correlation_id=correlation_id,
+                diagram_retention_days=policy.diagram_retention_days,
+                deleted_retention_days=policy.deleted_retention_days,
+                version_retention_days=policy.version_retention_days
+            )
+            old_diagrams = 0
+            deleted_from_trash = 0
+            deleted_versions = 0
+        else:
+            old_diagrams = 0
+            deleted_from_trash = 0
+            deleted_versions = 0
+        
+        # Log configuration change
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="config_change",
+            resource_type="data_retention",
+            resource_id=None,
+            extra_data={
+                "diagram_retention_days": policy.diagram_retention_days,
+                "deleted_retention_days": policy.deleted_retention_days,
+                "version_retention_days": policy.version_retention_days,
+                "enabled": policy.enabled,
+                "old_diagrams_found": old_diagrams,
+                "deleted_from_trash": deleted_from_trash,
+                "old_versions_found": deleted_versions
+            }
+        )
+        db.add(audit)
+        db.commit()
+        
+        return {
+            "message": "Data retention policy updated",
+            "policy": {
+                "diagram_retention_days": policy.diagram_retention_days,
+                "deleted_retention_days": policy.deleted_retention_days,
+                "version_retention_days": policy.version_retention_days,
+                "enabled": policy.enabled
+            },
+            "cleanup_results": {
+                "old_diagrams_found": old_diagrams,
+                "deleted_from_trash": deleted_from_trash,
+                "old_versions_found": deleted_versions
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error setting data retention policy", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update data retention policy"
+        )
+
+
+@app.post("/admin/data-retention/run-cleanup")
+async def run_data_retention_cleanup(
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+    correlation_id: str = Header(None, alias="X-Correlation-ID")
+):
+    """
+    Manually trigger data retention cleanup.
+    
+    Feature #544: Enterprise: Data retention policies: auto-delete old data
+    """
+    try:
+        # Read policy from Redis
+        config_json = redis_client.get("config:data_retention")
+        if not config_json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Data retention policy not configured"
+            )
+        
+        policy = json.loads(config_json)
+        if not policy.get("enabled", False):
+            return {
+                "message": "Data retention policy is disabled",
+                "cleanup_results": {
+                    "old_diagrams_deleted": 0,
+                    "deleted_from_trash": 0,
+                    "old_versions_deleted": 0
+                }
+            }
+        
+        # Call diagram service to perform cleanup
+        import httpx
+        DIAGRAM_SERVICE_URL = os.getenv("DIAGRAM_SERVICE_URL", "http://localhost:8082")
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{DIAGRAM_SERVICE_URL}/admin/cleanup-old-data",
+                    json={
+                        "diagram_retention_days": policy["diagram_retention_days"],
+                        "deleted_retention_days": policy["deleted_retention_days"],
+                        "version_retention_days": policy["version_retention_days"]
+                    },
+                    headers={"X-Correlation-ID": correlation_id or generate_uuid()}
+                )
+                
+                if response.status_code == 200:
+                    cleanup_results = response.json()
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Diagram service returned {response.status_code}"
+                    )
+        except httpx.RequestError as e:
+            logger.error("Error calling diagram service", exc=e, correlation_id=correlation_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Could not reach diagram service"
+            )
+        
+        logger.info(
+            "Manual data retention cleanup completed",
+            correlation_id=correlation_id,
+            cleanup_results=cleanup_results
+        )
+        
+        # Log cleanup action
+        audit = AuditLog(
+            user_id=admin_user.id,
+            action="data_cleanup",
+            resource_type="retention_policy",
+            resource_id=None,
+            extra_data=cleanup_results
+        )
+        db.add(audit)
+        db.commit()
+        
+        return {
+            "message": "Data retention cleanup completed",
+            "cleanup_results": cleanup_results.get("cleanup_results", {}),
+            "cutoff_dates": cleanup_results.get("cutoff_dates", {})
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error running data retention cleanup", exc=e, correlation_id=correlation_id)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to run cleanup"
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("AUTH_SERVICE_PORT", "8085")))

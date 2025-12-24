@@ -7313,3 +7313,103 @@ async def get_cost_allocation_analytics(
         )
         raise HTTPException(status_code=500, detail="Failed to retrieve cost allocation")
 
+
+# ============================================================================
+# DATA RETENTION CLEANUP ENDPOINT
+# ============================================================================
+
+class CleanupRequest(BaseModel):
+    """Request to cleanup old data based on retention policy."""
+    diagram_retention_days: int
+    deleted_retention_days: int
+    version_retention_days: int
+
+
+@app.post("/admin/cleanup-old-data")
+def cleanup_old_data(
+    cleanup_req: CleanupRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Clean up old data based on retention policy.
+    
+    Feature #544: Enterprise: Data retention policies: auto-delete old data
+    
+    This endpoint is called by auth-service to perform cleanup operations.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID")
+    
+    try:
+        # Delete diagrams older than retention period (soft delete - move to trash)
+        diagram_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.diagram_retention_days)
+        old_diagrams = db.query(File).filter(
+            File.created_at < diagram_cutoff,
+            File.is_deleted == False
+        ).all()
+        
+        old_diagrams_count = len(old_diagrams)
+        
+        # Soft-delete old diagrams (move to trash)
+        for diagram in old_diagrams:
+            diagram.is_deleted = True
+            diagram.deleted_at = datetime.now(timezone.utc)
+        
+        # Hard delete from trash (permanently delete)
+        trash_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.deleted_retention_days)
+        deleted_from_trash = db.query(File).filter(
+            File.is_deleted == True,
+            File.deleted_at < trash_cutoff
+        ).delete()
+        
+        # Delete old versions (keep current version)
+        version_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.version_retention_days)
+        
+        # Get all files and their current version numbers
+        files_with_versions = db.query(File.id, File.current_version).all()
+        file_current_versions = {f[0]: f[1] for f in files_with_versions}
+        
+        # Delete old versions that are not current
+        deleted_versions = 0
+        for file_id, current_version in file_current_versions.items():
+            deleted = db.query(Version).filter(
+                Version.file_id == file_id,
+                Version.version_number != current_version,
+                Version.created_at < version_cutoff
+            ).delete(synchronize_session=False)
+            deleted_versions += deleted
+        
+        db.commit()
+        
+        logger.info(
+            "Data retention cleanup completed",
+            correlation_id=correlation_id,
+            old_diagrams_moved_to_trash=old_diagrams_count,
+            deleted_from_trash=deleted_from_trash,
+            old_versions_deleted=deleted_versions,
+            diagram_cutoff=diagram_cutoff.isoformat(),
+            trash_cutoff=trash_cutoff.isoformat(),
+            version_cutoff=version_cutoff.isoformat()
+        )
+        
+        return {
+            "cleanup_results": {
+                "old_diagrams_moved_to_trash": old_diagrams_count,
+                "deleted_from_trash": deleted_from_trash,
+                "old_versions_deleted": deleted_versions
+            },
+            "cutoff_dates": {
+                "diagram_cutoff": diagram_cutoff.isoformat(),
+                "trash_cutoff": trash_cutoff.isoformat(),
+                "version_cutoff": version_cutoff.isoformat()
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error during data retention cleanup: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to cleanup old data")
+
