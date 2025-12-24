@@ -1571,6 +1571,30 @@ async def update_diagram(
         if not is_major_edit:
             diagram.last_auto_versioned_at = datetime.utcnow()
         
+        # Commit first so the version exists before generating thumbnail
+        db.commit()
+        
+        # Generate thumbnail for the version (async call)
+        if diagram.canvas_data:
+            try:
+                thumbnail_url = await generate_thumbnail(new_version.id, diagram.canvas_data)
+                if thumbnail_url:
+                    new_version.thumbnail_url = thumbnail_url
+                    db.commit()
+                    logger.info(
+                        "Version thumbnail generated",
+                        correlation_id=correlation_id,
+                        version_id=new_version.id,
+                        thumbnail_url=thumbnail_url
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to generate version thumbnail, continuing without thumbnail",
+                    correlation_id=correlation_id,
+                    version_id=new_version.id,
+                    error=str(e)
+                )
+        
         logger.info(
             "Version created",
             correlation_id=correlation_id,
@@ -1580,8 +1604,10 @@ async def update_diagram(
             is_major_edit=is_major_edit,
             user_id=user_id
         )
+    else:
+        # No version created, but we still need to commit the diagram updates
+        db.commit()
     
-    db.commit()
     db.refresh(diagram)
     
     # Update metrics
@@ -2237,6 +2263,7 @@ async def get_versions(
                 "version_number": v.version_number,
                 "description": v.description,
                 "label": v.label,
+                "thumbnail_url": v.thumbnail_url,
                 "created_at": v.created_at.isoformat() if v.created_at else None,
                 "created_by": v.created_by
             }
@@ -3325,6 +3352,28 @@ async def create_version(
     db.add(new_version)
     db.commit()
     db.refresh(new_version)
+    
+    # Generate thumbnail for the version (async call)
+    if diagram.canvas_data:
+        try:
+            thumbnail_url = await generate_thumbnail(new_version.id, diagram.canvas_data)
+            if thumbnail_url:
+                new_version.thumbnail_url = thumbnail_url
+                db.commit()
+                db.refresh(new_version)
+                logger.info(
+                    "Version thumbnail generated",
+                    correlation_id=correlation_id,
+                    version_id=new_version.id,
+                    thumbnail_url=thumbnail_url
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to generate version thumbnail, continuing without thumbnail",
+                correlation_id=correlation_id,
+                version_id=new_version.id,
+                error=str(e)
+            )
     
     # Get user info
     user = db.query(User).filter(User.id == user_id).first()
