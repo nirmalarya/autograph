@@ -7,6 +7,8 @@ import FolderTree from '../components/FolderTree';
 import CommandPalette from '../components/CommandPalette';
 import KeyboardShortcutsDialog from '../components/KeyboardShortcutsDialog';
 import ThemeToggle from '../components/ThemeToggle';
+import MobileBottomNav from '../components/MobileBottomNav';
+import { useSwipeGesture } from '../../src/hooks/useSwipeGesture';
 
 interface Diagram {
   id: string;
@@ -95,6 +97,24 @@ export default function DashboardPage() {
   
   // Keyboard shortcuts dialog state
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+
+  // Swipe gesture for sidebar on mobile
+  useSwipeGesture({
+    onSwipeRight: () => {
+      // Only on mobile (screen width < 768px)
+      if (window.innerWidth < 768) {
+        setShowFolderSidebar(true);
+      }
+    },
+    onSwipeLeft: () => {
+      // Only on mobile (screen width < 768px)
+      if (window.innerWidth < 768 && showFolderSidebar) {
+        setShowFolderSidebar(false);
+      }
+    },
+    minSwipeDistance: 50,
+    maxSwipeTime: 300,
+  });
 
   useEffect(() => {
     // Check if user is authenticated
@@ -1573,6 +1593,9 @@ export default function DashboardPage() {
         isOpen={showKeyboardShortcuts}
         onClose={() => setShowKeyboardShortcuts(false)}
       />
+
+      {/* Mobile Bottom Navigation */}
+      <MobileBottomNav onCreateClick={() => setShowCreateModal(true)} />
     </main>
   );
 }
