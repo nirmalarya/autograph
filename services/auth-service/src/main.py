@@ -1196,7 +1196,31 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
     client_ip = get_client_ip(request)
     user_agent = get_user_agent(request)
     
-    # Check rate limit
+    # First, check if user exists and if account is locked
+    # (Account lockout check happens BEFORE IP rate limiting to give locked accounts priority)
+    user = get_user_by_email(db, user_data.email)
+    if user and user.locked_until and datetime.now(timezone.utc) < user.locked_until:
+        # Account is locked - show this error instead of rate limit
+        time_remaining = (user.locked_until - datetime.now(timezone.utc)).total_seconds() / 60
+        create_audit_log(
+            db=db,
+            action="login_failed",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            extra_data={
+                "email": user_data.email,
+                "reason": "account_locked",
+                "locked_until": user.locked_until.isoformat(),
+                "minutes_remaining": int(time_remaining)
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Account locked due to too many failed attempts. Please try again in {int(time_remaining)} minutes."
+        )
+    
+    # Check rate limit (IP-based)
     is_allowed, attempts_remaining = check_rate_limit(client_ip)
     if not is_allowed:
         ttl = get_rate_limit_ttl(client_ip)
@@ -1213,8 +1237,9 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
             detail=f"Too many login attempts. Please try again in {ttl} seconds."
         )
     
-    # Verify user exists
-    user = get_user_by_email(db, user_data.email)
+    # Verify user exists (check again in case it wasn't checked above)
+    if not user:
+        user = get_user_by_email(db, user_data.email)
     if not user:
         # Record failed login attempt
         record_failed_login(client_ip)
@@ -1231,10 +1256,60 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
             detail="Incorrect email or password"
         )
     
+    # If lockout period has passed, reset the lockout
+    if user.locked_until and datetime.now(timezone.utc) >= user.locked_until:
+        user.locked_until = None
+        user.failed_login_attempts = 0
+        db.commit()
+        logger.info(
+            "Account lockout expired, reset",
+            user_id=user.id,
+            email=user.email
+        )
+    
     # Verify password
     if not verify_password(user_data.password, user.password_hash):
-        # Record failed login attempt
+        # Increment failed login attempts
+        user.failed_login_attempts += 1
+        
+        # Lock account if 10 or more failed attempts
+        if user.failed_login_attempts >= 10:
+            user.locked_until = datetime.now(timezone.utc) + timedelta(hours=1)
+            db.commit()
+            
+            # Log account locked
+            create_audit_log(
+                db=db,
+                action="account_locked",
+                user_id=user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                extra_data={
+                    "email": user_data.email,
+                    "reason": "too_many_failed_attempts",
+                    "attempts": user.failed_login_attempts,
+                    "locked_until": user.locked_until.isoformat()
+                }
+            )
+            
+            logger.warning(
+                "Account locked due to failed login attempts",
+                user_id=user.id,
+                email=user.email,
+                attempts=user.failed_login_attempts,
+                locked_until=user.locked_until.isoformat()
+            )
+            
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account locked due to too many failed attempts. Please try again in 1 hour."
+            )
+        else:
+            db.commit()
+        
+        # Record failed login attempt (rate limiting)
         record_failed_login(client_ip)
+        
         # Log failed login
         create_audit_log(
             db=db,
@@ -1242,7 +1317,12 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
             user_id=user.id,
             ip_address=client_ip,
             user_agent=user_agent,
-            extra_data={"email": user_data.email, "reason": "incorrect_password"}
+            extra_data={
+                "email": user_data.email,
+                "reason": "incorrect_password",
+                "failed_attempts": user.failed_login_attempts,
+                "remaining_attempts": 10 - user.failed_login_attempts
+            }
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1283,6 +1363,17 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
     
     # Reset rate limit on successful password authentication
     reset_rate_limit(client_ip)
+    
+    # Reset failed login attempts on successful authentication
+    if user.failed_login_attempts > 0:
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        db.commit()
+        logger.info(
+            "Reset failed login attempts after successful login",
+            user_id=user.id,
+            email=user.email
+        )
     
     # Check if MFA is enabled for this user
     if user.mfa_enabled and user.mfa_secret:

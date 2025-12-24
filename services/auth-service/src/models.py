@@ -38,6 +38,10 @@ class User(Base):
     mfa_enabled = Column(Boolean, default=False, nullable=False)
     mfa_secret = Column(String(255))  # Base32-encoded TOTP secret
     
+    # Account lockout fields
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True))  # Account locked until this time
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
