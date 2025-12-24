@@ -1466,6 +1466,43 @@ async def update_diagram(
                 detail=f"Diagram was modified by another user. Expected version {update_data.expected_version}, but current version is {diagram.current_version}. Please refresh and try again."
             )
     
+    # Major edit detection: Check if 10+ elements were deleted
+    # IMPORTANT: Must check BEFORE updating diagram.canvas_data
+    is_major_edit = False
+    version_description = "Auto-save"
+    
+    if update_data.canvas_data is not None and diagram.canvas_data is not None:
+        # Count elements in old and new canvas data
+        old_canvas = diagram.canvas_data if isinstance(diagram.canvas_data, dict) else {}
+        new_canvas = update_data.canvas_data if isinstance(update_data.canvas_data, dict) else {}
+        
+        # Try different common keys for elements (shapes, elements, objects, etc.)
+        old_count = 0
+        new_count = 0
+        
+        for key in ['shapes', 'elements', 'objects', 'nodes', 'items']:
+            if key in old_canvas and isinstance(old_canvas[key], list):
+                old_count = len(old_canvas[key])
+                break
+        
+        for key in ['shapes', 'elements', 'objects', 'nodes', 'items']:
+            if key in new_canvas and isinstance(new_canvas[key], list):
+                new_count = len(new_canvas[key])
+                break
+        
+        # If 10+ elements were deleted, mark as major edit
+        if old_count - new_count >= 10:
+            is_major_edit = True
+            version_description = "Major edit"
+            logger.info(
+                "Major edit detected - 10+ elements deleted",
+                correlation_id=correlation_id,
+                diagram_id=diagram_id,
+                old_count=old_count,
+                new_count=new_count,
+                deleted_count=old_count - new_count
+            )
+    
     # Update diagram fields
     if update_data.title is not None:
         diagram.title = update_data.title
@@ -1494,9 +1531,12 @@ async def update_diagram(
                 error=str(e)
             )
     
-    # Auto-versioning: Create a version if 5+ minutes have passed since last auto-version
+    # Auto-versioning: Create a version if 5+ minutes have passed OR if major edit detected
     should_create_version = False
-    if diagram.last_auto_versioned_at is None:
+    if is_major_edit:
+        # Major edit - always create version immediately
+        should_create_version = True
+    elif diagram.last_auto_versioned_at is None:
         # First time - create initial version
         should_create_version = True
     else:
@@ -1513,26 +1553,31 @@ async def update_diagram(
         
         next_version_number = (latest_version.version_number + 1) if latest_version else 1
         
-        # Create auto-version snapshot
+        # Create version snapshot
         new_version = Version(
             id=str(uuid.uuid4()),
             file_id=diagram_id,
             version_number=next_version_number,
             canvas_data=diagram.canvas_data if update_data.canvas_data is not None else None,
             note_content=diagram.note_content if update_data.note_content is not None else None,
-            description="Auto-save",
+            description=version_description,
             created_by=user_id
         )
         
         db.add(new_version)
         diagram.current_version = next_version_number
-        diagram.last_auto_versioned_at = datetime.utcnow()
+        
+        # Only update last_auto_versioned_at for non-major edits (so major edits don't block the 5-minute timer)
+        if not is_major_edit:
+            diagram.last_auto_versioned_at = datetime.utcnow()
         
         logger.info(
-            "Auto-version created",
+            "Version created",
             correlation_id=correlation_id,
             diagram_id=diagram_id,
             version_number=next_version_number,
+            description=version_description,
+            is_major_edit=is_major_edit,
             user_id=user_id
         )
     
