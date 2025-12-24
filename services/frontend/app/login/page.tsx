@@ -129,32 +129,32 @@ function LoginForm() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-4 py-6 sm:px-6 sm:py-8 md:p-8 bg-gray-50 dark:bg-gray-900">
+    <main id="main-content" role="main" aria-label="Login page" className="flex min-h-screen flex-col items-center justify-center px-4 py-6 sm:px-6 sm:py-8 md:p-8 bg-gray-50 dark:bg-gray-900">
       <div className="w-full max-w-md">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 sm:p-8">
-          <div className="text-center mb-6 sm:mb-8">
+          <header className="text-center mb-6 sm:mb-8">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-gray-100 mb-2">
               {mfaRequired ? 'Two-Factor Authentication' : 'Welcome Back'}
             </h1>
             <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
               {mfaRequired ? 'Enter your 6-digit code' : 'Sign in to AutoGraph v3'}
             </p>
-          </div>
+          </header>
 
           {success && (
-            <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+            <div role="status" aria-live="polite" className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
               <p className="text-sm text-green-800 dark:text-green-300">{success}</p>
             </div>
           )}
 
           {error && (
-            <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+            <div role="alert" aria-live="assertive" className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
               <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
             </div>
           )}
 
           {!mfaRequired ? (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6" aria-label="Login form">
               <Input
                 type="email"
                 id="email"
@@ -208,7 +208,7 @@ function LoginForm() {
               </Button>
             </form>
           ) : (
-            <form onSubmit={handleMfaSubmit} className="space-y-6">
+            <form onSubmit={handleMfaSubmit} className="space-y-6" aria-label="Two-factor authentication form">
               <Input
                 type="text"
                 id="mfa_code"
@@ -257,28 +257,30 @@ function LoginForm() {
           )}
 
           {!mfaRequired && (
-            <div className="mt-6 text-center">
-              <p className="text-sm text-gray-600">
+            <nav aria-label="Account navigation" className="mt-6 text-center">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
                 Don't have an account?{' '}
                 <a
                   href="/register"
-                  className="text-blue-600 hover:text-blue-700 font-medium"
+                  aria-label="Sign up for a new account"
+                  className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
                 >
                   Sign up
                 </a>
               </p>
-            </div>
+            </nav>
           )}
         </div>
 
-        <div className="mt-4 text-center">
+        <nav aria-label="Back navigation" className="mt-4 text-center">
           <a
             href="/"
-            className="text-sm text-gray-600 hover:text-gray-900"
+            aria-label="Go back to home page"
+            className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
           >
             ← Back to home
           </a>
-        </div>
+        </nav>
       </div>
     </main>
   );
