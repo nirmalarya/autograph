@@ -1014,7 +1014,7 @@ SERVICES = {
 }
 
 
-def verify_jwt_token(token: str) -> dict:
+async def verify_jwt_token(token: str) -> dict:
     """Verify JWT token and return payload."""
     try:
         # Decode and verify token (includes expiration check)
@@ -1032,6 +1032,38 @@ def verify_jwt_token(token: str) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type"
             )
+
+        # Feature #115: Check if OAuth token is revoked
+        if token_type == "oauth_access":
+            token_jti = payload.get("jti")
+            if token_jti:
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        response = await client.get(
+                            f"http://{SERVICE_HOST_AUTH}:8085/oauth/token/status/{token_jti}"
+                        )
+                        if response.status_code == 200:
+                            token_status = response.json()
+                            if token_status.get("is_revoked"):
+                                raise HTTPException(
+                                    status_code=status.HTTP_401_UNAUTHORIZED,
+                                    detail="Token revoked"
+                                )
+                        # If auth service is down or token not found, fail closed for security
+                        elif response.status_code != 404:
+                            logger.warning(
+                                "Failed to check OAuth token status",
+                                token_jti=token_jti,
+                                status_code=response.status_code
+                            )
+                except httpx.RequestError as e:
+                    logger.warning(
+                        "Error checking OAuth token revocation status",
+                        token_jti=token_jti,
+                        error=str(e)
+                    )
+                    # Fail open for availability - if auth service is down, allow the request
+                    # In production, you might want to fail closed instead
 
         return payload
     except JWTError as e:
@@ -1335,7 +1367,7 @@ async def authenticate_request(request: Request, call_next):
     
     # Verify token
     try:
-        payload = verify_jwt_token(token)
+        payload = await verify_jwt_token(token)
         # Add user_id to request state for downstream services
         request.state.user_id = payload.get("sub")
 

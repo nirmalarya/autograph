@@ -5709,6 +5709,112 @@ async def oauth_revoke_token(
         )
 
 
+@app.get("/oauth/token/status/{token_jti}")
+async def oauth_token_status(
+    token_jti: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Check OAuth token revocation status.
+
+    Feature #115: OAuth 2.0 token revocation
+    Used by API Gateway to verify token validity.
+    """
+    try:
+        from .models import OAuthAccessToken
+
+        oauth_token = db.query(OAuthAccessToken).filter(
+            OAuthAccessToken.token_jti == token_jti
+        ).first()
+
+        if not oauth_token:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Token not found"
+            )
+
+        return {
+            "token_jti": token_jti,
+            "is_revoked": oauth_token.is_revoked,
+            "revoked_at": oauth_token.revoked_at.isoformat() if oauth_token.revoked_at else None,
+            "expires_at": oauth_token.expires_at.isoformat() if oauth_token.expires_at else None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error checking OAuth token status",
+            token_jti=token_jti,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check token status"
+        )
+
+
+@app.get("/settings/connected-apps")
+async def get_connected_apps(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all OAuth apps with active tokens for the current user.
+
+    Feature #115: OAuth 2.0 token revocation
+    Returns apps that the user has authorized, with revocation capability.
+    """
+    try:
+        from .models import OAuthAccessToken, OAuthApp
+
+        # Get all OAuth access tokens for this user (both active and revoked)
+        tokens = db.query(OAuthAccessToken).filter(
+            OAuthAccessToken.user_id == current_user.id
+        ).all()
+
+        # Group tokens by app
+        apps_dict = {}
+        for token in tokens:
+            if token.app_id not in apps_dict:
+                app = db.query(OAuthApp).filter(OAuthApp.id == token.app_id).first()
+                if app:
+                    apps_dict[token.app_id] = {
+                        "app_id": app.id,
+                        "app_name": app.name,
+                        "app_description": app.description,
+                        "app_logo_url": app.logo_url,
+                        "scopes": token.scopes,
+                        "created_at": token.created_at.isoformat(),
+                        "last_used_at": token.last_used_at.isoformat() if token.last_used_at else None,
+                        "is_revoked": token.is_revoked,
+                        "revoked_at": token.revoked_at.isoformat() if token.revoked_at else None,
+                        "token_jti": token.token_jti
+                    }
+            else:
+                # Update if this token was used more recently
+                if token.last_used_at and (
+                    not apps_dict[token.app_id]["last_used_at"] or
+                    token.last_used_at.isoformat() > apps_dict[token.app_id]["last_used_at"]
+                ):
+                    apps_dict[token.app_id]["last_used_at"] = token.last_used_at.isoformat()
+
+        return {
+            "connected_apps": list(apps_dict.values())
+        }
+
+    except Exception as e:
+        logger.error(
+            "Error fetching connected apps",
+            user_id=current_user.id,
+            exc=e
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch connected apps"
+        )
+
+
 # ========================================
 # Team Management Endpoints (Features #528-530)
 # ========================================

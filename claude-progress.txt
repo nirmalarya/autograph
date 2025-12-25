@@ -7409,3 +7409,158 @@ After:  113/658 features passing (17.2%)
 
 SESSION COMPLETE ✅
 ================================================================================
+
+================================================================================
+SESSION: Feature #114 - OAuth 2.0 Scope-based Permissions
+DATE: 2025-12-25 13:24:12
+================================================================================
+
+FEATURE IMPLEMENTED: OAuth 2.0 Scope-based Permissions (Feature #114)
+STATUS: COMPLETE AND PASSING
+
+IMPLEMENTATION SUMMARY:
+======================
+Added scope enforcement to the API Gateway to restrict OAuth token permissions:
+- read scope: Only GET/HEAD/OPTIONS (read-only access)
+- write scope: All methods including POST/PUT/DELETE/PATCH
+- admin scope: Full access (all operations)
+
+CODE CHANGES:
+=============
+1. services/api-gateway/src/main.py:
+   - Added scope validation in authenticate_request middleware
+   - Checks token type (oauth_access) to identify OAuth tokens
+   - Validates scopes against HTTP method requirements
+   - Returns 403 Forbidden for insufficient permissions
+   - Logs permission grants/denials for audit
+
+VALIDATION:
+===========
+Created comprehensive test: validate_feature114_oauth_scopes.py
+- Test 1 (read scope): GET PASS, POST returns 403 PASS
+- Test 2 (write scope): GET PASS, POST PASS, PUT PASS, DELETE PASS
+- Test 3 (admin scope): All operations PASS
+
+All tests passed!
+
+TECHNICAL DETAILS:
+==================
+- Scope data stored in JWT payload (scopes field)
+- Enforcement happens at API Gateway (before routing to services)
+- Detailed error responses include granted vs required scopes
+- Regular JWT tokens (non-OAuth) bypass scope checks
+- OAuth tokens from Features #112-113 work seamlessly
+
+REGRESSION TESTING:
+===================
+Baseline check: 114/114 features passing (no regressions)
+All OAuth features working (#112, #113, #114)
+Regular authentication unaffected
+
+PROGRESS:
+=========
+Before: 113/658 features (17.2%)
+After:  114/658 features (17.3%)
+Implemented: Feature #114
+
+FILES:
+======
+Modified:
+- services/api-gateway/src/main.py (scope enforcement logic)
+- spec/feature_list.json (Feature #114 -> passes: true)
+- baseline_features.txt (114)
+
+Created:
+- validate_feature114_oauth_scopes.py (E2E test)
+
+GIT COMMIT: cb13cbe
+"Feature #114: Implement OAuth 2.0 scope-based permissions"
+
+SESSION COMPLETE
+================================================================================
+
+================================================================================
+SESSION: Feature #115 - OAuth 2.0 Token Revocation
+DATE: 2025-12-25
+FEATURE: OAuth 2.0 token revocation
+================================================================================
+
+IMPLEMENTATION SUMMARY:
+=======================
+Feature #115: OAuth 2.0 token revocation - Users can revoke OAuth access tokens
+for third-party apps via /settings/connected-apps
+
+CHANGES MADE:
+=============
+1. API Gateway (services/api-gateway/src/main.py):
+   - Modified verify_jwt_token() to be async
+   - Added OAuth token revocation check
+   - Calls auth-service /oauth/token/status/{jti} endpoint
+   - Returns 401 "Token revoked" for revoked tokens
+   - Fail open strategy if auth service unavailable
+
+2. Auth Service (services/auth-service/src/main.py):
+   - Added GET /oauth/token/status/{token_jti} endpoint
+   - Returns token revocation status (is_revoked, revoked_at, expires_at)
+   - Added GET /settings/connected-apps endpoint
+   - Lists all OAuth apps with active/revoked tokens for user
+   - Shows app details, scopes, last_used_at, revocation status
+   - Existing POST /oauth/revoke endpoint already implemented
+
+3. Validation Script (validate_feature115_oauth_revocation.py):
+   - Comprehensive E2E test for token revocation flow
+   - Tests all 7 steps from feature requirements
+   - Verifies token works before revocation
+   - Verifies 401 error after revocation
+   - Confirms "Token revoked" error message
+
+TECHNICAL DETAILS:
+==================
+- Token revocation stored in oauth_access_tokens table (is_revoked, revoked_at)
+- Revocation check happens at API Gateway via HTTP call to auth service
+- Only OAuth tokens (type: oauth_access) checked for revocation
+- Regular JWT tokens (type: access) bypass revocation check
+- Connected apps endpoint groups tokens by app_id
+- Shows most recent last_used_at across all tokens for same app
+
+VALIDATION:
+===========
+All 9 test steps passed:
+✅ Register user and verify email
+✅ Login to get access token  
+✅ Create OAuth app
+✅ Complete OAuth authorization flow
+✅ Test OAuth token before revocation (works)
+✅ List connected apps (shows app)
+✅ Revoke OAuth access token
+✅ Test revoked token (gets 401 with "Token revoked")
+✅ Verify connected apps shows revoked status
+
+REGRESSION TESTING:
+===================
+Baseline check: 115/115 features passing (no regressions)
+All OAuth features working (#112, #113, #114, #115)
+Regular authentication unaffected
+
+PROGRESS:
+=========
+Before: 114/658 features (17.3%)
+After:  115/658 features (17.5%)
+Implemented: Feature #115
+
+FILES MODIFIED:
+===============
+- services/api-gateway/src/main.py (async verify_jwt_token + revocation check)
+- services/auth-service/src/main.py (token status + connected apps endpoints)
+- spec/feature_list.json (Feature #115 -> passes: true)
+- baseline_features.txt (115)
+
+FILES CREATED:
+==============
+- validate_feature115_oauth_revocation.py (E2E test)
+
+GIT COMMIT: Pending
+"Feature #115: Implement OAuth 2.0 token revocation"
+
+SESSION COMPLETE
+================================================================================
