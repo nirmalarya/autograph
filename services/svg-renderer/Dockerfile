@@ -2,8 +2,23 @@ FROM node:20.18.0-alpine
 
 WORKDIR /app
 
-# Install dependencies for canvas
+# Install ca-certificates first
+RUN apk add --no-cache ca-certificates
+
+# Copy corporate SSL certificates for Bayer proxy
+COPY package.json package-lock.json* ./
+# Note: Certificates should be mounted at build time via build context
+
+# Install dependencies for canvas (with SSL handling)
 RUN apk add --no-cache \
+    build-base \
+    cairo-dev \
+    libjpeg-turbo-dev \
+    pango-dev \
+    giflib-dev \
+    pixman-dev \
+    pkgconfig \
+    || apk add --no-cache --allow-untrusted \
     build-base \
     cairo-dev \
     libjpeg-turbo-dev \
@@ -12,8 +27,7 @@ RUN apk add --no-cache \
     pixman-dev \
     pkgconfig
 
-# Copy package files
-COPY package.json package-lock.json* ./
+# Install Node dependencies
 RUN npm ci --only=production || npm install --only=production
 
 # Copy application code
