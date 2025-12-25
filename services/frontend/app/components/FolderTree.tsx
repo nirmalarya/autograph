@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 interface Folder {
   id: string;
@@ -60,7 +61,7 @@ export default function FolderTree({ userId, currentFolderId, onFolderSelect, on
   const fetchFolders = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8082/folders', {
+      const response = await fetch(`${API_ENDPOINTS.diagrams.base}/folders`, {
         headers: {
           'X-User-ID': userId,
         },
@@ -86,7 +87,7 @@ export default function FolderTree({ userId, currentFolderId, onFolderSelect, on
 
   const loadSubfolders = async (folderId: string) => {
     try {
-      const response = await fetch(`http://localhost:8082/folders?parent_id=${folderId}`, {
+      const response = await fetch(`${API_ENDPOINTS.diagrams.base}/folders?parent_id=${folderId}`, {
         headers: {
           'X-User-ID': userId,
         },
@@ -131,7 +132,7 @@ export default function FolderTree({ userId, currentFolderId, onFolderSelect, on
 
     setCreating(true);
     try {
-      const response = await fetch('http://localhost:8082/folders', {
+      const response = await fetch(`${API_ENDPOINTS.diagrams.base}/folders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

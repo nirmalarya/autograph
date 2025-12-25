@@ -20,19 +20,20 @@
  */
 
 import { useState, useCallback } from 'react';
-import { 
-  Copy, 
-  X, 
-  Network, 
-  GitBranch, 
-  Database, 
-  Activity, 
-  Box, 
+import {
+  Copy,
+  X,
+  Network,
+  GitBranch,
+  Database,
+  Activity,
+  Box,
   Workflow,
   Sparkles,
   ExternalLink
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 interface ExampleDiagram {
   id: string;
@@ -476,7 +477,7 @@ export default function ExampleDiagrams({ isOpen, onClose }: ExampleDiagramsProp
       const userId = payload.sub;
 
       // Create diagram from example
-      const response = await fetch('http://localhost:8082/', {
+      const response = await fetch(API_ENDPOINTS.diagrams.create, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

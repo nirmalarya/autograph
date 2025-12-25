@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 export default function NoteEditorPage() {
   const router = useRouter();
@@ -40,7 +41,7 @@ export default function NoteEditorPage() {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
       
-      const response = await fetch(`http://localhost:8082/${diagramId}`, {
+      const response = await fetch(API_ENDPOINTS.diagrams.get(diagramId), {
         headers: {
           'X-User-ID': payload.sub,
         },

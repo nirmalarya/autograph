@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import OptimizedImage from '../../components/OptimizedImage';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
@@ -51,7 +52,7 @@ export default function SecuritySettingsPage() {
 
     try {
       const token = localStorage.getItem('access_token');
-      const response = await fetch('http://localhost:8085/mfa/setup', {
+      const response = await fetch(API_ENDPOINTS.auth.mfa.setup, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -84,7 +85,8 @@ export default function SecuritySettingsPage() {
 
     try {
       const token = localStorage.getItem('access_token');
-      const response = await fetch('http://localhost:8085/mfa/enable', {
+      // Note: The API config needs an mfa.enable endpoint - using a workaround for now
+      const response = await fetch(`${API_ENDPOINTS.auth.mfa.setup.replace('/setup', '/enable')}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,

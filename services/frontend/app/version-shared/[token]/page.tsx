@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import { API_ENDPOINTS } from "@/lib/api-config";
 
 interface SharedVersion {
   id: string;
@@ -32,7 +33,7 @@ export default function SharedVersionPage({
     const fetchSharedVersion = async () => {
       try {
         const response = await fetch(
-          `http://localhost:8082/version-shared/${token}`
+          API_ENDPOINTS.diagrams.versionShared(token)
         );
 
         if (!response.ok) {

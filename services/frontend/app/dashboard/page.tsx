@@ -12,6 +12,7 @@ import Button from '../components/Button';
 import Input from '../components/Input';
 import { NotificationBellIcon } from '../components/NotificationSystem';
 import Logo from '../components/Logo';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 // Lazy load heavy components with loading fallbacks
 const Breadcrumbs = dynamic(() => import('../components/Breadcrumbs'), {
@@ -306,7 +307,7 @@ export default function DashboardPage() {
     if (!currentFolderId || !user?.sub) return;
 
     try {
-      const response = await fetch(`http://localhost:8082/folders/${currentFolderId}/breadcrumbs`, {
+      const response = await fetch(API_ENDPOINTS.diagrams.folders.breadcrumbs(currentFolderId), {
         headers: {
           'X-User-ID': user.sub,
         },
@@ -326,25 +327,25 @@ export default function DashboardPage() {
 
     setLoadingDiagrams(true);
     try {
-      let url = 'http://localhost:8082/';
+      let url = API_ENDPOINTS.diagrams.list;
       let params = new URLSearchParams();
 
       // If Recent tab is active, use the /recent endpoint
       if (activeTab === 'recent') {
-        url = 'http://localhost:8082/recent';
+        url = API_ENDPOINTS.diagrams.recent;
         params.append('limit', '10');
       } else if (activeTab === 'starred') {
         // For "Starred" tab, use the /starred endpoint
-        url = 'http://localhost:8082/starred';
+        url = API_ENDPOINTS.diagrams.starred;
       } else if (activeTab === 'shared') {
         // For "Shared with me" tab, use the /shared-with-me endpoint
-        url = 'http://localhost:8082/shared-with-me';
+        url = API_ENDPOINTS.diagrams.sharedWithMe;
       } else if (activeTab === 'team') {
         // For "Team Files" tab, use the /team endpoint
-        url = 'http://localhost:8082/team';
+        url = API_ENDPOINTS.diagrams.team;
       } else if (activeTab === 'trash') {
         // For "Trash" tab, use the /trash endpoint
-        url = 'http://localhost:8082/trash';
+        url = API_ENDPOINTS.diagrams.trash;
       } else {
         // For "All" tab, use regular list endpoint with pagination
         params.append('page', page.toString());
@@ -530,7 +531,7 @@ export default function DashboardPage() {
     D --> B
     C --> E[End]`;
       
-      const response = await fetch('http://localhost:8082/', {
+      const response = await fetch(API_ENDPOINTS.diagrams.create, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -637,7 +638,7 @@ export default function DashboardPage() {
     try {
       // Delete each selected diagram
       const deletePromises = Array.from(selectedDiagrams).map(diagramId =>
-        fetch(`http://localhost:8082/${diagramId}`, {
+        fetch(API_ENDPOINTS.diagrams.delete(diagramId), {
           method: 'DELETE',
           headers: {
             'X-User-ID': user?.sub || '',
@@ -666,7 +667,7 @@ export default function DashboardPage() {
     try {
       // Move each selected diagram
       const movePromises = Array.from(selectedDiagrams).map(diagramId =>
-        fetch(`http://localhost:8082/${diagramId}/move`, {
+        fetch(`${API_ENDPOINTS.diagrams.update(diagramId)}/move`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -701,7 +702,7 @@ export default function DashboardPage() {
       const diagramsWithData = await Promise.all(
         selectedDiagramsData.map(async (diagram) => {
           try {
-            const response = await fetch(`http://localhost:8082/${diagram.id}`, {
+            const response = await fetch(API_ENDPOINTS.diagrams.get(diagram.id), {
               headers: {
                 'X-User-ID': user?.sub || '',
               },
@@ -734,7 +735,12 @@ export default function DashboardPage() {
       }
 
       // Call batch export endpoint
-      const response = await fetch('http://localhost:8097/export/batch', {
+      // For batch export, construct URL by replacing the diagram-specific part
+      const batchExportUrl = selectedDiagrams.size > 0
+        ? `${API_ENDPOINTS.export.pdf(Array.from(selectedDiagrams)[0]).replace(/\/[^/]+\/pdf$/, '/batch')}`
+        : `${API_ENDPOINTS.export.pdf('temp').replace('/temp/pdf', '/batch')}`;
+
+      const response = await fetch(batchExportUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

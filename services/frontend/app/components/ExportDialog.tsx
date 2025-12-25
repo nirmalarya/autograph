@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 interface Frame {
   id: string;
@@ -76,7 +77,13 @@ export default function ExportDialog({ isOpen, onClose, diagramId, canvasData, s
         frame_id: exportScope === 'frame' ? selectedFrameId : undefined,
       };
 
-      const response = await fetch(`http://localhost:8097/export/${format}`, {
+      // Use the export endpoints based on format
+      const exportUrl = format === 'png' ? API_ENDPOINTS.export.png(diagramId) :
+                        format === 'svg' ? API_ENDPOINTS.export.svg(diagramId) :
+                        format === 'pdf' ? API_ENDPOINTS.export.pdf(diagramId) :
+                        `${API_ENDPOINTS.export.png(diagramId).replace('/png', `/${format}`)}`;
+
+      const response = await fetch(exportUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

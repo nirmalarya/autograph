@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 // Dynamically import components to avoid SSR issues
 const MermaidEditor = dynamic(() => import('./MermaidEditor'), {
@@ -81,7 +82,7 @@ export default function MermaidDiagramPage() {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
       
-      const response = await fetch(`http://localhost:8082/${diagramId}`, {
+      const response = await fetch(API_ENDPOINTS.diagrams.get(diagramId), {
         headers: {
           'X-User-ID': payload.sub,
         },
@@ -119,7 +120,7 @@ export default function MermaidDiagramPage() {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
 
-      const response = await fetch(`http://localhost:8082/${diagramId}`, {
+      const response = await fetch(API_ENDPOINTS.diagrams.update(diagramId), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

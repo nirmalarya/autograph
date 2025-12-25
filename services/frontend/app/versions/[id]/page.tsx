@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import OptimizedImage from "../../components/OptimizedImage";
+import { API_ENDPOINTS } from "@/lib/api-config";
 
 interface Version {
   id: string;
@@ -105,9 +106,9 @@ export default function VersionComparePage({
         if (authorFilter) params.append("author", authorFilter);
         if (dateFromFilter) params.append("date_from", dateFromFilter);
         if (dateToFilter) params.append("date_to", dateToFilter);
-        
+
         const queryString = params.toString();
-        const url = `http://localhost:8082/${diagramId}/versions${queryString ? `?${queryString}` : ""}`;
+        const url = `${API_ENDPOINTS.diagrams.versions.list(diagramId)}${queryString ? `?${queryString}` : ""}`;
 
         const response = await fetch(url, {
           headers: {
@@ -146,7 +147,7 @@ export default function VersionComparePage({
         }
 
         const response = await fetch(
-          `http://localhost:8082/${diagramId}/versions/compare?v1=${selectedV1}&v2=${selectedV2}`,
+          API_ENDPOINTS.diagrams.versions.compare(diagramId, selectedV1.toString(), selectedV2.toString()),
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -200,7 +201,7 @@ export default function VersionComparePage({
       }
 
       const response = await fetch(
-        `http://localhost:8082/${diagramId}/versions/${versionId}/label`,
+        API_ENDPOINTS.diagrams.versions.updateLabel(diagramId, versionId),
         {
           method: "PATCH",
           headers: {
@@ -216,7 +217,7 @@ export default function VersionComparePage({
 
       // Refresh versions list and comparison
       const versionsResponse = await fetch(
-        `http://localhost:8082/${diagramId}/versions`,
+        API_ENDPOINTS.diagrams.versions.list(diagramId),
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -224,15 +225,15 @@ export default function VersionComparePage({
           },
         }
       );
-      
+
       if (versionsResponse.ok) {
         const data = await versionsResponse.json();
         setVersions(data.versions || []);
       }
-      
+
       // Also refresh comparison to update labels
       const comparisonResponse = await fetch(
-        `http://localhost:8082/${diagramId}/versions/compare?v1=${selectedV1}&v2=${selectedV2}`,
+        API_ENDPOINTS.diagrams.versions.compare(diagramId, selectedV1.toString(), selectedV2.toString()),
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -275,7 +276,7 @@ export default function VersionComparePage({
       }
 
       const response = await fetch(
-        `http://localhost:8082/${diagramId}/versions/${versionId}/description`,
+        API_ENDPOINTS.diagrams.versions.updateDescription(diagramId, versionId),
         {
           method: "PATCH",
           headers: {
@@ -291,7 +292,7 @@ export default function VersionComparePage({
 
       // Refresh versions list and comparison
       const versionsResponse = await fetch(
-        `http://localhost:8082/${diagramId}/versions`,
+        API_ENDPOINTS.diagrams.versions.list(diagramId),
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -299,15 +300,15 @@ export default function VersionComparePage({
           },
         }
       );
-      
+
       if (versionsResponse.ok) {
         const data = await versionsResponse.json();
         setVersions(data.versions || []);
       }
-      
+
       // Also refresh comparison to update descriptions
       const comparisonResponse = await fetch(
-        `http://localhost:8082/${diagramId}/versions/compare?v1=${selectedV1}&v2=${selectedV2}`,
+        API_ENDPOINTS.diagrams.versions.compare(diagramId, selectedV1.toString(), selectedV2.toString()),
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -349,7 +350,7 @@ export default function VersionComparePage({
       const userId = localStorage.getItem("user_id");
       
       const response = await fetch(
-        `http://localhost:8082/${diagramId}/versions/${versionId}/share`,
+        API_ENDPOINTS.diagrams.versions.share(diagramId, versionId),
         {
           method: "POST",
           headers: {

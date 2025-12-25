@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Button from '../components/Button';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 interface GenerateResponse {
   mermaid_code: string;
@@ -65,7 +66,7 @@ export default function AIGeneratePage() {
 
   async function loadProvidersStatus() {
     try {
-      const response = await fetch('http://localhost:8094/api/ai/providers');
+      const response = await fetch(`${API_ENDPOINTS.ai.generate.replace('/generate', '/providers')}`);
       if (response.ok) {
         const data = await response.json();
         setProvidersStatus(data);
@@ -87,7 +88,7 @@ export default function AIGeneratePage() {
 
     try {
       const token = localStorage.getItem('access_token');
-      const response = await fetch('http://localhost:8094/api/ai/generate', {
+      const response = await fetch(API_ENDPOINTS.ai.generate, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,7 +129,7 @@ export default function AIGeneratePage() {
       }
 
       // Create a new Mermaid diagram
-      const response = await fetch('http://localhost:8082/api/diagrams', {
+      const response = await fetch(API_ENDPOINTS.diagrams.create, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

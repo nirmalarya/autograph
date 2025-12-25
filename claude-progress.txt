@@ -1,0 +1,25 @@
+# AutoGraph v3.1 Enhancement Session Progress
+
+## Project Context
+- Mode: BUGFIX/ENHANCEMENT
+- Base: v3.0 (658 features baseline)
+- Target: v3.1 (Foundation solid, browser-tested, production-ready)
+- Current Session: 1
+
+## Critical Issues (from enhancement_spec.txt)
+Priority P0:
+1. Frontend bypasses API Gateway - direct calls to :8082 instead of :8080
+2. Save diagram fails in browser (works via curl)
+3. Old diagrams don't exist in database
+
+## Services Status
+✅ Frontend (Next.js) - Port 3000 - RUNNING
+✅ API Gateway (FastAPI) - Port 8080 - RUNNING
+✅ All backend services - Healthy (Docker)
+✅ Infrastructure - PostgreSQL, Redis, MinIO ready
+
+## Session 1 - Initial Assessment
+- Services confirmed running
+- Enhancement spec reviewed
+- Critical issues identified
+- Next: Browser testing with Puppeteer to verify issues

@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useOfflineStorage } from '@/hooks/useOfflineStorage';
 import ExportDialog from '../../components/ExportDialog';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 // Dynamically import TLDraw to avoid SSR issues
 const TLDrawCanvas = dynamic(() => import('./TLDrawCanvas'), {
@@ -81,7 +82,7 @@ export default function CanvasEditorPage() {
       // Try to fetch from server first
       if (isOnline) {
         try {
-          const response = await fetch(`http://localhost:8082/${diagramId}`, {
+          const response = await fetch(API_ENDPOINTS.diagrams.get(diagramId), {
             headers: {
               'X-User-ID': payload.sub,
             },
@@ -160,7 +161,7 @@ export default function CanvasEditorPage() {
       if (isOnline) {
         // Try to save to server
         try {
-          const response = await fetch(`http://localhost:8082/${diagramId}`, {
+          const response = await fetch(API_ENDPOINTS.diagrams.update(diagramId), {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',

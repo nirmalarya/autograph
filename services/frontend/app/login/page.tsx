@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import { API_ENDPOINTS } from '@/lib/api-config';
 
 function LoginForm() {
   const router = useRouter();
@@ -33,7 +34,7 @@ function LoginForm() {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8085/login', {
+      const response = await fetch(API_ENDPOINTS.auth.login, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -84,7 +85,7 @@ function LoginForm() {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8085/mfa/verify', {
+      const response = await fetch(API_ENDPOINTS.auth.mfa.verify, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
