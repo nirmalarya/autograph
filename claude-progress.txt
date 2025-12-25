@@ -9483,3 +9483,53 @@ PROGRESS: 146/658 features (22.2%)
 BASELINE: All 146 features passing ✅
 SESSION STATUS: ✅ COMPLETE
 
+
+================================================================================
+SESSION: Feature #147 - Diagram Sorting by Name
+DATE: 2025-12-25
+================================================================================
+
+FEATURE #147: Diagram Sorting by Name (A-Z, Z-A)
+
+IMPLEMENTATION:
+✅ Verified backend already supports sorting by name
+✅ Uses sort_by=name (or sort_by=title) parameter
+✅ Uses sort_order=asc (A-Z) or sort_order=desc (Z-A)
+✅ No code changes needed - feature already working
+
+VALIDATION SCRIPT CREATED:
+- validate_feature147_sorting_by_name.py
+- 6 comprehensive test steps:
+  1. Register and login test user
+  2. Create test diagrams: Zebra, Apple, Mango
+  3. List diagrams sorted A-Z
+  4. Verify order: Apple, Mango, Zebra ✅
+  5. List diagrams sorted Z-A
+  6. Verify order: Zebra, Mango, Apple ✅
+
+VALIDATION RESULTS:
+✅ All 6 test steps passed
+✅ A-Z sorting works correctly
+✅ Z-A sorting works correctly
+✅ Alphabetical ordering verified
+
+REGRESSION TESTING:
+✅ Baseline intact: 147/147 features passing
+✅ No breaking changes
+
+QUALITY GATES:
+✅ End-to-end validation passed
+✅ No regressions (baseline: 146 → 147)
+✅ Zero TODOs
+✅ Backward compatible
+
+FILES CREATED:
+- validate_feature147_sorting_by_name.py
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #147 → passing)
+- baseline_features.txt (updated to 147)
+
+PROGRESS: 147/658 features (22%)
+BASELINE: All 147 features passing ✅
+SESSION STATUS: ✅ COMPLETE
