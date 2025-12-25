@@ -1589,3 +1589,153 @@ Previous: 37/658 (5.6%)
 Completed: $(date '+%Y-%m-%d %H:%M:%S %Z')
 ================================================================================
 
+
+================================================================================
+SESSION: Feature #39 - Error Tracking with Stack Traces and Context
+Date: 2025-12-24
+================================================================================
+
+## Objective
+Implement comprehensive error tracking with:
+- Full stack traces in error logs
+- Request context (user_id, file_id, correlation_id)
+- Sentry integration for external error tracking
+- Error grouping by type
+
+## Implementation
+
+### 1. Enhanced Exception Handler (auth-service)
+**File**: `services/auth-service/src/main.py`
+
+Added comprehensive error context capture:
+- ✅ Extract user_id from request.state (set by middleware)
+- ✅ Extract file_id from path params or query params
+- ✅ Include correlation_id from X-Correlation-ID header
+- ✅ Capture full stack trace via StructuredLogger.error()
+- ✅ Send errors to Sentry with full context
+
+### 2. User Context Middleware
+**File**: `services/auth-service/src/main.py`
+
+Added middleware to extract user_id from JWT for error tracking:
+```python
+@app.middleware("http")
+async def extract_user_context(request: Request, call_next):
+    """Extract user_id from JWT token for error tracking."""
+    request.state.user_id = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+            user_id = payload.get("sub")
+            if user_id:
+                request.state.user_id = user_id
+        except JWTError:
+            pass
+    return await call_next(request)
+```
+
+### 3. Sentry Integration
+**File**: `services/auth-service/requirements.txt`
+- Added: `sentry-sdk[fastapi]==2.18.0`
+
+**File**: `services/auth-service/src/main.py`
+- Initialized Sentry with FastAPI and SQLAlchemy integrations
+- Configured to capture exceptions with full context
+- Set up tags for correlation_id, user_id, file_id
+- Enabled PII sending for better error tracking
+- Attached stack traces automatically
+
+**File**: `.env`
+- Added SENTRY_DSN configuration (optional)
+- Added SENTRY_TRACES_SAMPLE_RATE (10%)
+
+### 4. Global Exception Handler Enhancement
+Enhanced to capture and send errors to Sentry:
+```python
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Extract context
+    correlation_id = getattr(request.state, "correlation_id", "unknown")
+    user_id = getattr(request.state, "user_id", None)
+    file_id = extract_from_params(request)
+    
+    # Log with full context and stack trace
+    logger.error("Unhandled exception", correlation_id=correlation_id, exc=exc, user_id=user_id, file_id=file_id, ...)
+    
+    # Send to Sentry with context
+    if SENTRY_DSN:
+        with sentry_sdk.push_scope() as scope:
+            scope.set_context("request", error_context)
+            scope.set_tag("correlation_id", correlation_id)
+            if user_id:
+                scope.set_user({"id": user_id})
+            if file_id:
+                scope.set_tag("file_id", file_id)
+            sentry_sdk.capture_exception(exc)
+    
+    return JSONResponse(status_code=500, content=error_detail)
+```
+
+## Validation
+
+Created comprehensive validation script: `validate_feature39_error_tracking.py`
+
+### Tests Performed:
+1. ✅ **Error with stack trace**: Triggered errors and verified stack traces in logs
+2. ✅ **Error with request context**: Verified correlation_id, user_id captured
+3. ✅ **Sentry configuration**: Verified Sentry SDK installed and configured
+4. ✅ **StructuredLogger error method**: Confirmed structured JSON logging works
+
+### Test Results:
+```
+================================================================================
+VALIDATION SUMMARY
+================================================================================
+✅ PASS: Error with stack trace
+✅ PASS: Error with request context
+✅ PASS: Sentry configuration
+✅ PASS: StructuredLogger error method
+
+Total: 4/4 tests passed (100.0%)
+
+🎉 Feature #39 VALIDATED - All error tracking features working!
+```
+
+## Key Features Implemented
+
+### Error Context Captured:
+- ✅ **Stack traces**: Full Python stack trace in logs
+- ✅ **Correlation ID**: Request tracking across services
+- ✅ **User ID**: Extracted from JWT token automatically
+- ✅ **File ID**: Extracted from request params when present
+- ✅ **Request metadata**: Method, path, client IP
+- ✅ **Error type**: Exception class name
+- ✅ **Timestamp**: ISO format timestamps
+
+### Sentry Integration Features:
+- ✅ FastAPI integration for automatic error capture
+- ✅ SQLAlchemy integration for database query tracking
+- ✅ User context attached to errors
+- ✅ Custom tags (correlation_id, file_id, endpoint)
+- ✅ Request context included
+- ✅ Environment tracking (development/production)
+- ✅ Release tracking via VERSION env var
+- ✅ Configurable traces sample rate (10%)
+
+### Structured Logging:
+- ✅ JSON format for easy parsing
+- ✅ Consistent structure across all services
+- ✅ Correlation ID in every log entry
+- ✅ Log level support (DEBUG, INFO, WARNING, ERROR)
+- ✅ Configurable log levels per service
+
+## Progress
+Total: 658 features
+Passing: 39/658 (5.9%)
+Previous: 38/658 (5.8%)
++1 feature this session
+
+Completed: $(date '+%Y-%m-%d %H:%M:%S %Z')
+================================================================================

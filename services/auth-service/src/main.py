@@ -35,6 +35,35 @@ import uuid
 
 load_dotenv()
 
+# Initialize Sentry for error tracking
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+SENTRY_ENVIRONMENT = os.getenv("ENV", "development")
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            SqlalchemyIntegration(),
+        ],
+        # Send PII to Sentry for better error tracking
+        send_default_pii=True,
+        # Attach stack traces to errors
+        attach_stacktrace=True,
+        # Release tracking (optional)
+        release=os.getenv("VERSION", "unknown"),
+    )
+    print(f"✅ Sentry initialized for auth-service in {SENTRY_ENVIRONMENT} environment")
+else:
+    print("⚠️  Sentry DSN not configured - error tracking disabled")
+
 # Redis configuration for token blacklist
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -111,6 +140,12 @@ class StructuredLogger:
         self.log("warning", message, correlation_id, **kwargs)
 
 logger = StructuredLogger("auth-service")
+
+# JWT configuration (needed early for middleware)
+SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "30"))
 
 # Prometheus metrics registry
 registry = CollectorRegistry()
@@ -341,14 +376,14 @@ async def log_correlation_id(request: Request, call_next):
     """Middleware to extract and log correlation ID."""
     correlation_id = request.headers.get("X-Correlation-ID", "unknown")
     request.state.correlation_id = correlation_id
-    
+
     logger.info(
         "Request received",
         correlation_id=correlation_id,
         method=request.method,
         path=request.url.path
     )
-    
+
     try:
         response = await call_next(request)
         logger.info(
@@ -364,6 +399,28 @@ async def log_correlation_id(request: Request, call_next):
             error=str(e)
         )
         raise
+
+# Middleware to extract user context for error tracking
+@app.middleware("http")
+async def extract_user_context(request: Request, call_next):
+    """Middleware to extract user_id from JWT token for error tracking context."""
+    request.state.user_id = None  # Default to None
+
+    # Try to extract user_id from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        try:
+            # Decode JWT to get user_id (don't validate fully, just extract context)
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+            user_id = payload.get("sub")
+            if user_id:
+                request.state.user_id = user_id
+        except JWTError:
+            # Token invalid or malformed - continue without user_id
+            pass
+
+    return await call_next(request)
 
 # Middleware to check IP allowlist
 @app.middleware("http")
@@ -426,19 +483,59 @@ async def check_ip_allowlist(request: Request, call_next):
 # Add exception handler for debugging
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Catch all exceptions and return detailed error."""
+    """Catch all exceptions and return detailed error with full context."""
     correlation_id = getattr(request.state, "correlation_id", "unknown")
+
+    # Extract request context
+    user_id = getattr(request.state, "user_id", None)
+
+    # Try to extract file_id from path or query params
+    file_id = None
+    if "file_id" in request.path_params:
+        file_id = request.path_params.get("file_id")
+    elif "file_id" in request.query_params:
+        file_id = request.query_params.get("file_id")
+
+    # Build error context
+    error_context = {
+        "correlation_id": correlation_id,
+        "user_id": user_id,
+        "file_id": file_id,
+        "method": request.method,
+        "path": request.url.path,
+        "client_host": request.client.host if request.client else None
+    }
+
     error_detail = {
         "error": str(exc),
         "type": type(exc).__name__,
         "traceback": traceback.format_exc()
     }
+
+    # Log error with full context and stack trace
     logger.error(
         "Unhandled exception",
         correlation_id=correlation_id,
-        error=str(exc),
-        error_type=type(exc).__name__
+        exc=exc,  # This will trigger stack trace capture in StructuredLogger
+        user_id=user_id,
+        file_id=file_id,
+        method=request.method,
+        path=request.url.path,
+        client_host=request.client.host if request.client else None
     )
+
+    # Send error to Sentry with context
+    if SENTRY_DSN:
+        with sentry_sdk.push_scope() as scope:
+            scope.set_context("request", error_context)
+            scope.set_tag("correlation_id", correlation_id)
+            if user_id:
+                scope.set_user({"id": user_id})
+            if file_id:
+                scope.set_tag("file_id", file_id)
+            scope.set_tag("endpoint", request.url.path)
+            sentry_sdk.capture_exception(exc)
+
     return JSONResponse(
         status_code=500,
         content=error_detail
@@ -447,13 +544,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Security configuration
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# JWT configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "30"))
-
 
 # Pydantic models with enhanced validation
 class UserRegister(BaseModel):
