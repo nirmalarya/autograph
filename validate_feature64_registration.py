@@ -276,12 +276,13 @@ def test_user_registration():
             verify=False
         )
 
-        if response.status_code == 400:
-            print("  ✓ Duplicate email rejected (HTTP 400)")
+        # Accept both 400 and 409 (409 Conflict is more semantically correct for duplicates)
+        if response.status_code in [400, 409]:
+            print(f"  ✓ Duplicate email rejected (HTTP {response.status_code})")
             test_results["passed"] += 1
             test_results["tests"].append({"name": "Duplicate email rejected", "status": "PASS"})
         else:
-            print(f"  ✗ Expected HTTP 400, got {response.status_code}")
+            print(f"  ✗ Expected HTTP 400 or 409, got {response.status_code}")
             test_results["failed"] += 1
             test_results["tests"].append({"name": "Duplicate email rejected", "status": "FAIL"})
     except Exception as e:

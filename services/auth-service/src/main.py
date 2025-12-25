@@ -3,6 +3,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, Header
 from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -729,8 +730,9 @@ def create_refresh_token(data: dict, db: Session, expires_days: int = None) -> t
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
-    """Get user by email."""
-    return db.query(User).filter(User.email == email).first()
+    """Get user by email (case-insensitive)."""
+    # Use case-insensitive email comparison (PostgreSQL ILIKE)
+    return db.query(User).filter(func.lower(User.email) == func.lower(email)).first()
 
 
 def get_user_by_id(db: Session, user_id: str) -> User | None:
@@ -1657,7 +1659,7 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
             # Log but don't block registration if check fails
             logger.error("Error checking email domain restriction", exc=e)
         
-        # Check if user already exists
+        # Check if user already exists (case-insensitive)
         existing_user = get_user_by_email(db, user_data.email)
         if existing_user:
             # Log failed registration
@@ -1669,15 +1671,17 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
                 extra_data={"email": user_data.email, "reason": "email_already_exists"}
             )
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail="Email already registered"
             )
         
         # Create new user
         print(f"DEBUG: Creating new user...")
         hashed_password = get_password_hash(user_data.password)
+        # Normalize email to lowercase for consistency
+        normalized_email = user_data.email.lower()
         new_user = User(
-            email=user_data.email,
+            email=normalized_email,
             password_hash=hashed_password,
             full_name=user_data.full_name,
             is_active=True,
