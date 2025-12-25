@@ -81,8 +81,11 @@ services:
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES}
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${AUTH_SERVICE_PORT}:8085
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,8 +120,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${DIAGRAM_SERVICE_PORT}:8082
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,8 +158,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${AI_SERVICE_PORT}:8084
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -182,8 +191,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${COLLABORATION_SERVICE_PORT}:8083
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -214,8 +226,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${GIT_SERVICE_PORT}:8087
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -245,8 +260,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${EXPORT_SERVICE_PORT}:8097
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       minio:
         condition: service_healthy
@@ -277,8 +295,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${INTEGRATION_HUB_PORT}:8099
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -341,8 +362,11 @@ services:
       MINIO_BUCKET_EXPORTS: exports
       MINIO_BUCKET_UPLOADS: uploads
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
     ports:
     - ${API_GATEWAY_PORT}:8080
+    volumes:
+    - ./certs:/app/certs:ro
     depends_on:
       auth-service:
         condition: service_healthy

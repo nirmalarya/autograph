@@ -19,6 +19,7 @@ COPY ./shared /app/shared
 COPY ./services/auth-service/src/ ./src/
 COPY ./services/auth-service/alembic/ ./alembic/
 COPY ./services/auth-service/alembic.ini .
+COPY ./services/auth-service/startup.py .
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -32,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8085/health', timeout=5)"
 
 # Run the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8085"]
+CMD ["python", "startup.py"]
