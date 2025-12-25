@@ -386,6 +386,271 @@ export const SNIPPET_LIBRARY: Snippet[] = [
     merge feature/login
     checkout main
     merge develop tag: "v1.0"`
+  },
+
+  // Advanced Sequence Diagram Features (Feature #292, #293)
+  {
+    id: 'sequence-notes',
+    title: 'Sequence with Notes',
+    description: 'Sequence diagram with notes and comments',
+    category: 'sequence',
+    code: `sequenceDiagram
+    participant Alice
+    participant Bob
+    participant Carol
+
+    Note over Alice: Alice starts here
+    Alice->>Bob: Hello Bob!
+    Note over Bob: Bob processes request
+    Bob->>Carol: Forward to Carol
+    Note over Alice,Carol: This note spans multiple participants
+    Carol-->>Alice: Response to Alice
+    Note right of Carol: Carol's note on the right
+    Note left of Alice: Alice's note on the left`
+  },
+  {
+    id: 'sequence-parallel',
+    title: 'Parallel Messages',
+    description: 'Sequence diagram with parallel execution',
+    category: 'sequence',
+    code: `sequenceDiagram
+    participant Alice
+    participant Bob
+    participant Carol
+
+    Alice->>Bob: Sequential message
+
+    par Parallel Block
+        Alice->>Bob: Parallel message 1
+    and
+        Alice->>Carol: Parallel message 2
+    end
+
+    Bob->>Alice: Response from Bob
+    Carol->>Alice: Response from Carol
+
+    par Multiple Parallel Tasks
+        Alice->>Bob: Task A
+    and
+        Alice->>Carol: Task B
+    and
+        Bob->>Carol: Task C
+    end`
+  },
+
+  // Advanced Class Diagram Features (Feature #294, #295)
+  {
+    id: 'class-visibility',
+    title: 'Visibility Modifiers',
+    description: 'Class diagram with public, private, protected members',
+    category: 'class',
+    code: `classDiagram
+    class User {
+        +String publicField
+        -String privateField
+        #String protectedField
+        ~String packageField
+
+        +publicMethod()
+        -privateMethod()
+        #protectedMethod()
+        ~packageMethod()
+    }
+
+    class Account {
+        +String username
+        -String passwordHash
+        #Date createdAt
+
+        +login(password) bool
+        -validatePassword(password) bool
+        #updateLastLogin() void
+    }`
+  },
+  {
+    id: 'class-abstract',
+    title: 'Abstract Classes & Interfaces',
+    description: 'Abstract classes and interface patterns',
+    category: 'class',
+    code: `classDiagram
+    class IUser {
+        <<interface>>
+        +getId() String
+        +getEmail() String
+        +save() void
+    }
+
+    class AbstractUser {
+        <<abstract>>
+        #String id
+        #String email
+        +getId() String
+        +getEmail() String
+        +save()* void
+    }
+
+    class RegularUser {
+        -String password
+        +login() bool
+    }
+
+    class AdminUser {
+        -Array~String~ permissions
+        +hasPermission() bool
+    }
+
+    IUser <|.. AbstractUser
+    AbstractUser <|-- RegularUser
+    AbstractUser <|-- AdminUser`
+  },
+
+  // Advanced State Diagram Features (Feature #296, #297)
+  {
+    id: 'state-choice',
+    title: 'Choice Nodes',
+    description: 'State diagram with conditional choice nodes',
+    category: 'state',
+    code: `stateDiagram-v2
+    [*] --> CheckAuth
+    CheckAuth --> choice1
+
+    state choice1 <<choice>>
+    choice1 --> LoggedIn: if authenticated
+    choice1 --> Login: if not authenticated
+
+    Login --> CheckAuth: after login
+
+    LoggedIn --> Processing: start task
+    Processing --> choice2
+
+    state choice2 <<choice>>
+    choice2 --> Success: if valid
+    choice2 --> Error: if error
+    choice2 --> Retry: if timeout
+
+    Success --> [*]
+    Error --> [*]
+    Retry --> Processing`
+  },
+  {
+    id: 'state-fork-join',
+    title: 'Fork and Join',
+    description: 'Parallel state execution with fork and join',
+    category: 'state',
+    code: `stateDiagram-v2
+    [*] --> Init
+    Init --> fork1
+
+    state fork1 <<fork>>
+    fork1 --> ProcessA
+    fork1 --> ProcessB
+    fork1 --> ProcessC
+
+    ProcessA --> join1
+    ProcessB --> join1
+    ProcessC --> join1
+
+    state join1 <<join>>
+    join1 --> Complete
+    Complete --> [*]
+
+    state ProcessA {
+        [*] --> TaskA1
+        TaskA1 --> TaskA2
+        TaskA2 --> [*]
+    }
+
+    state ProcessB {
+        [*] --> TaskB1
+        TaskB1 --> [*]
+    }`
+  },
+
+  // Advanced Gantt Features (Feature #298, #299)
+  {
+    id: 'gantt-dependencies',
+    title: 'Task Dependencies',
+    description: 'Gantt chart with task dependencies',
+    category: 'gantt',
+    code: `gantt
+    title Project with Dependencies
+    dateFormat YYYY-MM-DD
+
+    section Foundation
+    Requirements    :done, req, 2024-01-01, 7d
+    Architecture    :done, arch, after req, 5d
+
+    section Development
+    Backend API     :active, be, after arch, 14d
+    Database        :db, after arch, 10d
+    Frontend UI     :fe, after db, 14d
+    Integration     :int, after be, 7d
+
+    section Testing
+    Unit Tests      :test1, after int, 5d
+    Integration     :test2, after test1, 5d
+    UAT            :test3, after test2, 7d
+
+    section Deployment
+    Staging        :deploy1, after test3, 2d
+    Production     :deploy2, after deploy1, 1d`
+  },
+  {
+    id: 'gantt-critical',
+    title: 'Critical Path',
+    description: 'Gantt with critical path highlighting',
+    category: 'gantt',
+    code: `gantt
+    title Critical Path Analysis
+    dateFormat YYYY-MM-DD
+
+    section Critical Path
+    Design         :crit, des, 2024-01-01, 10d
+    Development    :crit, dev, after des, 20d
+    Testing        :crit, test, after dev, 10d
+    Deployment     :crit, deploy, after test, 3d
+
+    section Non-Critical
+    Documentation  :doc, 2024-01-01, 30d
+    Training       :train, after doc, 10d
+    Marketing      :market, 2024-01-15, 20d
+
+    section Milestones
+    Design Complete    :milestone, m1, after des, 0d
+    Development Done   :milestone, m2, after dev, 0d
+    Go Live           :milestone, m3, after deploy, 0d`
+  },
+
+  // Git Advanced Features (Feature #300)
+  {
+    id: 'git-cherrypick',
+    title: 'Cherry-pick Workflow',
+    description: 'Git graph with cherry-pick operations',
+    category: 'git',
+    code: `gitGraph
+    commit id: "Initial"
+    commit id: "Feature work"
+
+    branch hotfix
+    checkout hotfix
+    commit id: "Critical fix"
+    checkout main
+    cherry-pick id: "Critical fix"
+
+    branch feature
+    checkout feature
+    commit id: "Feature A"
+    commit id: "Feature B"
+    commit id: "Feature C"
+
+    checkout main
+    cherry-pick id: "Feature B"
+
+    checkout feature
+    commit id: "Feature D"
+
+    checkout main
+    merge feature tag: "v2.0"`
   }
 ];
 
