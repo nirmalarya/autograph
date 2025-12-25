@@ -8041,3 +8041,123 @@ FILES CREATED:
 SESSION COMPLETE
 ================================================================================
 
+
+================================================================================
+SESSION: Feature #122 - Get diagram by ID returns full canvas_data and note_content
+DATE: 2025-12-25 09:20:00
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #122: Get diagram by ID returns full canvas_data and note_content
+
+ANALYSIS:
+Feature was already implemented and working correctly. No code changes required.
+
+EXISTING IMPLEMENTATION:
+1. Endpoint: GET /api/diagrams/{id}
+2. Handler: async def get_diagram() in diagram-service/src/main.py
+3. Response model: DiagramResponse class includes:
+   - canvas_data: Optional[Dict[str, Any]]
+   - note_content: Optional[str]
+   - Metadata: title, created_at, updated_at, owner_id
+   - Version info: current_version, version_count
+4. Authorization: Checks user ownership or share permissions
+5. Enrichment: Adds calculated fields like size_bytes
+
+TEST VALIDATION:
+Created comprehensive validation script that tests:
+1. ✅ Diagram creation with canvas shapes and note text
+2. ✅ GET request to /api/diagrams/{id}
+3. ✅ 200 OK response received
+4. ✅ Full canvas_data JSON returned (shapes, connections)
+5. ✅ Full note_content markdown returned
+6. ✅ Metadata fields present and correct
+7. ✅ Version information included
+8. ✅ All 8 test steps passed
+
+REGRESSION TESTING:
+✅ Baseline check: 122/122 features passing (no regressions)
+✅ No existing functionality broken
+
+PROGRESS:
+Before: 121/658 features (18.4%)
+After:  122/658 features (18.5%)
+Baseline: 122 features preserved
+
+FILES MODIFIED:
+- spec/feature_list.json
+- baseline_features.txt
+
+FILES CREATED:
+- validate_feature122_get_diagram.py (test script)
+
+COMMIT:
+Committed with full implementation details
+
+SESSION COMPLETE
+================================================================================
+
+================================================================================
+SESSION: Feature #125 - Get diagram by ID returns 403 for unauthorized access
+Date: 2025-12-25 14:36 UTC
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #125: Get diagram by ID returns 403 for unauthorized access
+
+ANALYSIS:
+Feature requires testing authorization controls - ensuring users cannot access
+diagrams they don't own and haven't been shared with.
+
+TEST STEPS:
+1. User A creates private diagram
+2. User B attempts GET /api/diagrams/<id> without permission
+3. Verify 403 Forbidden response
+4. Verify error message mentions permissions/access
+5. User A shares diagram with User B using share endpoint
+6. User B attempts GET again
+7. Verify 200 OK response with diagram data
+
+IMPLEMENTATION:
+Created comprehensive validation script that:
+1. ✅ Registers two unique users (with timestamp-based emails)
+2. ✅ Verifies emails via database update
+3. ✅ User A creates a private canvas diagram
+4. ✅ User B attempts unauthorized access
+5. ✅ Verifies 403 Forbidden response
+6. ✅ Verifies error message: "You do not have permission to access this diagram"
+7. ✅ User A shares diagram with User B (private share, not public)
+8. ✅ User B successfully accesses shared diagram
+9. ✅ Verifies diagram data including canvas_data is returned
+
+KEY FINDINGS:
+- Share endpoint requires "shared_with_email" parameter (not "recipient_email")
+- Must set "is_public": false for private sharing with specific user
+- Authorization is properly enforced at diagram access level
+- After sharing, recipient can access with full diagram data
+
+TEST VALIDATION:
+Created validation script: validate_feature125_403_unauthorized.py
+All 7 test steps passed successfully
+
+REGRESSION TESTING:
+✅ Baseline check: 123/123 features passing (no regressions)
+✅ No existing functionality broken
+
+PROGRESS:
+Before: 123/658 features (18.7%)
+After:  124/658 features (18.8%)
+Baseline: 124 features preserved
+
+FILES MODIFIED:
+- spec/feature_list.json (marked feature #125 as passing)
+- baseline_features.txt (updated count to 124)
+
+FILES CREATED:
+- validate_feature125_403_unauthorized.py (comprehensive test script)
+
+COMMIT:
+All changes committed with full implementation details
+
+SESSION COMPLETE
+================================================================================
