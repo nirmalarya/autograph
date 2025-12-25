@@ -10029,3 +10029,77 @@ PROGRESS: 159/658 features (24.2%)
 BASELINE: All 159 features passing ✅
 SESSION STATUS: ✅ COMPLETE
 
+
+========================================
+SESSION: Feature #160 - Diagram Version Count Display
+TIME: $(date)
+========================================
+
+FEATURE IMPLEMENTED:
+- Feature #160: Diagram version count display
+- Category: functional
+- Status: ✅ PASSING
+
+IMPLEMENTATION DETAILS:
+
+1. Database Triggers (add_version_count_triggers.sql):
+   - Created trigger function update_version_count()
+   - Triggers fire on INSERT/DELETE/UPDATE of versions table
+   - Automatically updates files.version_count column
+   - Initialized all existing files with correct version counts
+   - Result: 195 files updated, 215 total versions counted
+
+2. Trigger Logic:
+   - Counts all versions for a file_id
+   - Updates files.version_count automatically
+   - No application code changes needed (database guarantees consistency)
+
+3. API Integration:
+   - version_count already defined in DiagramResponse model
+   - Returned in all diagram endpoints (GET, LIST, etc.)
+   - Database triggers keep count synchronized
+
+4. Validation Test (validate_feature160_version_count.py):
+   - Creates diagram, verifies version_count=1
+   - Creates 5 additional manual versions (via POST /diagrams/{id}/versions)
+   - Auto-versioning creates 1 additional version on first PUT
+   - Total: 7 versions (1 initial + 1 auto + 5 manual)
+   - Verifies version_count=7 in diagram details
+   - Verifies version_count displayed in dashboard/list
+   - Verifies all 7 versions present in version history
+   - Verifies version_count persists across multiple requests
+   - All steps passed ✅
+
+VALIDATION RESULTS (All 6 steps passed):
+✅ Step 1: Register and login user
+✅ Step 2: Create diagram with version_count=1
+✅ Step 3: Create 5 additional versions, verify version_count=7
+✅ Step 4: Verify version_count in dashboard
+✅ Step 5: Verify all 7 versions in history
+✅ Step 6: Verify version_count persistence
+
+TESTING INSIGHTS:
+- version_count updates immediately after version creation
+- Dashboard/list endpoint correctly returns version_count
+- Database triggers fire reliably on all version operations
+- Auto-versioning creates version on first PUT (within 5-min window)
+- Manual version creation via POST endpoint works perfectly
+- No race conditions or missed updates observed
+
+FILES CREATED:
+- add_version_count_triggers.sql - Database migration with triggers
+- validate_feature160_version_count.py - Comprehensive test script
+
+FILES MODIFIED:
+- spec/feature_list.json - Feature #160 marked as passing
+- baseline_features.txt - Updated to 160
+
+REGRESSION TESTING:
+✅ Baseline features: 159 → 160 (all passing)
+✅ No breaking changes introduced
+✅ Existing version creation/listing endpoints still work
+✅ Trigger mechanism mirrors successful collaborator_count/comment_count implementations
+
+PROGRESS: 160/658 features (24.3%)
+BASELINE: All 160 features passing ✅
+SESSION STATUS: ✅ COMPLETE
