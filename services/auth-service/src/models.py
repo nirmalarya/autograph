@@ -726,3 +726,167 @@ class OAuthAccessToken(Base):
         Index('idx_oauth_tokens_refresh_jti', 'refresh_token_jti'),
         Index('idx_oauth_tokens_expires', 'expires_at'),
     )
+
+
+class UserConsent(Base):
+    """User consent tracking for GDPR compliance."""
+    __tablename__ = "user_consents"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Consent details
+    consent_type = Column(String(100), nullable=False)  # marketing, analytics, cookies, data_processing, etc.
+    consent_given = Column(Boolean, default=False, nullable=False)
+    consent_version = Column(String(20))  # Version of terms/privacy policy
+
+    # Consent context
+    ip_address = Column(String(45))  # IPv6 compatible
+    user_agent = Column(String(512))
+    consent_method = Column(String(50))  # explicit, implicit, opt_in, opt_out
+
+    # Additional metadata
+    extra_data = Column(JSON)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    withdrawn_at = Column(DateTime(timezone=True))  # When consent was withdrawn
+
+    __table_args__ = (
+        Index('idx_user_consents_user', 'user_id'),
+        Index('idx_user_consents_type', 'consent_type'),
+        Index('idx_user_consents_created', 'created_at'),
+    )
+
+
+class DataProcessingActivity(Base):
+    """Data processing activities record for GDPR Article 30 compliance."""
+    __tablename__ = "data_processing_activities"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+
+    # Activity details
+    activity_name = Column(String(255), nullable=False)
+    activity_description = Column(Text, nullable=False)
+    purpose = Column(Text, nullable=False)  # Purpose of processing
+    legal_basis = Column(String(100), nullable=False)  # consent, contract, legal_obligation, etc.
+
+    # Data categories
+    data_categories = Column(JSON, nullable=False)  # List of data categories processed
+    data_subjects = Column(JSON, nullable=False)  # Categories of data subjects (users, customers, etc.)
+
+    # Recipients
+    recipients = Column(JSON)  # Who receives the data
+    third_country_transfers = Column(Boolean, default=False)  # Cross-border transfers
+    third_countries = Column(JSON)  # Countries data is transferred to
+    safeguards = Column(Text)  # Safeguards for third country transfers
+
+    # Retention
+    retention_period = Column(String(255))  # How long data is kept
+
+    # Security measures
+    security_measures = Column(Text)
+
+    # DPO info
+    data_controller = Column(String(255))
+    data_protection_officer = Column(String(255))
+
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index('idx_data_processing_activities_active', 'is_active'),
+        Index('idx_data_processing_activities_legal_basis', 'legal_basis'),
+    )
+
+
+class DataBreachLog(Base):
+    """Data breach notification log for GDPR Article 33/34 compliance."""
+    __tablename__ = "data_breach_logs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+
+    # Breach details
+    breach_type = Column(String(100), nullable=False)  # unauthorized_access, data_loss, ransomware, etc.
+    severity = Column(String(20), nullable=False)  # low, medium, high, critical
+    description = Column(Text, nullable=False)
+
+    # Affected data
+    affected_users_count = Column(Integer, default=0)
+    affected_data_categories = Column(JSON)  # Categories of data affected
+
+    # Detection and response
+    detected_at = Column(DateTime(timezone=True), nullable=False)
+    contained_at = Column(DateTime(timezone=True))
+    resolved_at = Column(DateTime(timezone=True))
+
+    # Notifications
+    authority_notified = Column(Boolean, default=False)  # DPA notification within 72 hours
+    authority_notified_at = Column(DateTime(timezone=True))
+    users_notified = Column(Boolean, default=False)  # User notification if high risk
+    users_notified_at = Column(DateTime(timezone=True))
+
+    # Risk assessment
+    likely_consequences = Column(Text)
+    measures_taken = Column(Text)
+    measures_proposed = Column(Text)
+
+    # Responsible parties
+    reported_by = Column(String(255))
+    dpo_notified = Column(Boolean, default=False)
+    dpo_notified_at = Column(DateTime(timezone=True))
+
+    # Status
+    status = Column(String(50), default="open")  # open, investigating, contained, resolved, closed
+
+    # Additional metadata
+    extra_data = Column(JSON)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index('idx_data_breach_logs_severity', 'severity'),
+        Index('idx_data_breach_logs_status', 'status'),
+        Index('idx_data_breach_logs_detected', 'detected_at'),
+    )
+
+
+class DataDeletionRequest(Base):
+    """Track user data deletion requests (right to be forgotten)."""
+    __tablename__ = "data_deletion_requests"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    user_email = Column(String(255), nullable=False)  # Store email in case user is deleted
+
+    # Request details
+    request_reason = Column(Text)
+    verification_token = Column(String(255), unique=True)
+    verified_at = Column(DateTime(timezone=True))
+
+    # Processing status
+    status = Column(String(50), default="pending", nullable=False)  # pending, verified, processing, completed, failed
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+
+    # Deletion summary
+    tables_processed = Column(JSON)  # List of tables from which data was deleted
+    records_deleted = Column(Integer, default=0)
+    error_message = Column(Text)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index('idx_data_deletion_requests_user', 'user_id'),
+        Index('idx_data_deletion_requests_email', 'user_email'),
+        Index('idx_data_deletion_requests_status', 'status'),
+        Index('idx_data_deletion_requests_token', 'verification_token'),
+    )

@@ -24,6 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 from .database import get_db
 from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, generate_uuid
 from .saml_handler import SAMLHandler
+from .gdpr_routes import router as gdpr_router
 import redis
 import secrets
 import pyotp
@@ -296,6 +297,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Include GDPR compliance routes
+app.include_router(gdpr_router)
+
 # CORS Middleware
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -560,7 +564,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # Security configuration
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Bcrypt with cost factor 12 (meets security requirement for feature #64)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Pydantic models with enhanced validation
