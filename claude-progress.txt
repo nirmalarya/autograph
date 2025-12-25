@@ -9677,3 +9677,66 @@ PROGRESS: 153/658 features (23.3%)
 BASELINE: All 153 features passing ✅
 SESSION STATUS: ✅ COMPLETE - Both features already implemented
 
+
+================================================================================
+SESSION: Feature #153 - Recent Diagrams View
+DATE: 2025-12-25
+================================================================================
+
+FEATURE COMPLETED: #153
+
+FEATURE #153: Recent diagrams showing last 10 accessed
+DESCRIPTION: Dashboard tab showing most recently accessed diagrams (limit 10)
+
+ANALYSIS:
+- Backend endpoint /recent already implemented ✅
+- GET /{diagram_id} already updates last_accessed_at ✅
+- Proper filtering and sorting in place ✅
+
+IMPLEMENTATION STATUS:
+✅ Endpoint: GET /api/diagrams/recent
+✅ Query filters: owner_id, not deleted, last_accessed_at not null
+✅ Sorting: last_accessed_at DESC (most recent first)
+✅ Limit: 10 diagrams (configurable parameter)
+✅ Updates: last_accessed_at updated on GET diagram
+
+VALIDATION SCRIPT CREATED:
+- validate_feature153_recent_diagrams.py
+
+TEST RESULTS (All 9 steps passed):
+✅ Created 15 test diagrams
+✅ Accessed diagrams 1-10 to set timestamps
+✅ Recent endpoint returned exactly 10 diagrams
+✅ Diagrams sorted by last_accessed_at (most recent first)
+✅ Accessed diagram 11
+✅ Diagram 11 appeared at top of recent list
+✅ Oldest diagram (diagram 1) removed from list
+✅ All timestamps properly tracked
+
+ENDPOINT DETAILS:
+- URL: GET /api/diagrams/recent
+- Parameters: limit (default: 10, max: 100)
+- Response: {diagrams: [], total: int, limit: int}
+- Authorization: Bearer token required
+- Filters: Only user's own diagrams, not deleted, accessed at least once
+
+CODE LOCATIONS:
+- Backend: services/diagram-service/src/main.py (lines 775-826)
+- GET endpoint: services/diagram-service/src/main.py (lines 2370-2458)
+- Update last_accessed_at: line 2445
+
+REGRESSION TESTING:
+✅ Baseline intact: 153 → 154 features passing
+✅ No breaking changes to existing endpoints
+✅ Existing diagram endpoints still functional
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #153 → passing)
+- baseline_features.txt (updated to 154)
+- validate_feature153_recent_diagrams.py (created)
+- claude-progress.txt (this file)
+
+PROGRESS: 154/658 features (23.4%)
+BASELINE: All 154 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
