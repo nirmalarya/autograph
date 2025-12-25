@@ -10103,3 +10103,95 @@ REGRESSION TESTING:
 PROGRESS: 160/658 features (24.3%)
 BASELINE: All 160 features passing ✅
 SESSION STATUS: ✅ COMPLETE
+
+================================================================================
+SESSION: Feature #161 - Diagram last activity timestamp
+DATE: 2025-12-25 18:30 UTC
+FEATURE: #161 - Diagram last activity timestamp
+================================================================================
+
+FEATURE DESCRIPTION:
+Track and display the last activity timestamp on diagrams. The last_activity 
+field should be updated whenever:
+- Diagram is created
+- User adds a comment
+- User edits the canvas
+- Another user views the diagram
+- Sorting by last_activity should work correctly
+
+IMPLEMENTATION ANALYSIS:
+1. Database Schema (models.py):
+   - last_activity column already exists in files table (Line 208)
+   - Defined as DateTime(timezone=True)
+   - Indexed for efficient sorting (Line 225)
+
+2. Update Triggers Already Implemented:
+   - Diagram creation: Line 1386 sets last_activity=datetime.utcnow()
+   - Comment addition: Line 4114 updates last_activity when comment created
+   - Canvas edit: Line 2671 updates last_activity on diagram update
+   - Diagram view: Line 2469 updates last_activity when diagram fetched
+
+3. Sorting Support:
+   - Lines 744-745: last_activity and last_activity_at supported in sort_by
+   - List endpoint supports ?sort_by=last_activity&sort_order=desc
+
+VALIDATION TEST (validate_feature161_last_activity.py):
+Created comprehensive test covering all 11 steps from feature spec:
+
+Step 1: Register and login two users ✅
+Step 2: Create diagram, verify initial last_activity set ✅
+Step 3: Add comment ✅
+Step 4: Verify last_activity updated after comment ✅
+Step 5: Edit canvas ✅
+Step 6: Verify last_activity updated after edit ✅
+Step 7: User 2 views diagram via share link ✅
+Step 8: Verify last_activity updated after view ✅
+Step 9: Create 3 more diagrams with different timestamps ✅
+Step 10: Sort diagrams by last_activity (descending) ✅
+Step 11: Verify correct sort order (most recent first) ✅
+
+VALIDATION RESULTS (All 11 steps passed):
+✅ Step 1: Both users registered and logged in
+✅ Step 2: Diagram created with initial last_activity timestamp
+✅ Step 3: Comment added successfully
+✅ Step 4: last_activity updated after comment (timestamp increased)
+✅ Step 5: Canvas edited successfully
+✅ Step 6: last_activity updated after edit (timestamp increased)
+✅ Step 7: User 2 viewed diagram via share link
+✅ Step 8: last_activity updated after another user views
+✅ Step 9: Created 3 additional diagrams for sorting test
+✅ Step 10: Retrieved diagrams with sort_by=last_activity&sort_order=desc
+✅ Step 11: Verified diagrams sorted correctly (most recent first)
+
+TESTING INSIGHTS:
+- last_activity updates immediately on all trigger events
+- Timestamps are timezone-aware (UTC) and precise to microseconds
+- Viewing via share link correctly updates last_activity
+- Sorting by last_activity works correctly in list endpoint
+- Multiple users viewing/editing updates timestamp appropriately
+- Feature was ALREADY IMPLEMENTED - just needed validation!
+
+FILES CREATED:
+- validate_feature161_last_activity.py - Comprehensive validation test
+
+FILES MODIFIED:
+- spec/feature_list.json - Feature #161 marked as passing
+- baseline_features.txt - Updated to 161
+
+REGRESSION TESTING:
+✅ Baseline features: 160 → 161 (all passing)
+✅ No breaking changes introduced
+✅ Existing diagram operations still work correctly
+✅ No code changes needed - feature was already complete!
+
+KEY FINDINGS:
+This feature was already fully implemented in the codebase:
+- Database column exists and is indexed
+- All trigger points (create, comment, edit, view) update the field
+- Sorting functionality works correctly
+- Only needed validation to confirm functionality
+
+PROGRESS: 161/658 features (24.5%)
+BASELINE: All 161 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
