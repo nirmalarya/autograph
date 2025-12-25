@@ -1,129 +1,232 @@
-<enhancement_spec>
-  <project_name>AutoGraph Foundation - Complete Fix</project_name>
-  <base_version>v3.0 (654 features, foundation issues remain)</base_version>
-  <target_version>v3.1 (Foundation solid, browser-tested, production-ready)</target_version>
-  <mode>bugfix</mode>
+<validation_spec>
+  <project_name>AutoGraph - Hybrid Validation & Test Suite Enhancement</project_name>
+  <mode>hybrid-validation</mode>
+  <base_version>v3.0 (658 features, 221 existing tests, quality unknown)</base_version>
+  <target_version>v3.2 (658 validated features, comprehensive test suite)</target_version>
   
-  <critical_issues_found>
-    <issue priority="P0">
-      <name>Frontend bypasses API Gateway</name>
-      <description>Frontend makes direct calls to diagram-service (port 8082) instead of using API Gateway (port 8080)</description>
-      <impact>CORS issues, no centralized routing, architectural violation</impact>
-      <location>services/frontend/app/canvas/[id]/page.tsx line 163</location>
-      <fix>Change all service calls to go through API Gateway</fix>
-      <verification>Check Network tab - all calls should be to localhost:8080, not 8082/8083/8084</verification>
-    </issue>
+  <approach>
+    Hybrid strategy: Leverage existing tests, improve where needed, create missing tests.
     
-    <issue priority="P0">
-      <name>Save diagram fails in browser</name>
-      <description>API works with curl, but browser shows "Failed to save diagram"</description>
-      <impact>Users cannot save their work - CRITICAL!</impact>
-      <root_cause>Frontend architecture issue (direct service calls + possible CORS)</root_cause>
-      <fix>Route through API Gateway, verify CORS, test in ACTUAL browser</fix>
-      <verification>Create diagram in browser, draw, save, reload - drawing persists</verification>
-    </issue>
-    
-    <issue priority="P0">
-      <name>Old diagrams don't exist in database</name>
-      <description>Diagram IDs in URL return 0 rows from database</description>
-      <impact>Cannot load/edit existing diagrams</impact>
-      <fix>Clean up orphaned references, ensure diagram creation actually persists</fix>
-      <verification>Create diagram, verify in database, reload page - can still access</verification>
-    </issue>
-  </critical_issues_found>
+    NOT blind trust: Review test quality
+    NOT from scratch: Use existing good tests
+    BALANCED: Best of both worlds
+  </approach>
   
-  <architecture_requirements>
-    <requirement>
-      <name>API Gateway Pattern</name>
-      <description>ALL frontend → backend calls MUST go through API Gateway</description>
-      <pattern>Frontend → API Gateway (8080) → Service (8082/8083/etc)</pattern>
-      <not_allowed>Frontend → Service directly ❌</not_allowed>
-    </requirement>
+  <phases>
+    <phase name="assessment" sessions="1-10">
+      <objective>Review existing 221 tests and assess quality</objective>
+      
+      <process>
+        For each test file in scripts/tests/:
+        
+        1. Read the test file
+        2. Assess quality:
+           - ✅ GOOD: Tests complete workflow, uses real browser/API, checks persistence
+           - ⚠️ PARTIAL: Tests API only (no browser), or incomplete workflow
+           - ❌ BAD: Mocked everything, doesn't test real feature, or broken
+        
+        3. Categorize:
+           - good_tests.txt (can use as-is)
+           - partial_tests.txt (needs enhancement)
+           - bad_tests.txt (needs rewrite)
+           - missing_features.txt (no test exists)
+        
+        4. Create assessment report:
+           - X good tests (ready to run)
+           - Y partial tests (need enhancement)
+           - Z bad tests (need rewrite)
+           - W features with no tests (need creation)
+      </process>
+      
+      <deliverable>Test quality assessment report</deliverable>
+    </phase>
     
-    <requirement>
-      <name>CORS Configuration</name>
-      <description>CORS configured on API Gateway only (single point)</description>
-      <verification>Browser DevTools Network tab shows no CORS errors</verification>
-    </requirement>
+    <phase name="run-good-tests" sessions="11-30">
+      <objective>Run existing high-quality tests</objective>
+      
+      <process>
+        For each test in good_tests.txt:
+        
+        1. Execute the test:
+           python3 scripts/tests/test_X.py
+        
+        2. If test passes:
+           - Find corresponding feature in feature_list.json
+           - Mark as "passes": true
+           - Document in claude-progress.txt
+        
+        3. If test fails:
+           - Investigate why
+           - Fix the code (not the test!)
+           - Re-run until passes
+           - Then mark as passing
+        
+        4. Move test to tests/validated/
+           - Keep validated tests organized
+      </process>
+      
+      <expected>~100-150 features validated quickly</expected>
+    </phase>
     
-    <requirement>
-      <name>Service Discovery</name>
-      <description>Frontend uses environment variables, not hardcoded ports</description>
-      <pattern>NEXT_PUBLIC_API_URL from .env.local</pattern>
-    </requirement>
-  </architecture_requirements>
+    <phase name="enhance-partial-tests" sessions="31-60">
+      <objective>Improve partial tests to be comprehensive</objective>
+      
+      <process>
+        For each test in partial_tests.txt:
+        
+        1. Read existing test
+        2. Identify gaps:
+           - Missing browser testing?
+           - Missing persistence check?
+           - Missing error cases?
+           - Only tests happy path?
+        
+        3. Enhance the test:
+           - Add Puppeteer browser testing if UI feature
+           - Add persistence verification (reload/restart)
+           - Add error case testing
+           - Make it comprehensive
+        
+        4. Run enhanced test:
+           - Execute with python3
+           - Verify passes
+           - Mark feature passing
+        
+        5. Save enhanced test:
+           - Replace old test
+           - Document improvements
+      </process>
+      
+      <expected>~50-100 features validated with enhanced tests</expected>
+    </phase>
+    
+    <phase name="rewrite-bad-tests" sessions="61-90">
+      <objective>Rewrite low-quality tests</objective>
+      
+      <process>
+        For tests in bad_tests.txt:
+        
+        1. Delete bad test
+        2. Write NEW test following v2.1 standards:
+           - Test complete workflow
+           - Use real browser if UI (Puppeteer!)
+           - Use real API calls (not mocks!)
+           - Verify persistence
+           - Check error handling
+        
+        3. Run new test:
+           - Execute and verify passes
+           - Fix feature if test reveals issues
+        
+        4. Mark feature passing
+      </process>
+      
+      <expected>~20-50 features validated with new tests</expected>
+    </phase>
+    
+    <phase name="create-missing-tests" sessions="91-120">
+      <objective>Create tests for features without tests</objective>
+      
+      <process>
+        For features in missing_features.txt:
+        
+        1. Read feature description
+        2. Find code that implements it
+        3. Write comprehensive test:
+           - Complete user workflow
+           - Browser testing if UI
+           - API testing if backend
+           - Persistence verification
+        
+        4. Run test
+        5. Fix feature if needed
+        6. Mark passing when verified
+      </process>
+      
+      <expected>~50-100 features validated with new tests</expected>
+    </phase>
+    
+    <phase name="final-validation" sessions="121-130">
+      <objective>Full regression and smoke test</objective>
+      
+      <process>
+        1. Run ALL tests (now 658 tests total!)
+        2. Verify all pass
+        3. Run regression suite (random 10%)
+        4. Run smoke test (critical flows in browser)
+        5. Verify 658/658 passing
+        6. Generate final report
+      </process>
+      
+      <deliverable>658/658 validated + comprehensive test suite</deliverable>
+    </phase>
+  </phases>
   
-  <mandatory_testing>
-    <test type="browser-e2e" mandatory="true">
-      <name>Complete User Flow - Browser Test</name>
-      <steps>
-        1. Open browser (http://localhost:3000)
-        2. Register new user
-        3. Login
-        4. Create diagram
-        5. Draw shapes on canvas
-        6. Click Save button
-        7. Verify "Saved" message appears
-        8. Reload page
-        9. Verify drawing still there
-        10. Check F12 console - zero errors
-        11. Check F12 Network - all calls to :8080 (not :8082)
-      </steps>
-      <tools>Use Puppeteer MCP for browser automation</tools>
-      <acceptance>All 11 steps pass in REAL browser, not test script</acceptance>
-    </test>
+  <test_quality_criteria>
+    <good_test>
+      - Tests complete user workflow
+      - Uses real browser (Puppeteer) for UI features
+      - Uses real API calls (not mocks)
+      - Verifies data persistence (reload/restart)
+      - Tests error cases
+      - Has clear assertions
+      - Exits with 0 on pass, 1 on fail
+    </good_test>
     
-    <test type="infrastructure" mandatory="true">
-      <name>Infrastructure Readiness</name>
-      <checks>
-        - MinIO buckets exist (diagrams, exports, uploads)
-        - PostgreSQL accessible and tables created
-        - Redis accessible
-        - All 10 services healthy
-        - API Gateway routing works
-      </checks>
-      <verification>curl each endpoint, verify responses</verification>
-    </test>
+    <partial_test>
+      - Tests feature but incomplete
+      - Missing browser testing
+      - Missing persistence check
+      - Only happy path
+      - Needs enhancement
+    </partial_test>
     
-    <test type="api-integration" mandatory="true">
-      <name>API Gateway Integration</name>
-      <checks>
-        - API Gateway routes to all services
-        - CORS headers present on all responses
-        - Authentication flows through gateway
-        - File operations work through gateway
-      </checks>
-      <verification>All API calls via :8080, not direct to services</verification>
-    </test>
-  </mandatory_testing>
+    <bad_test>
+      - Mocks everything
+      - Doesn't test real feature
+      - Broken/doesn't run
+      - Wrong assertions
+      - Needs rewrite
+    </bad_test>
+  </test_quality_criteria>
   
   <quality_gates>
-    <!-- v2.1 enforces 12 gates - all apply! -->
-    <gate>Stop condition: Exit when foundation solid</gate>
-    <gate>Service health: All 10 services healthy</gate>
-    <gate>Database validation: Schema complete</gate>
-    <gate>Browser integration: Test in REAL browser with Puppeteer</gate>
-    <gate>E2E testing: Complete workflows (register→login→create→save→verify)</gate>
-    <gate>Zero TODOs: No incomplete implementations</gate>
-    <gate>Security: JWT, authorization working</gate>
-    <gate>Regression: 654 features still work</gate>
-    <gate>File organization: Clean structure</gate>
-    <gate>Test execution: ACTUALLY RUN tests, verify they pass</gate>
-    <gate>Infrastructure validation: MinIO/Postgres/Redis ready</gate>
-    <gate>Smoke test: At completion, test critical flows in browser</gate>
+    All 12 v2.1 gates apply:
+    
+    1. Stop condition
+    2. Service health
+    3. Database validation
+    4. Browser integration
+    5. E2E testing
+    6. Zero TODOs
+    7. Security checklist
+    8. Regression testing
+    9. File organization
+    10. Test execution enforcement
+    11. Infrastructure validation
+    12. Smoke test suite
   </quality_gates>
   
   <success_criteria>
-    <criterion>Save works in browser (not just API!) - VERIFIED with Puppeteer</criterion>
-    <criterion>Create diagram works in browser - VERIFIED</criterion>
-    <criterion>Complete user flow works: register→login→create→draw→save→reload→drawing persists</criterion>
-    <criterion>All calls go through API Gateway (8080), not direct to services</criterion>
-    <criterion>Zero browser console errors</criterion>
-    <criterion>All 10 services healthy and accessible</criterion>
-    <criterion>Infrastructure initialized (buckets, databases, caches)</criterion>
-    <criterion>Smoke test passes: can use the app for real diagramming</criterion>
+    <criterion>All 658 features validated and passing</criterion>
+    <criterion>Comprehensive test suite (658 tests, all pass)</criterion>
+    <criterion>Test quality: 90%+ rated as "good"</criterion>
+    <criterion>Browser E2E tests for all UI features</criterion>
+    <criterion>API tests for all backend features</criterion>
+    <criterion>Smoke test passes (critical flows work)</criterion>
+    <criterion>Full regression suite passes</criterion>
+    <criterion>Production confidence: 100%</criterion>
   </success_criteria>
   
-  <estimated_sessions>5-10 sessions with REAL browser testing</estimated_sessions>
-</enhancement_spec>
+  <estimated_timeline>
+    Phase 1 (Assessment): 10 sessions
+    Phase 2 (Run good tests): 20 sessions  
+    Phase 3 (Enhance partial): 30 sessions
+    Phase 4 (Rewrite bad): 30 sessions
+    Phase 5 (Create missing): 30 sessions
+    Phase 6 (Final validation): 10 sessions
+    
+    Total: ~130 sessions (~12-15 hours)
+  </estimated_timeline>
+</validation_spec>
 
