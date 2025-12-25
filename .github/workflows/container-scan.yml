@@ -1,0 +1,149 @@
+name: Container Image Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  trivy-scan:
+    name: Trivy Scan - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - diagram-service
+          - collaboration-service
+          - ai-service
+          - git-service
+          - export-service
+          - integration-hub
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile
+          tags: autograph-${{ matrix.service }}:${{ github.sha }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: autograph-${{ matrix.service }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+          category: trivy-${{ matrix.service }}
+
+      - name: Run Trivy vulnerability scanner (JSON)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: autograph-${{ matrix.service }}:${{ github.sha }}
+          format: 'json'
+          output: 'trivy-results-${{ matrix.service }}.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Upload Trivy scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results-${{ matrix.service }}
+          path: trivy-results-${{ matrix.service }}.json
+          retention-days: 30
+
+      - name: Check for critical vulnerabilities
+        run: |
+          CRITICAL_COUNT=$(cat trivy-results-${{ matrix.service }}.json | grep -o '"Severity":"CRITICAL"' | wc -l || echo 0)
+          echo "Critical vulnerabilities found: $CRITICAL_COUNT"
+
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "::warning::Found $CRITICAL_COUNT critical vulnerabilities in ${{ matrix.service }}"
+            # Uncomment to fail on critical vulnerabilities:
+            # exit 1
+          fi
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Trivy Scan Results - ${{ matrix.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f trivy-results-${{ matrix.service }}.json ]; then
+            CRITICAL=$(cat trivy-results-${{ matrix.service }}.json | grep -o '"Severity":"CRITICAL"' | wc -l || echo 0)
+            HIGH=$(cat trivy-results-${{ matrix.service }}.json | grep -o '"Severity":"HIGH"' | wc -l || echo 0)
+            MEDIUM=$(cat trivy-results-${{ matrix.service }}.json | grep -o '"Severity":"MEDIUM"' | wc -l || echo 0)
+            LOW=$(cat trivy-results-${{ matrix.service }}.json | grep -o '"Severity":"LOW"' | wc -l || echo 0)
+
+            echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 🔴 CRITICAL | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟠 HIGH | $HIGH |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟡 MEDIUM | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🟢 LOW | $LOW |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  aggregate-results:
+    name: Aggregate Scan Results
+    runs-on: ubuntu-latest
+    needs: trivy-scan
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: trivy-results
+
+      - name: Create aggregate summary
+        run: |
+          echo "# 🔍 Container Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scan completed at: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Results by Service" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Critical | High | Medium | Low |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|----------|------|--------|-----|" >> $GITHUB_STEP_SUMMARY
+
+          for dir in trivy-results/*/; do
+            if [ -d "$dir" ]; then
+              SERVICE=$(basename "$dir" | sed 's/trivy-results-//')
+              JSON_FILE="${dir}trivy-results-${SERVICE}.json"
+
+              if [ -f "$JSON_FILE" ]; then
+                CRITICAL=$(cat "$JSON_FILE" | grep -o '"Severity":"CRITICAL"' | wc -l || echo 0)
+                HIGH=$(cat "$JSON_FILE" | grep -o '"Severity":"HIGH"' | wc -l || echo 0)
+                MEDIUM=$(cat "$JSON_FILE" | grep -o '"Severity":"MEDIUM"' | wc -l || echo 0)
+                LOW=$(cat "$JSON_FILE" | grep -o '"Severity":"LOW"' | wc -l || echo 0)
+
+                echo "| $SERVICE | $CRITICAL | $HIGH | $MEDIUM | $LOW |" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 Full details available in Security > Code scanning alerts" >> $GITHUB_STEP_SUMMARY
