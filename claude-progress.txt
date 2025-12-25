@@ -10993,3 +10993,85 @@ d68e2bb - Features #284-288: Mermaid Snippets Library and Error Handling
 SESSION STATUS: ✅ COMPLETE
 Mermaid code editing experience significantly enhanced with snippets and error handling!
 
+
+================================================================================
+SESSION CONTINUATION: Advanced Mermaid Snippets
+TIME: 15:20
+================================================================================
+
+FEATURES IMPLEMENTED:
+
+Feature #292: Sequence Diagram Notes
+Feature #293: Sequence Parallel Messages
+Feature #294: Class Visibility Modifiers  
+Feature #295: Abstract Classes and Interfaces
+Feature #296: State Choice Nodes
+Feature #297: State Fork/Join
+Feature #298: Gantt Task Dependencies
+Feature #299: Gantt Critical Path
+Feature #300: Git Cherry-pick
+
+VALIDATION:
+- validate_features_292_300_advanced_snippets.py: 9/9 tests passed
+
+COMMITS:
+0133cfa - Features #292-300: Advanced Mermaid Snippets
+
+SESSION TOTALS:
+Features completed: 14 (#284-288, #292-300)
+Progress: 285 to 299 features (+14)
+Success rate: 100%
+
+
+================================================================================
+SESSION: Feature #289 - Mermaid Draggable Edits (Beta)
+TIME: 2025-12-25 15:30
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #289: Mermaid diagram-as-code: Draggable edits (Beta)
+
+IMPLEMENTATION:
+- Added drag mode toggle in MermaidPreview.tsx
+- Implemented SVG node dragging with mouse events
+- Added position tracking state
+- Implemented automatic code update with position comments
+- Wired onCodeUpdate callback from preview to editor
+
+FILES MODIFIED:
+- services/frontend/app/mermaid/[id]/MermaidPreview.tsx
+- services/frontend/app/mermaid/[id]/page.tsx
+
+FILES CREATED:
+- validate_feature_289_simple.py (validation script)
+- update_feature_289.py (feature list updater)
+
+VALIDATION:
+✅ Drag mode toggle functionality
+✅ Node position tracking
+✅ SVG mouse event handlers (mousedown, mousemove, mouseup)
+✅ Position comment generation
+✅ Code update callback mechanism
+✅ Parent component integration
+
+TECHNICAL DETAILS:
+- Beta Feature: Drag nodes in Mermaid diagram preview
+- Mechanism: SVG manipulation + Mermaid comment injection
+- Comment Format: %% Node {id} repositioned to (x, y)
+- State Management: React hooks (useState) for drag state
+- Visual Feedback: Cursor changes to 'move' on draggable nodes
+
+REGRESSION CHECK:
+✅ Baseline intact: 299 features still passing
+✅ No breaking changes
+
+PROGRESS:
+Starting: 299/658 (45.4%)
+Ending: 300/658 (45.6%)
+Change: +1 feature
+
+COMMITS:
+(pending)
+
+SESSION STATUS: ✅ COMPLETE
+Beta drag-and-drop feature successfully implemented for Mermaid diagrams!

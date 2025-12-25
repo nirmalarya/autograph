@@ -446,6 +446,7 @@ export default function MermaidDiagramPage() {
               code={code}
               theme={mermaidTheme}
               onErrorLineClick={(lineNumber) => setJumpToLine(lineNumber)}
+              onCodeUpdate={(newCode) => setCode(newCode)}
             />
           </div>
         </div>
