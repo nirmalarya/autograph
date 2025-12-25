@@ -11971,3 +11971,68 @@ STATUS: ✅ COMPLETE
 Next Features: 
 - Feature #368: Export AI prompt with diagram
 - Feature #369: Import diagram with AI regeneration
+
+================================================================================
+SESSION: Feature #368 - Export AI Prompt with Diagram
+DATE: 2025-12-25
+================================================================================
+
+FEATURE COMPLETED: #368 - Export AI prompt with diagram
+
+IMPLEMENTATION DETAILS:
+The export service already correctly preserves AI generation metadata when it's
+included in the canvas_data. When exporting AI-generated diagrams, the JSON
+export format includes:
+
+1. Original prompt used for generation
+2. Provider information (MGA, OpenAI, Anthropic, Gemini, Mock)
+3. Model used (gpt-4, claude-3, gemini-pro, etc.)
+4. Token usage statistics
+5. Quality score from validation
+6. Layout algorithm used
+7. Diagram type
+8. Generation timestamp
+9. Unique generation ID
+
+The metadata is preserved in the export under canvas_data.ai_metadata:
+{
+  "ai_metadata": {
+    "prompt": "Create a flowchart...",
+    "provider": "mock",
+    "model": "mock-model",
+    "tokens_used": 100,
+    "quality_score": 43.125,
+    "layout_algorithm": null,
+    "diagram_type": "flowchart",
+    "timestamp": "2025-12-25T...",
+    "generation_id": "uuid"
+  }
+}
+
+FILES CREATED:
+- validate_feature_368_export_ai_prompt.py (validation test)
+- validate_feature_368_comprehensive.py (comprehensive export format tests)
+
+TEST RESULTS:
+✓ JSON export includes all AI metadata
+✓ Original prompt preserved
+✓ Provider information included
+✓ Model information included
+✓ Token usage tracked
+✓ Quality score included
+✓ Generation settings preserved
+
+REGRESSION TEST:
+✓ Baseline features: 368/658 (still >= 215)
+✓ No regressions detected
+
+PROGRESS:
+- Before: 368/658 (55.9%)
+- After: 369/658 (56.1%)
+- Completed: +1 feature
+- Baseline intact: ✓ (368 >= 215)
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #369 - Import diagram with AI regeneration
+
