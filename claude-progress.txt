@@ -4890,3 +4890,59 @@ Regression: All 69 baseline features still passing, no regressions detected.
 Quality: All security best practices validated.
 
 ===== SESSION COMPLETE =====
+
+===== FEATURE 71: JWT ACCESS TOKEN CLAIMS =====
+Date: 2025-12-25
+Status: ✅ PASSING
+Tests: 10/10 passing (100%)
+
+VALIDATION SUMMARY:
+------------------
+Feature 71 validates that JWT access tokens contain all required user claims with correct values.
+
+TEST COVERAGE:
+--------------
+1. ✅ User login and token retrieval
+2. ✅ JWT decoding successful
+3. ✅ 'sub' claim contains user ID
+4. ✅ 'email' claim contains user email
+5. ✅ 'role' claim exists and contains role
+6. ✅ 'exp' claim set to ~1 hour from now
+7. ✅ 'iat' claim set to current time
+8. ✅ Token algorithm is HS256
+9. ✅ JWT structure is valid (3 parts)
+10. ✅ All required claims present
+
+TOKEN CLAIMS FOUND:
+------------------
+- sub: User ID (UUID)
+- email: User email address
+- role: User role (viewer)
+- exp: Expiration time (~1 hour)
+- iat: Issued at time (current)
+- jti: JWT ID (unique identifier)
+- type: Token type (access)
+
+ADDITIONAL FINDINGS:
+-------------------
+- Algorithm: HS256 (HMAC with SHA-256)
+- Expiration: 3600 seconds (1 hour)
+- Token includes JWT ID (jti) for uniqueness
+- Token type field helps distinguish access vs refresh tokens
+
+REGRESSION CHECK:
+-----------------
+✅ All 70 baseline features still passing
+✅ Feature 71 now passing
+✅ Total: 71/658 features passing
+
+FILES CREATED:
+--------------
+- validate_feature71_jwt_claims.py
+
+FILES MODIFIED:
+---------------
+- spec/feature_list.json
+- baseline_features.txt
+
+===== FEATURE 71 COMPLETE =====
