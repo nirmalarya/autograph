@@ -651,6 +651,33 @@ export const SNIPPET_LIBRARY: Snippet[] = [
 
     checkout main
     merge feature tag: "v2.0"`
+  },
+  {
+    id: 'git-merge-conflict',
+    title: 'Merge Conflicts',
+    description: 'Git graph showing merge conflicts and resolution',
+    category: 'git',
+    code: `gitGraph
+    commit id: "Initial commit"
+    commit id: "Shared base"
+
+    branch feature
+    checkout feature
+    commit id: "Feature change"
+    commit id: "More feature work"
+
+    checkout main
+    commit id: "Main change" type: HIGHLIGHT
+    commit id: "Update docs"
+
+    checkout feature
+    commit id: "Final feature"
+
+    checkout main
+    merge feature id: "Merge with conflicts" type: REVERSE
+
+    commit id: "Resolve conflicts"
+    commit id: "Tests passing" type: HIGHLIGHT`
   }
 ];
 
