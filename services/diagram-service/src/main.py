@@ -2411,8 +2411,34 @@ async def get_diagram(
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
     
-    # Check authorization - user must own the diagram
-    if diagram.owner_id != user_id:
+    # Check authorization - user must own the diagram OR have view/edit permission via share
+    has_permission = False
+    permission_level = None
+
+    if diagram.owner_id == user_id:
+        has_permission = True
+        permission_level = "owner"
+    else:
+        # Check if user has access via a user-specific share
+        share = db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first()
+
+        if share:
+            # Check if share is still valid (not expired)
+            if share.expires_at is None or share.expires_at > datetime.now(timezone.utc):
+                has_permission = True
+                permission_level = share.permission  # "view" or "edit"
+            else:
+                logger.warning(
+                    "Share expired",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    user_id=user_id
+                )
+
+    if not has_permission:
         logger.warning(
             "Unauthorized access attempt",
             correlation_id=correlation_id,
@@ -2480,43 +2506,71 @@ async def update_diagram(
     # Check authorization - user must own the diagram OR have edit permission via share
     has_permission = False
     permission_source = None
-    
+
     if diagram.owner_id == user_id:
         has_permission = True
         permission_source = "owner"
     else:
-        # Check if user has edit access via a share token
-        # Look for X-Share-Token header
-        share_token = request.headers.get("X-Share-Token")
-        if share_token:
-            share = db.query(Share).filter(
-                Share.token == share_token,
-                Share.file_id == diagram_id
-            ).first()
-            
-            if share and share.permission == "edit":
-                # Check if share is still valid (not expired)
-                from datetime import timezone
-                if share.expires_at is None or share.expires_at > datetime.now(timezone.utc):
+        # First check user-specific shares (shared_with_user_id)
+        user_share = db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first()
+
+        if user_share:
+            # Check if share is still valid (not expired)
+            if user_share.expires_at is None or user_share.expires_at > datetime.now(timezone.utc):
+                if user_share.permission == "edit":
                     has_permission = True
-                    permission_source = "share_edit"
-                else:
+                    permission_source = "user_share_edit"
+                elif user_share.permission == "view":
                     logger.warning(
-                        "Share token expired",
+                        "Attempt to edit with view-only user share",
                         correlation_id=correlation_id,
                         diagram_id=diagram_id,
-                        share_token=share_token[:10] + "..."
+                        user_id=user_id
                     )
-            elif share and share.permission == "view":
+                    raise HTTPException(status_code=403, detail="You have view-only access to this diagram")
+            else:
                 logger.warning(
-                    "Attempt to edit with view-only share",
+                    "User share expired",
                     correlation_id=correlation_id,
                     diagram_id=diagram_id,
-                    user_id=user_id,
-                    share_token=share_token[:10] + "..."
+                    user_id=user_id
                 )
-                raise HTTPException(status_code=403, detail="You have view-only access to this diagram")
-    
+
+        # If no user-specific share, check for share token
+        if not has_permission:
+            share_token = request.headers.get("X-Share-Token")
+            if share_token:
+                share = db.query(Share).filter(
+                    Share.token == share_token,
+                    Share.file_id == diagram_id
+                ).first()
+
+                if share and share.permission == "edit":
+                    # Check if share is still valid (not expired)
+                    from datetime import timezone
+                    if share.expires_at is None or share.expires_at > datetime.now(timezone.utc):
+                        has_permission = True
+                        permission_source = "share_edit"
+                    else:
+                        logger.warning(
+                            "Share token expired",
+                            correlation_id=correlation_id,
+                            diagram_id=diagram_id,
+                            share_token=share_token[:10] + "..."
+                        )
+                elif share and share.permission == "view":
+                    logger.warning(
+                        "Attempt to edit with view-only share",
+                        correlation_id=correlation_id,
+                        diagram_id=diagram_id,
+                        user_id=user_id,
+                        share_token=share_token[:10] + "..."
+                    )
+                    raise HTTPException(status_code=403, detail="You have view-only access to this diagram")
+
     if not has_permission:
         logger.warning(
             "Unauthorized update attempt",

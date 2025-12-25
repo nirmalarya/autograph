@@ -6890,3 +6890,136 @@ After:  103/658 features passing (15.7%)
 New feature: ✅ Feature #103 (Account lockout can be manually unlocked by admin)
 
 Session complete!
+
+================================================================================
+SESSION: Feature #104 - User Roles (Admin, Editor, Viewer)
+TIME: 2025-12-25 06:55:00
+================================================================================
+
+FEATURE COMPLETED: #104 - User roles: Admin, Editor, Viewer with different permissions
+
+IMPLEMENTATION STATUS:
+✅ Feature already fully implemented in auth-service
+✅ Registration endpoint accepts role parameter (admin, editor, viewer)
+✅ Role validation in UserRegister model
+✅ Permission endpoints implemented:
+   - /permissions/admin (admin only)
+   - /permissions/editor (admin + editor)
+   - /permissions/viewer (all authenticated users)
+✅ Role hierarchy correctly enforced
+
+TEST RESULTS:
+✅ Admin user can access all three endpoints
+✅ Editor user can access editor and viewer endpoints
+✅ Editor correctly blocked from admin endpoint
+✅ Viewer user can only access viewer endpoint
+✅ Viewer correctly blocked from admin and editor endpoints
+✅ Registration with custom roles works
+✅ Role validation prevents invalid roles
+
+KEY COMPONENTS:
+- UserRegister model with role field (default: "viewer")
+- Role validator ensures only valid roles
+- Dependency functions: get_current_admin_user, get_current_editor_or_above, get_current_viewer_or_above
+- Permission check endpoints for testing
+
+REGRESSION CHECK:
+✅ Baseline features: 103 → 104 (no regressions)
+✅ All previous features still passing
+
+PROGRESS UPDATE:
+Before: 103/658 features passing (15.7%)
+After:  104/658 features passing (15.8%)
+
+FILES MODIFIED:
+- spec/feature_list.json
+- baseline_features.txt
+
+GIT COMMIT: 1c26ca4
+
+SESSION COMPLETE ✅
+================================================================================
+
+
+================================================================================
+SESSION: Feature #105 - View-Only Diagram Sharing
+TIME: 2025-12-25 07:10:30
+================================================================================
+
+FEATURE COMPLETED: #105 - Permission check: shared diagram with view-only access
+
+IMPLEMENTATION OVERVIEW:
+========================
+Enhanced diagram-service to support user-specific sharing with view-only permissions.
+
+CHANGES MADE:
+=============
+
+1. Database Schema Update:
+   - Added `shared_with_user_id` column to shares table
+   - Added `version_id` column to shares table
+   - Added foreign key constraints
+   - Added index on shared_with_user_id for performance
+
+2. GET /{diagram_id} Endpoint (src/main.py:2414-2449):
+   - Updated authorization logic to check user-specific shares
+   - Allows diagram owner OR users with shares to view
+   - Checks share expiration
+   - Supports both "view" and "edit" permission levels
+
+3. PUT /{diagram_id} Endpoint (src/main.py:2506-2582):
+   - Enhanced to check user-specific shares (not just token-based)
+   - Checks shared_with_user_id first, then falls back to share tokens
+   - Enforces view-only restriction with proper error message
+   - Returns 403 with "You have view-only access to this diagram"
+
+VALIDATION TEST:
+================
+Created: validate_feature105_view_only_share.py
+
+Test Flow:
+1. ✅ Register and verify User A
+2. ✅ Register and verify User B
+3. ✅ User A creates diagram
+4. ✅ User A shares diagram with User B (view-only)
+5. ✅ User B successfully views diagram
+6. ✅ User B receives 403 Forbidden when trying to edit
+7. ✅ Error message: "You have view-only access to this diagram"
+8. ✅ Bonus: User A can still edit their own diagram
+
+All steps passed! ✅
+
+KEY FEATURES:
+=============
+- User-specific sharing (via shared_with_user_id)
+- Permission levels: "view" and "edit"
+- Share expiration support
+- Proper error messages for unauthorized access
+- Backwards compatible with token-based sharing
+
+FILES CREATED:
+==============
+- validate_feature105_view_only_share.py
+- add_shares_columns.sql (migration)
+
+FILES MODIFIED:
+===============
+- services/diagram-service/src/main.py (GET and PUT endpoints)
+- spec/feature_list.json (Feature #105 → passes: true)
+- baseline_features.txt (105 → 106)
+
+REGRESSION TESTING:
+===================
+✅ Baseline features: 105 → 106 (no regressions)
+✅ All previous features still passing
+✅ Database migration successful
+✅ Service rebuilt and tested
+
+PROGRESS UPDATE:
+================
+Before: 105/658 features passing (16.0%)
+After:  106/658 features passing (16.1%)
+New feature: ✅ Feature #105 (shared diagram with view-only access)
+
+SESSION COMPLETE ✅
+================================================================================
