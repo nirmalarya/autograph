@@ -8963,3 +8963,64 @@ FILES MODIFIED:
 PROGRESS: 137/658 features (20.8%)
 SESSION COMPLETE ✅
 ================================================================================
+
+DATE: December 25, 2025, 11:06 AM
+================================================================================
+
+FEATURE #138: Revoke share link
+STATUS: ✅ PASSING (out-of-the-box)
+
+VALIDATION RESULTS:
+✅ User can create diagram
+✅ User can generate share link
+✅ Share link is accessible before revocation
+✅ DELETE /diagrams/{diagram_id}/share/{share_id} endpoint works
+✅ Revoked share returns 404 "Share link not found"
+✅ Database record deleted (hard delete)
+
+Test coverage (8 steps):
+1. Register and login test user
+2. Create test diagram
+3. Create share link (POST /{diagram_id}/share)
+4. Verify share link accessible (GET /shared/{token})
+5. Revoke share link (DELETE /{diagram_id}/share/{share_id})
+6. Attempt to access revoked share → 404 Not Found
+7. Verify database record deleted
+8. Confirm share is permanently inaccessible
+
+ACTUAL RESULTS:
+✓ All 8 validation steps passed ✓
+✓ Share created successfully
+✓ Share accessible before revocation (200 OK)
+✓ Share revoked successfully (200 OK)
+✓ Revoked share returns 404 error
+✓ Database record deleted (hard delete approach)
+
+IMPLEMENTATION DETAILS:
+- DELETE endpoint: /{diagram_id}/share/{share_id}
+- Requires authentication (JWT token)
+- Authorization: Only diagram owner can revoke shares
+- Database: Hard delete (share record removed from database)
+- Error handling: 404 for not found, 403 for unauthorized
+- Collaborator count updated if user-specific share
+
+ENHANCEMENT:
+- Added is_active column to shares table for future audit trail
+- Current implementation uses hard delete (record removed)
+- is_active column available for soft delete if needed
+
+REGRESSION TESTING:
+✅ Baseline check: 137/137 features still passing
+✅ No existing functionality broken
+
+FILES CREATED:
+- validate_feature138_revoke_share.py
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #138 passing)
+- baseline_features.txt (updated to 138)
+- Database: shares table (added is_active column)
+
+PROGRESS: 138/658 features (21.0%)
+SESSION COMPLETE ✅
+================================================================================
