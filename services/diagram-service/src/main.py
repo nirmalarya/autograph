@@ -31,17 +31,21 @@ load_dotenv()
 # Configure structured logging
 class StructuredLogger:
     """Structured logger with JSON output for distributed tracing."""
-    
+
     def __init__(self, service_name: str):
         self.service_name = service_name
         self.logger = logging.getLogger(service_name)
-        self.logger.setLevel(logging.INFO)
-        
+
+        # Set log level from environment variable (default: INFO)
+        log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        self.logger.setLevel(log_level)
+
         # JSON formatter
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(message)s'))
         self.logger.addHandler(handler)
-    
+
     def log(self, level: str, message: str, correlation_id: str = None, **kwargs):
         """Log structured message with correlation ID."""
         log_data = {
@@ -52,14 +56,27 @@ class StructuredLogger:
             "correlation_id": correlation_id,
             **kwargs
         }
-        self.logger.info(json.dumps(log_data))
-    
+
+        # Use appropriate logging method based on level
+        level_upper = level.upper()
+        if level_upper == "DEBUG":
+            self.logger.debug(json.dumps(log_data))
+        elif level_upper == "WARNING":
+            self.logger.warning(json.dumps(log_data))
+        elif level_upper == "ERROR":
+            self.logger.error(json.dumps(log_data))
+        else:  # INFO or any other level
+            self.logger.info(json.dumps(log_data))
+
+    def debug(self, message: str, correlation_id: str = None, **kwargs):
+        self.log("debug", message, correlation_id, **kwargs)
+
     def info(self, message: str, correlation_id: str = None, **kwargs):
         self.log("info", message, correlation_id, **kwargs)
-    
+
     def error(self, message: str, correlation_id: str = None, **kwargs):
         self.log("error", message, correlation_id, **kwargs)
-    
+
     def warning(self, message: str, correlation_id: str = None, **kwargs):
         self.log("warning", message, correlation_id, **kwargs)
 
