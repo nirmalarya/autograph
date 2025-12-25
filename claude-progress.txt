@@ -12533,3 +12533,44 @@ PROGRESS:
 STATUS: ✅ COMPLETE
 
 Next Feature: #383 - AI generation with style transfer
+
+================================================================================
+SESSION: Features #382-384 - AI Custom Instructions, Style Transfer, Merging
+DATE: 2025-12-25 18:02:00
+================================================================================
+
+FEATURES COMPLETED:
+
+1. Feature #382: AI generation with custom instructions
+   - Endpoint: POST /api/ai/generate-with-custom-instructions
+   - Supports: monitoring, caching, load balancer instructions
+   - Multiple instructions can be combined
+   - Response: original_code, modified_code, custom_instructions
+
+2. Feature #383: AI generation with style transfer
+   - Endpoint: POST /api/ai/apply-style-transfer
+   - Transfers colors, shapes, spacing from source to target
+   - Response: original_code, styled_code, style_aspects
+   - Tested color transfer (#3498db blue colors)
+
+3. Feature #384: AI-powered diagram merging
+   - Endpoint: POST /api/ai/merge-diagrams
+   - Strategies: union (unique components), append (concatenate)
+   - Intelligently merges frontend + backend architectures
+   - Preserves connection points (API Gateway)
+
+QUALITY GATES:
+✅ All endpoints functional
+✅ All validation scripts passing
+✅ Response structures correct
+✅ No regressions (baseline: 384 >= 215)
+
+PROGRESS:
+- Session start: 381/658 (57.9%)
+- Current: 384/658 (58.4%)
+- Completed this session: +3 features (#382-384)
+- Baseline intact: ✓
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #385
