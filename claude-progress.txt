@@ -9953,3 +9953,79 @@ PROGRESS: 158/658 features (24.0%)
 BASELINE: All 158 features passing ✅
 SESSION STATUS: ✅ COMPLETE
 
+
+================================================================================
+SESSION: Feature #159 - Diagram Comment Count Badge
+DATE: 2025-12-25
+FEATURE: Diagram comment count badge (Feature #159)
+================================================================================
+
+IMPLEMENTATION SUMMARY:
+✅ Successfully implemented automatic comment count tracking for diagrams
+✅ Database triggers update comment_count in real-time
+✅ All 10 validation steps passed
+✅ No regressions detected
+
+TECHNICAL APPROACH:
+Created PostgreSQL triggers to automatically maintain comment_count on files table:
+1. Trigger on INSERT to comments table → increments comment_count
+2. Trigger on DELETE from comments table → decrements comment_count
+3. Trigger on UPDATE when file_id changes → updates both old and new file
+
+IMPLEMENTATION DETAILS:
+
+1. Database Migration (add_comment_count_triggers.sql):
+   - Created update_comment_count() function
+   - Installed triggers for INSERT, DELETE, UPDATE operations
+   - Initialized comment_count for all existing files (191 files)
+   - Uses COALESCE to handle all trigger types (NEW/OLD records)
+
+2. Trigger Logic:
+   - Counts all comments for a file_id
+   - Updates files.comment_count automatically
+   - No application code changes needed (database guarantees consistency)
+
+3. Validation Test (validate_feature159_comment_count.py):
+   - Creates diagram, verifies comment_count=0
+   - Adds comment, verifies count increments to 1
+   - Adds 5 more comments, verifies count=6
+   - Views dashboard, confirms count displayed correctly
+   - Deletes 2 comments, verifies count decrements to 4
+   - All steps passed ✅
+
+VALIDATION RESULTS (All 10 steps passed):
+✅ Step 1: Create diagram
+✅ Step 2: Verify comment_count=0
+✅ Step 3: Add comment
+✅ Step 4: Verify comment_count=1
+✅ Step 5: Add 5 more comments
+✅ Step 6: Verify comment_count=6
+✅ Step 7: View dashboard
+✅ Step 8: Verify comment count badge on diagram card
+✅ Step 9: Delete 2 comments
+✅ Step 10: Verify comment_count=4
+
+TESTING INSIGHTS:
+- Comment count updates immediately after comment creation/deletion
+- Dashboard/list endpoint correctly returns comment_count in response
+- Database triggers fire reliably on all comment operations
+- No race conditions or missed updates observed
+
+FILES CREATED:
+- add_comment_count_triggers.sql - Database migration with triggers
+- validate_feature159_comment_count.py - Comprehensive test script
+
+FILES MODIFIED:
+- spec/feature_list.json - Feature #159 marked as passing
+- baseline_features.txt - Updated to 159
+
+REGRESSION TESTING:
+✅ Baseline features: 158 → 159 (all passing)
+✅ No breaking changes introduced
+✅ Existing comment creation/deletion endpoints still work
+✅ Trigger mechanism mirrors successful collaborator_count implementation
+
+PROGRESS: 159/658 features (24.2%)
+BASELINE: All 159 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
