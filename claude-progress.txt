@@ -6647,3 +6647,80 @@ After:  100/658 features passing (15.2%)
 New feature: ✅ Feature #100 (Email verification required for new accounts)
 
 Session complete!
+
+================================================================================
+SESSION: Feature #101 - Email Verification Link Expiry
+DATE: 2025-12-25
+================================================================================
+
+FEATURE #101: Email verification link expires after 24 hours
+STATUS: ✅ PASSING (Already implemented, validated)
+
+IMPLEMENTATION DETAILS:
+=======================
+This feature was already fully implemented in the codebase:
+
+1. Token Expiry (24 hours):
+   - EmailVerificationToken model has expires_at field
+   - Set to datetime.now(timezone.utc) + timedelta(hours=24)
+   - Located in: services/auth-service/src/main.py line 3647
+
+2. Expiry Check:
+   - /email/verify endpoint checks if token is expired
+   - Compares datetime.now(timezone.utc) > token_record.expires_at
+   - Returns 400 with message: "Verification link expired. Please request a new verification email."
+
+3. Resend Functionality:
+   - /email/resend-verification endpoint exists
+   - Invalidates all old unused tokens for the user
+   - Creates new token with fresh 24-hour expiry
+   - Returns new token in verification email
+
+VALIDATION TEST:
+================
+Created: validate_feature101_email_expiry.py
+
+Test Steps:
+1. ✅ Register new user
+2. ✅ Get verification token from database
+3. ✅ Manually expire token (set to 25 hours ago)
+4. ✅ Attempt verification with expired token → 400 error
+5. ✅ Verify error message contains "expired"
+6. ✅ Resend verification email → new token created
+7. ✅ Verify old token is different from new token
+8. ✅ Verify email with new token → success
+9. ✅ Login succeeds after verification
+
+All tests passed! ✅
+
+REGRESSION TESTING:
+===================
+✅ Feature #100 (Email verification required) still works
+✅ No regressions in baseline features (100 → 101 passing)
+
+FILES CREATED:
+==============
+- validate_feature101_email_expiry.py
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (Feature #101 → passes: true)
+- baseline_features.txt (100 → 101)
+
+NOTES:
+======
+This feature required NO CODE CHANGES - it was already fully implemented!
+The implementation includes:
+- Proper 24-hour expiry
+- Clear error messages
+- Token invalidation on resend
+- Single-use tokens
+- Audit logging
+
+PROGRESS UPDATE:
+================
+Before: 100/658 features passing (15.2%)
+After:  101/658 features passing (15.4%)
+New feature: ✅ Feature #101 (Email verification link expires after 24 hours)
+
+Session complete!
