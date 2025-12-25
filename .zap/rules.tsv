@@ -1,0 +1,84 @@
+# ZAP Scanning Rules
+# Format: <id>	<threshold>	<strength>
+#
+# Thresholds: IGNORE, INFO, LOW, MEDIUM, HIGH
+# Strengths: LOW, MEDIUM, HIGH
+
+# High priority security checks
+10020	MEDIUM	HIGH	# Anti-CSRF Tokens Check
+10021	MEDIUM	HIGH	# X-Content-Type-Options Header Missing
+10023	MEDIUM	HIGH	# Information Disclosure - Debug Error Messages
+10024	MEDIUM	HIGH	# Information Disclosure - Sensitive Information in URL
+10025	MEDIUM	HIGH	# Information Disclosure - Sensitive Information in HTTP Referrer Header
+10026	MEDIUM	HIGH	# HTTP Parameter Override
+10027	MEDIUM	HIGH	# Information Disclosure - Suspicious Comments
+10028	MEDIUM	HIGH	# Open Redirect
+10029	MEDIUM	HIGH	# Cookie Poisoning
+10030	MEDIUM	HIGH	# User Controllable Charset
+10031	MEDIUM	HIGH	# User Controllable HTML Element Attribute (Potential XSS)
+10032	MEDIUM	HIGH	# Viewstate
+10033	MEDIUM	HIGH	# Directory Browsing
+10034	MEDIUM	HIGH	# Heartbleed OpenSSL Vulnerability
+10035	MEDIUM	HIGH	# Strict-Transport-Security Header
+10036	MEDIUM	HIGH	# HTTP Server Response Header
+10037	MEDIUM	HIGH	# Server Leaks Information via "X-Powered-By" HTTP Response Header Field(s)
+10038	MEDIUM	HIGH	# Content Security Policy (CSP) Header Not Set
+10039	MEDIUM	HIGH	# X-Backend-Server Header Information Leak
+10040	HIGH	HIGH	# Secure Pages Include Mixed Content
+10041	HIGH	HIGH	# HTTP to HTTPS Insecure Transition in Form Post
+10042	HIGH	HIGH	# HTTPS to HTTP Insecure Transition in Form Post
+10043	HIGH	HIGH	# User Controllable JavaScript Event (XSS)
+10044	HIGH	HIGH	# Big Redirect Detected (Potential Sensitive Information Leak)
+10045	HIGH	HIGH	# Source Code Disclosure - /WEB-INF folder
+10046	MEDIUM	HIGH	# Retrieved from Cache
+10047	MEDIUM	HIGH	# HTTPS Content Available via HTTP
+10048	MEDIUM	HIGH	# Remote Code Execution - Shell Shock
+10049	MEDIUM	HIGH	# Content Cacheability
+10050	MEDIUM	HIGH	# Retrieved from Cache
+10051	MEDIUM	HIGH	# Relative Path Confusion
+10052	MEDIUM	HIGH	# X-ChromeLogger-Data (XCOLD) Header Information Leak
+10053	MEDIUM	HIGH	# Apache Range Header DoS (CVE-2011-3192)
+10054	HIGH	HIGH	# Cookie Without SameSite Attribute
+10055	MEDIUM	HIGH	# CSP
+10056	MEDIUM	HIGH	# X-Debug-Token Information Leak
+10057	MEDIUM	HIGH	# Username Hash Found
+10061	MEDIUM	HIGH	# X-AspNet-Version Response Header
+10062	MEDIUM	HIGH	# PII Disclosure
+10063	MEDIUM	HIGH	# Permissions Policy Header Not Set
+10096	MEDIUM	HIGH	# Timestamp Disclosure
+10097	MEDIUM	HIGH	# Hash Disclosure
+10098	MEDIUM	HIGH	# Cross-Domain Misconfiguration
+10099	MEDIUM	HIGH	# Source Code Disclosure
+
+# SQL Injection
+40018	HIGH	HIGH	# SQL Injection
+40019	HIGH	HIGH	# SQL Injection - MySQL
+40020	HIGH	HIGH	# SQL Injection - Hypersonic SQL
+40021	HIGH	HIGH	# SQL Injection - Oracle
+40022	HIGH	HIGH	# SQL Injection - PostgreSQL
+
+# XSS
+40012	HIGH	HIGH	# Cross Site Scripting (Reflected)
+40013	HIGH	HIGH	# Cross Site Scripting (Persistent)
+40014	HIGH	HIGH	# Cross Site Scripting (Persistent) - Prime
+40015	HIGH	HIGH	# Cross Site Scripting (Persistent) - Spider
+40016	HIGH	HIGH	# Cross Site Scripting (Persistent) - OData
+40017	HIGH	HIGH	# Cross Site Scripting (DOM Based)
+
+# Other injection attacks
+90019	HIGH	HIGH	# Server Side Code Injection
+90020	HIGH	HIGH	# Remote OS Command Injection
+90021	HIGH	HIGH	# XPath Injection
+90022	HIGH	HIGH	# Application Error Disclosure
+90023	HIGH	HIGH	# XML External Entity Attack
+90024	HIGH	HIGH	# Generic Padding Oracle
+90025	HIGH	HIGH	# Expression Language Injection
+90026	HIGH	HIGH	# SOAP Action Spoofing
+90027	HIGH	HIGH	# Cookie Slack Detector
+90028	HIGH	HIGH	# Insecure HTTP Method
+90029	HIGH	HIGH	# SOAP XML Injection
+90030	HIGH	HIGH	# YAML Node.js Injection
+90033	HIGH	HIGH	# Loosely Scoped Cookie
+
+# Authentication
+10101	HIGH	HIGH	# Weak Authentication Method

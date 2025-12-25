@@ -1,0 +1,225 @@
+name: Penetration Testing
+
+on:
+  # Run on push to main
+  push:
+    branches: [main]
+  # Run on pull requests
+  pull_request:
+    branches: [main]
+  # Scheduled weekly security scan (Sundays at 2 AM UTC)
+  schedule:
+    - cron: '0 2 * * 0'
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  penetration-test:
+    name: OWASP Security Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pytest
+
+      - name: Start services with Docker Compose
+        run: |
+          # Create minimal .env for testing
+          cat > .env << EOF
+          POSTGRES_USER=autograph
+          POSTGRES_PASSWORD=test_password_123
+          POSTGRES_DB=autograph
+          DATABASE_URL=postgresql://autograph:test_password_123@postgres:5432/autograph
+          REDIS_URL=redis://redis:6379/0
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=minioadmin
+          MINIO_ENDPOINT=minio:9000
+          JWT_SECRET_KEY=test_jwt_secret_key_for_ci_testing_only
+          RATE_LIMIT_ENABLED=true
+          ENVIRONMENT=test
+          EOF
+
+          # Start services
+          docker-compose up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for services to start..."
+          sleep 30
+
+          # Wait for API Gateway
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health 2>/dev/null; then
+              echo "API Gateway is healthy"
+              break
+            fi
+            echo "Waiting for API Gateway... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run Penetration Tests
+        id: pentest
+        run: |
+          echo "🔐 Running Penetration Tests..."
+          python validate_feature62_penetration_testing.py
+
+      - name: Upload penetration test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: penetration-test-report
+          path: penetration_test_report.json
+          retention-days: 90
+
+      - name: Check for critical vulnerabilities
+        if: always()
+        run: |
+          if [ -f penetration_test_report.json ]; then
+            CRITICAL=$(python -c "import json; report=json.load(open('penetration_test_report.json')); print(len([v for v in report['vulnerabilities'] if v['severity']=='CRITICAL']))")
+            HIGH=$(python -c "import json; report=json.load(open('penetration_test_report.json')); print(len([v for v in report['vulnerabilities'] if v['severity']=='HIGH']))")
+
+            echo "Critical vulnerabilities: $CRITICAL"
+            echo "High vulnerabilities: $HIGH"
+
+            if [ "$CRITICAL" -gt 0 ]; then
+              echo "❌ CRITICAL vulnerabilities found! Failing build."
+              exit 1
+            fi
+
+            if [ "$HIGH" -gt 2 ]; then
+              echo "⚠️  Too many HIGH severity vulnerabilities ($HIGH). Review required."
+              exit 1
+            fi
+
+            echo "✅ Security posture acceptable"
+          fi
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            if (!fs.existsSync('penetration_test_report.json')) {
+              return;
+            }
+
+            const report = JSON.parse(fs.readFileSync('penetration_test_report.json', 'utf8'));
+
+            const criticalCount = report.vulnerabilities.filter(v => v.severity === 'CRITICAL').length;
+            const highCount = report.vulnerabilities.filter(v => v.severity === 'HIGH').length;
+            const mediumCount = report.vulnerabilities.filter(v => v.severity === 'MEDIUM').length;
+
+            let status = '✅';
+            if (criticalCount > 0) status = '🔴';
+            else if (highCount > 0) status = '🟠';
+
+            const body = `## ${status} Penetration Testing Results
+
+            **Security Score:** ${report.security_score}/100
+
+            | Severity | Count |
+            |----------|-------|
+            | 🔴 Critical | ${criticalCount} |
+            | 🟠 High | ${highCount} |
+            | 🟡 Medium | ${mediumCount} |
+
+            **Tests:** ${report.tests_passed} passed, ${report.tests_failed} failed
+
+            ${report.vulnerabilities.length > 0 ? '### Vulnerabilities\n' + report.vulnerabilities.map(v =>
+              `- **[${v.severity}]** ${v.test}: ${v.details}`
+            ).join('\n') : '✅ No vulnerabilities detected!'}
+
+            <details>
+            <summary>Full Report</summary>
+
+            \`\`\`json
+            ${JSON.stringify(report, null, 2)}
+            \`\`\`
+            </details>
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Stop services
+        if: always()
+        run: docker-compose down -v
+
+  owasp-zap-scan:
+    name: OWASP ZAP Full Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start services
+        run: |
+          # Create minimal .env
+          cat > .env << EOF
+          POSTGRES_USER=autograph
+          POSTGRES_PASSWORD=test_password_123
+          POSTGRES_DB=autograph
+          DATABASE_URL=postgresql://autograph:test_password_123@postgres:5432/autograph
+          REDIS_URL=redis://redis:6379/0
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=minioadmin
+          MINIO_ENDPOINT=minio:9000
+          JWT_SECRET_KEY=test_jwt_secret_key_for_ci
+          ENVIRONMENT=test
+          EOF
+
+          docker-compose up -d
+          sleep 30
+
+      - name: Wait for API Gateway
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health; then
+              echo "API Gateway ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:8080'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Upload ZAP Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          retention-days: 90
+
+      - name: Stop services
+        if: always()
+        run: docker-compose down -v
