@@ -9740,3 +9740,68 @@ PROGRESS: 154/658 features (23.4%)
 BASELINE: All 154 features passing ✅
 SESSION STATUS: ✅ COMPLETE
 
+
+================================================================================
+SESSION: Feature #154 - Shared With Me View
+DATE: 2025-12-25
+================================================================================
+
+FEATURE COMPLETED: #154
+
+FEATURE #154: Shared with me - view diagrams shared by others
+DESCRIPTION: Dashboard tab showing diagrams other users have shared with current user
+
+ANALYSIS:
+- Backend endpoint /shared-with-me already implemented ✅
+- Share creation endpoint accepts shared_with_email parameter ✅
+- Proper permission tracking (view/edit) ✅
+
+IMPLEMENTATION STATUS:
+✅ Endpoint: GET /api/diagrams/shared-with-me
+✅ Query: Join shares table with files table
+✅ Filter: shared_with_user_id = current user, not deleted
+✅ Sorting: created_at DESC (newest shares first)
+✅ Response includes: permission level, owner email, shared_at timestamp
+
+VALIDATION SCRIPT CREATED:
+- validate_feature154_shared_with_me.py
+
+TEST RESULTS (All 10 steps passed):
+✅ User A created and logged in
+✅ User B created and logged in
+✅ User A created diagram 1
+✅ User A shared diagram 1 with User B (view permission)
+✅ User B sees shared diagram in shared-with-me list
+✅ Owner correctly shown as User A
+✅ Permission level correctly shown as "view"
+✅ User A created and shared diagram 2 (edit permission)
+✅ Both diagrams appear in User B's shared list
+✅ Diagram 2 has correct "edit" permission
+
+ENDPOINT DETAILS:
+- URL: GET /api/diagrams/shared-with-me
+- Response: {diagrams: [], total: int}
+- Each diagram includes: permission, owner_email, shared_at
+- Authorization: Bearer token required
+- Sharing: POST /api/diagrams/{id}/share with shared_with_email parameter
+
+CODE LOCATIONS:
+- Shared-with-me endpoint: services/diagram-service/src/main.py (lines 920-984)
+- Share creation: services/diagram-service/src/main.py (lines 3480-3655)
+- Query joins Share and File tables, filters by shared_with_user_id
+
+REGRESSION TESTING:
+✅ Baseline intact: 154 → 155 features passing
+✅ No breaking changes to existing endpoints
+✅ Share functionality working correctly
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #154 → passing)
+- baseline_features.txt (updated to 155)
+- validate_feature154_shared_with_me.py (created)
+- claude-progress.txt (this file)
+
+PROGRESS: 155/658 features (23.6%)
+BASELINE: All 155 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
