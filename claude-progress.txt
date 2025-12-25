@@ -5821,3 +5821,61 @@ Before: 85/658 features passing (12.9%)
 After:  86/658 features passing (13.1%)
 
 ===== FEATURE #84 COMPLETE =====
+
+===== SESSION: Feature #85 - SAML JIT Provisioning =====
+
+FEATURE IMPLEMENTED: ✅ SAML JIT (Just-In-Time) User Provisioning
+
+BUG FIXED:
+===========
+Location: services/auth-service/src/main.py:10063-10072
+Issue: Code used email_verified=True but model has is_verified
+Fix: Updated User creation with correct fields:
+  - email_verified → is_verified
+  - Added password_hash="" for SSO users
+  - Added is_active=True
+  - Added sso_provider and sso_id tracking
+
+VALIDATION RESULTS:
+==================
+✅ All core JIT functionality verified:
+  - User auto-creation during SAML login
+  - Attribute mapping from SAML assertions
+  - Default role assignment
+  - No duplicate user creation
+  - Audit log entry creation
+  - Database schema compliance
+
+IMPLEMENTATION NOTES:
+=====================
+- JIT provisioning code was already present (lines 10054-10093)
+- Fixed field name mismatch between code and database model
+- Integrated with existing SAML infrastructure
+- Supports configurable default roles
+- Maps SAML groups to AutoGraph roles
+- Creates audit trail for compliance
+
+FILES MODIFIED:
+===============
+- services/auth-service/src/main.py (JIT user creation bug fix)
+- spec/feature_list.json (feature #85 → passes: true)
+- baseline_features.txt (86 → 87)
+
+FILES CREATED:
+==============
+- validate_feature85_jit_provisioning.py
+- SESSION_SUMMARY_FEATURE85_JIT.md
+
+REGRESSION CHECK:
+=================
+✅ Baseline features: 86/86 → 87/87 passing
+✅ No regressions detected
+✅ All SAML features (81-85) passing
+
+PROGRESS UPDATE:
+================
+Before: 86/658 features passing (13.1%)
+After:  87/658 features passing (13.2%)
+New feature: ✅ Feature #85 (SAML JIT Provisioning)
+
+===== FEATURE #85 COMPLETE =====

@@ -10062,10 +10062,13 @@ async def saml_acs(request: Request, db: Session = Depends(get_db)):
                             
                             user = User(
                                 email=user_info["email"],
+                                password_hash="",  # No password for SSO users
                                 full_name=f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip(),
                                 role=role,
-                                email_verified=True,  # Trust SSO
-                                created_at=datetime.utcnow()
+                                is_verified=True,  # Trust SSO
+                                is_active=True,
+                                sso_provider=provider_name,
+                                sso_id=user_info.get("nameid", "")
                             )
                             db.add(user)
                             db.commit()
