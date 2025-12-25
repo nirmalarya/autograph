@@ -1058,34 +1058,71 @@ def delete_session(access_token: str) -> None:
 
 def delete_all_user_sessions(user_id: str) -> int:
     """Delete all sessions for a user.
-    
+
     Uses the user sessions set for efficient deletion.
-    
+
     Args:
         user_id: The user ID
-        
+
     Returns:
         Number of sessions deleted
     """
     user_sessions_key = f"user_sessions:{user_id}"
-    
+
     # Get all session tokens for this user
     session_tokens = redis_client.smembers(user_sessions_key)
-    
+
     deleted = 0
     for token in session_tokens:
         # Ensure token is a string
         if isinstance(token, bytes):
             token = token.decode('utf-8')
-        
+
         # Delete session
         session_key = f"session:{token}"
         if redis_client.delete(session_key) > 0:
             deleted += 1
-    
+
     # Delete the user sessions set
     redis_client.delete(user_sessions_key)
-    
+
+    return deleted
+
+
+def delete_all_user_sessions_except_current(user_id: str, current_token: str) -> int:
+    """Delete all sessions for a user except the current one.
+
+    Feature #99: Password change invalidates all existing sessions except current
+
+    Args:
+        user_id: The user ID
+        current_token: The current access token to preserve
+
+    Returns:
+        Number of sessions deleted
+    """
+    user_sessions_key = f"user_sessions:{user_id}"
+
+    # Get all session tokens for this user
+    session_tokens = redis_client.smembers(user_sessions_key)
+
+    deleted = 0
+    for token in session_tokens:
+        # Ensure token is a string
+        if isinstance(token, bytes):
+            token = token.decode('utf-8')
+
+        # Skip the current token
+        if token == current_token:
+            continue
+
+        # Delete session
+        session_key = f"session:{token}"
+        if redis_client.delete(session_key) > 0:
+            deleted += 1
+            # Remove from user sessions set
+            redis_client.srem(user_sessions_key, token)
+
     return deleted
 
 
@@ -2823,34 +2860,35 @@ async def change_password(
     request_data: PasswordChange,
     request: Request,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
 ):
     """Change user password (requires current password).
-    
+
     Features #98 and #99:
     - Feature #98: Password change requires current password
     - Feature #99: Password change invalidates all existing sessions except current
-    
+
     This endpoint will:
     1. Validate current password is correct
     2. Update user's password
-    3. Invalidate ALL sessions (including current one) for security
+    3. Invalidate ALL sessions EXCEPT the current one (Feature #99)
     4. Create audit log entry
-    
-    Note: User will need to login again after password change.
+
+    Note: Current session remains active, but all other sessions are logged out.
     """
     # Get client IP and user agent for audit logging
     client_ip = get_client_ip(request)
     user_agent = get_user_agent(request)
     correlation_id = f"password-change-{int(time.time() * 1000)}"
-    
+
     logger.info(
         "Password change request received",
         correlation_id=correlation_id,
         user_id=current_user.id,
         email=current_user.email
     )
-    
+
     try:
         # Validate current password
         if not verify_password(request_data.current_password, current_user.password_hash):
@@ -2872,16 +2910,16 @@ async def change_password(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current password is incorrect"
             )
-        
+
         # Hash new password
         hashed_password = get_password_hash(request_data.new_password)
-        
+
         # Update user's password
         now = datetime.now(timezone.utc)
         current_user.password_hash = hashed_password
         current_user.updated_at = now
-        
-        # Revoke all refresh tokens FIRST
+
+        # Revoke all refresh tokens
         db.query(RefreshToken).filter(
             RefreshToken.user_id == current_user.id,
             RefreshToken.is_used == False,
@@ -2890,21 +2928,21 @@ async def change_password(
             "is_revoked": True,
             "revoked_at": now
         })
-        
+
         db.commit()
-        
-        # Invalidate ALL user sessions by blacklisting user ID temporarily
-        # We set a short TTL (2 seconds) which is enough to invalidate existing tokens
-        # but will allow immediate re-login with new password
-        blacklist_all_user_tokens(current_user.id, ttl_seconds=2)
-        
+
+        # Feature #99: Delete all sessions EXCEPT the current one
+        # This keeps the current session active while logging out all other devices
+        sessions_deleted = delete_all_user_sessions_except_current(current_user.id, token)
+
         logger.info(
             "Password changed successfully",
             correlation_id=correlation_id,
             user_id=current_user.id,
-            email=current_user.email
+            email=current_user.email,
+            other_sessions_deleted=sessions_deleted
         )
-        
+
         # Log successful password change
         create_audit_log(
             db=db,
@@ -2912,13 +2950,17 @@ async def change_password(
             user_id=current_user.id,
             ip_address=client_ip,
             user_agent=user_agent,
-            extra_data={"email": current_user.email}
+            extra_data={
+                "email": current_user.email,
+                "other_sessions_invalidated": sessions_deleted
+            }
         )
-        
+
         return {
             "message": "Password changed successfully",
-            "detail": "All sessions have been logged out for security. Please login again with your new password.",
-            "sessions_invalidated": True
+            "detail": "Your password has been changed. Other sessions have been logged out for security.",
+            "current_session_active": True,
+            "other_sessions_invalidated": sessions_deleted
         }
         
     except HTTPException:
