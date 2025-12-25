@@ -4231,6 +4231,201 @@ async def get_current_user_from_api_key(
         raise credentials_exception
 
 
+async def get_current_user_with_scope(
+    required_scope: str,
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+    request: Request = None
+) -> User:
+    """
+    Get current user and validate API key scope.
+
+    Feature #110: API key with scope restrictions (read-only, write, admin)
+
+    Validates that if authentication is via API key, it has the required scope.
+    JWT tokens bypass scope checking (they have full user permissions).
+
+    Scopes:
+    - read: Read-only access (GET requests)
+    - write: Create, update, delete operations (POST, PUT, DELETE, PATCH)
+    - admin: Full access including user management (admin users only)
+
+    Args:
+        required_scope: The scope required for this operation ('read', 'write', or 'admin')
+        authorization: The HTTP Bearer token (JWT or API key)
+        db: Database session
+        request: HTTP request object
+
+    Returns:
+        User object if authenticated and authorized
+
+    Raises:
+        HTTPException 401: If not authenticated
+        HTTPException 403: If API key doesn't have required scope
+    """
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+    # If no authorization header, try OAuth2 (JWT)
+    if authorization is None:
+        # Fall back to JWT authentication
+        return await get_current_user(db=db)
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        # Extract the token from the Bearer header
+        token = authorization.credentials
+
+        # Check if it looks like an API key (starts with ag_)
+        if not token.startswith("ag_"):
+            # Not an API key, it's a JWT - JWTs have full user permissions
+            return await get_current_user(token=token, db=db)
+
+        # It's an API key - validate it
+        api_key = token
+
+        # Query database for API key
+        from .models import ApiKey
+        api_keys = db.query(ApiKey).filter(
+            ApiKey.is_active == True
+        ).all()
+
+        # Find matching API key by verifying hash
+        matching_key = None
+        for key_record in api_keys:
+            if verify_api_key(api_key, key_record.key_hash):
+                matching_key = key_record
+                break
+
+        if not matching_key:
+            logger.warning(
+                "Invalid API key attempted",
+                key_prefix=api_key[:8] if len(api_key) >= 8 else api_key
+            )
+            raise credentials_exception
+
+        # Check if key is expired
+        if matching_key.expires_at and matching_key.expires_at < datetime.now(timezone.utc):
+            logger.warning(
+                "Expired API key used",
+                api_key_id=matching_key.id,
+                key_name=matching_key.name,
+                expired_at=matching_key.expires_at.isoformat()
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Validate scope - Feature #110
+        key_scopes = matching_key.scopes or []
+
+        # If no scopes defined, default to read-only for backward compatibility
+        if not key_scopes:
+            key_scopes = ["read"]
+
+        # Check if the API key has the required scope
+        has_required_scope = False
+
+        if "admin" in key_scopes:
+            # Admin scope grants all permissions
+            has_required_scope = True
+        elif "write" in key_scopes and required_scope in ["read", "write"]:
+            # Write scope grants read and write
+            has_required_scope = True
+        elif "read" in key_scopes and required_scope == "read":
+            # Read scope only grants read
+            has_required_scope = True
+
+        if not has_required_scope:
+            logger.warning(
+                "API key insufficient scope",
+                api_key_id=matching_key.id,
+                key_name=matching_key.name,
+                key_scopes=key_scopes,
+                required_scope=required_scope,
+                method=request.method if request else "unknown"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key does not have required scope: {required_scope}. Key scopes: {key_scopes}",
+            )
+
+        # Update last used timestamp
+        matching_key.last_used_at = datetime.now(timezone.utc)
+        db.commit()
+
+        # Get the user
+        user = get_user_by_id(db, matching_key.user_id)
+        if not user:
+            logger.error(
+                "API key has invalid user_id",
+                api_key_id=matching_key.id,
+                user_id=matching_key.user_id
+            )
+            raise credentials_exception
+
+        logger.info(
+            "API key authentication successful with scope validation",
+            api_key_id=matching_key.id,
+            key_name=matching_key.name,
+            user_id=user.id,
+            scopes=matching_key.scopes,
+            required_scope=required_scope,
+            method=request.method if request else "unknown"
+        )
+
+        return user
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error validating API key with scope",
+            exc=e
+        )
+        raise credentials_exception
+
+
+# Helper functions to create scope-specific dependencies
+def require_read_scope():
+    """Dependency that requires 'read' scope for API keys."""
+    async def _check(
+        authorization: str = Depends(HTTPBearer(auto_error=False)),
+        db: Session = Depends(get_db),
+        request: Request = None
+    ) -> User:
+        return await get_current_user_with_scope("read", authorization, db, request)
+    return Depends(_check)
+
+
+def require_write_scope():
+    """Dependency that requires 'write' scope for API keys."""
+    async def _check(
+        authorization: str = Depends(HTTPBearer(auto_error=False)),
+        db: Session = Depends(get_db),
+        request: Request = None
+    ) -> User:
+        return await get_current_user_with_scope("write", authorization, db, request)
+    return Depends(_check)
+
+
+def require_admin_scope():
+    """Dependency that requires 'admin' scope for API keys."""
+    async def _check(
+        authorization: str = Depends(HTTPBearer(auto_error=False)),
+        db: Session = Depends(get_db),
+        request: Request = None
+    ) -> User:
+        return await get_current_user_with_scope("admin", authorization, db, request)
+    return Depends(_check)
+
+
 # API Key endpoints
 @app.post("/api-keys", response_model=ApiKeyCreatedResponse)
 async def create_api_key(
@@ -4505,11 +4700,11 @@ async def test_api_key_auth(
 ):
     """
     Test endpoint for API key authentication.
-    
+
     Can be accessed with either:
     - JWT Bearer token (regular authentication)
     - API key Bearer token (API key authentication)
-    
+
     Feature #107: API key authentication for programmatic access
     """
     return {
@@ -4517,6 +4712,119 @@ async def test_api_key_auth(
         "user_id": current_user.id,
         "email": current_user.email,
         "role": current_user.role,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/test/scope-read")
+async def test_scope_read(
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Test endpoint that requires 'read' scope.
+
+    Feature #110: API key with scope restrictions
+
+    This endpoint can be accessed by:
+    - JWT tokens (full permissions)
+    - API keys with 'read' scope
+    - API keys with 'write' scope (write includes read)
+    - API keys with 'admin' scope (admin includes all)
+    """
+    current_user = await get_current_user_with_scope("read", authorization, db, request)
+    return {
+        "message": "Read scope validated successfully",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "required_scope": "read",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/test/scope-write")
+async def test_scope_write(
+    data: dict,
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Test endpoint that requires 'write' scope.
+
+    Feature #110: API key with scope restrictions
+
+    This endpoint can be accessed by:
+    - JWT tokens (full permissions)
+    - API keys with 'write' scope
+    - API keys with 'admin' scope (admin includes all)
+
+    This endpoint CANNOT be accessed by:
+    - API keys with only 'read' scope (will return 403 Forbidden)
+    """
+    current_user = await get_current_user_with_scope("write", authorization, db, request)
+    return {
+        "message": "Write scope validated successfully",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "required_scope": "write",
+        "data_received": data,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.delete("/test/scope-write/{item_id}")
+async def test_scope_write_delete(
+    item_id: str,
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Test endpoint that requires 'write' scope for DELETE operations.
+
+    Feature #110: API key with scope restrictions
+    """
+    current_user = await get_current_user_with_scope("write", authorization, db, request)
+    return {
+        "message": "Write scope validated successfully for DELETE",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "required_scope": "write",
+        "item_id": item_id,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/test/scope-admin")
+async def test_scope_admin(
+    data: dict,
+    authorization: str = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+    request: Request = None
+):
+    """
+    Test endpoint that requires 'admin' scope.
+
+    Feature #110: API key with scope restrictions
+
+    This endpoint can be accessed by:
+    - JWT tokens from admin users
+    - API keys with 'admin' scope
+
+    This endpoint CANNOT be accessed by:
+    - API keys with only 'read' scope (will return 403 Forbidden)
+    - API keys with only 'write' scope (will return 403 Forbidden)
+    """
+    current_user = await get_current_user_with_scope("admin", authorization, db, request)
+    return {
+        "message": "Admin scope validated successfully",
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role,
+        "required_scope": "admin",
+        "data_received": data,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -5882,28 +6190,6 @@ async def get_team_members(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get team members"
         )
-
-
-@app.get("/test/api-key-auth")
-async def test_api_key_auth(
-    current_user: User = Depends(get_current_user_from_api_key)
-):
-    """
-    Test endpoint for API key authentication.
-    
-    Can be accessed with either:
-    - JWT Bearer token (regular authentication)
-    - API key Bearer token (API key authentication)
-    
-    Feature #107: API key authentication for programmatic access
-    """
-    return {
-        "message": "API key authentication successful",
-        "user_id": current_user.id,
-        "email": current_user.email,
-        "role": current_user.role,
-        "timestamp": datetime.utcnow().isoformat()
-    }
 
 
 # ============================================================================

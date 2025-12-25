@@ -7169,3 +7169,67 @@ Commit: 25cceac
 SESSION COMPLETE ✅
 ================================================================================
 
+
+================================================================================
+SESSION: Feature #109 - API Key Expiration
+DATE: 2025-12-25 07:37
+================================================================================
+
+FEATURE #109: API key with expiration date
+STATUS: ✅ PASSING (already implemented, now validated)
+
+IMPLEMENTATION SUMMARY:
+=======================
+- Feature was already fully implemented in auth service
+- Model has expires_at field (models.py line 487)
+- API accepts expires_in_days parameter
+- Expiration check in authentication middleware (4187-4198)
+- Returns 401 with "API key has expired" for expired keys
+
+VALIDATION RESULTS:
+===================
+✅ STEP 1: Register and login test user
+✅ STEP 2: Create non-expiring API key (NULL expiration)
+✅ STEP 3: Create 30-day expiring API key
+✅ STEP 4: Verify expiration date ~30 days from now
+✅ STEP 5: Test non-expiring key works
+✅ STEP 6: Test expiring key works (not expired yet)
+✅ STEP 7: Manually set key expiration to past
+✅ STEP 8: Verify expired key rejected with 401
+✅ STEP 9: Verify error message mentions "expired"
+✅ STEP 10: Verify database stores expiration correctly
+
+All tests passed! ✅
+
+TECHNICAL DETAILS:
+==================
+- API keys can be permanent (expires_in_days omitted)
+- API keys can expire after N days (expires_in_days parameter)
+- Expiration stored as timestamp in database
+- Middleware checks expiration before accepting key
+- Clear error message for expired keys
+
+FILES CREATED:
+==============
+1. validate_feature109_api_key_expiration.py (comprehensive E2E test)
+
+FILES MODIFIED:
+===============
+1. spec/feature_list.json (Feature #109 → passes: true)
+2. baseline_features.txt (109 → 110)
+
+REGRESSION TESTING:
+===================
+✅ Feature #108 (API key revocation) - Still passing
+✅ No regressions detected
+✅ All 110 baseline features intact
+
+PROGRESS UPDATE:
+================
+Before: 109/658 features passing (16.6%)
+After:  110/658 features passing (16.7%)
+
+Commit: [pending]
+
+SESSION COMPLETE ✅
+================================================================================
