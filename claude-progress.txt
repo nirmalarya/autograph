@@ -5944,3 +5944,22 @@ New feature: ✅ Feature #90 (Session Management with Redis)
 
 ===== FEATURE #90 COMPLETE =====
 
+
+===== SESSION: Feature #90 - Remember Me Functionality =====
+Date: 2025-12-25
+Feature: #90 - Remember me functionality extends session to 30 days
+Status: COMPLETE
+
+IMPLEMENTATION:
+- Modified login endpoint to use different TTL based on remember_me flag
+- remember_me=true: 30 days refresh token TTL
+- remember_me=false: 1 day refresh token TTL
+- Changed line 1986 in main.py from None to 1
+
+VALIDATION:
+- Created validate_feature90_remember_me.py
+- All tests passing
+- Baseline: 90 -> 91 features
+- No regressions detected
+
+===== FEATURE #90 COMPLETE =====
