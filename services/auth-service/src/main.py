@@ -671,15 +671,18 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
         expire = now + expires_delta
     else:
         expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    # Add a unique identifier to prevent identical tokens in rapid succession
-    # This ensures each token is unique even if issued in the same second
-    to_encode.update({
-        "exp": expire,
-        "iat": now,
-        "jti": str(uuid.uuid4()),  # JWT ID claim for uniqueness
-        "type": "access"
-    })
+
+    # Add standard claims, but don't overwrite custom claims from data
+    # This allows OAuth tokens to set their own jti and type
+    to_encode.setdefault("exp", expire)
+    to_encode.setdefault("iat", now)
+    to_encode.setdefault("jti", str(uuid.uuid4()))  # JWT ID claim for uniqueness
+    to_encode.setdefault("type", "access")  # Default type, can be overridden
+
+    # Ensure exp and iat are always set to correct values
+    to_encode["exp"] = expire
+    to_encode["iat"] = now
+
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 

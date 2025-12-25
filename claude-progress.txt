@@ -7233,3 +7233,98 @@ Commit: [pending]
 
 SESSION COMPLETE ✅
 ================================================================================
+
+================================================================================
+SESSION: Feature #110 - API Key Scope Restrictions
+DATE: 2025-12-25 07:53
+================================================================================
+
+FEATURE #110: API key with scope restrictions (read-only, write, admin)
+STATUS: ✅ PASSING
+
+IMPLEMENTATION SUMMARY:
+=======================
+Implemented comprehensive scope-based access control for API keys with three
+permission levels: read (GET only), write (CRUD operations), and admin (all
+operations including user management).
+
+TECHNICAL IMPLEMENTATION:
+=========================
+1. Scope Validation Function
+   - Created get_current_user_with_scope() in auth service
+   - Validates API key scopes against required permissions
+   - JWT tokens bypass scope checking (full user permissions)
+   - Returns 403 Forbidden with clear error messages
+
+2. Scope Hierarchy
+   - read: GET requests only
+   - write: GET, POST, PUT, DELETE (includes read)
+   - admin: All operations (includes write + read)
+
+3. Security Features
+   - Admin scope creation restricted to admin users only
+   - Empty scopes default to read-only for backward compatibility
+   - Clear error messages show required vs. available scopes
+   - Scope validation happens before request processing
+
+4. Test Endpoints Created
+   - GET /api/auth/test/scope-read (requires read scope)
+   - POST /api/auth/test/scope-write (requires write scope)
+   - DELETE /api/auth/test/scope-write/{item_id} (requires write scope)
+   - POST /api/auth/test/scope-admin (requires admin scope)
+
+VALIDATION RESULTS:
+===================
+✅ STEP 1: Register and login test user
+✅ STEP 2: Generate API key with scope='read'
+✅ STEP 3: Read scope GET endpoint succeeds
+✅ STEP 4: Read scope POST endpoint blocked with 403
+✅ STEP 5: Generate API key with scope='write'
+✅ STEP 6: Write scope GET succeeds (write includes read)
+✅ STEP 7: Write scope POST succeeds
+✅ STEP 8: Write scope DELETE succeeds
+✅ STEP 9: Write scope admin POST blocked with 403
+✅ STEP 10: Admin scope only creatable by admin users (verified)
+
+All tests passed! ✅
+
+TECHNICAL DETAILS:
+==================
+- API keys created with scopes parameter (array of strings)
+- Scope validation uses hierarchical permission model
+- Admin > Write > Read in permission hierarchy
+- JWT tokens always have full user permissions (no scope limits)
+- Clear error messages: "API key does not have required scope: {scope}"
+
+FILES CREATED:
+==============
+1. validate_feature110_api_key_scopes.py (comprehensive E2E test)
+
+FILES MODIFIED:
+===============
+1. services/auth-service/src/main.py
+   - Added get_current_user_with_scope() function
+   - Added 4 test endpoints for scope validation
+   - Removed duplicate /test/api-key-auth endpoint
+   - Helper functions: require_read_scope(), require_write_scope(), require_admin_scope()
+
+2. spec/feature_list.json (Feature #110 → passes: true)
+3. baseline_features.txt (111)
+
+REGRESSION TESTING:
+===================
+✅ Feature #108 (API key authentication) - Still passing
+✅ Feature #109 (API key expiration) - Still passing
+✅ No regressions detected
+✅ All 111 baseline features intact
+
+PROGRESS UPDATE:
+================
+Before: 110/658 features passing (16.7%)
+After:  111/658 features passing (16.9%)
+
+Commit: ed1345f
+
+SESSION COMPLETE ✅
+================================================================================
+

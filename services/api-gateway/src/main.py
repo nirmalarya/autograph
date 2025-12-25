@@ -1019,19 +1019,20 @@ def verify_jwt_token(token: str) -> dict:
     try:
         # Decode and verify token (includes expiration check)
         payload = jwt.decode(
-            token, 
-            JWT_SECRET, 
+            token,
+            JWT_SECRET,
             algorithms=[JWT_ALGORITHM],
             options={"verify_exp": True}  # Explicitly verify expiration
         )
         token_type = payload.get("type")
-        
-        if token_type != "access":
+
+        # Accept both regular access tokens and OAuth access tokens
+        if token_type not in ("access", "oauth_access"):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type"
             )
-        
+
         return payload
     except JWTError as e:
         raise HTTPException(
