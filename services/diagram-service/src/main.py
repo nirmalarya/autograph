@@ -24,7 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon
 
 load_dotenv()
 
@@ -7621,4 +7621,457 @@ def cleanup_old_data(
             correlation_id=correlation_id
         )
         raise HTTPException(status_code=500, detail="Failed to cleanup old data")
+
+
+# ========================================
+# ICON LIBRARY API ENDPOINTS
+# ========================================
+
+class IconCategoryResponse(BaseModel):
+    """Icon category response model."""
+    id: str
+    name: str
+    slug: str
+    provider: str
+    description: Optional[str]
+    icon_count: int
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class IconResponse(BaseModel):
+    """Icon response model."""
+    id: str
+    name: str
+    slug: str
+    title: str
+    category_id: Optional[str]
+    provider: str
+    svg_data: str
+    svg_url: Optional[str]
+    tags: list
+    keywords: list
+    hex_color: Optional[str]
+    usage_count: int
+    last_used_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+class IconSearchResponse(BaseModel):
+    """Icon search response with category info."""
+    icons: list[IconResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@app.get("/icons/categories", response_model=list[IconCategoryResponse])
+async def list_icon_categories(
+    provider: Optional[str] = None,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """
+    List all icon categories, optionally filtered by provider.
+
+    Supports providers: simple-icons, aws, azure, gcp
+    """
+    correlation_id = request.headers.get("X-Correlation-ID") if request else None
+
+    try:
+        query = db.query(IconCategory).order_by(IconCategory.sort_order, IconCategory.name)
+
+        if provider:
+            query = query.filter(IconCategory.provider == provider)
+
+        categories = query.all()
+
+        logger.info(
+            f"Listed {len(categories)} icon categories",
+            correlation_id=correlation_id,
+            provider=provider
+        )
+
+        return categories
+
+    except Exception as e:
+        logger.error(
+            f"Error listing icon categories: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to list icon categories")
+
+
+@app.get("/icons/search", response_model=IconSearchResponse)
+async def search_icons(
+    q: str,
+    category_id: Optional[str] = None,
+    provider: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Search icons with fuzzy matching on name, title, tags, and keywords.
+
+    Features:
+    - Full-text search on name, title, tags, keywords
+    - Filter by category and provider
+    - Pagination support
+    - Returns icons ordered by relevance (usage_count)
+    """
+    correlation_id = request.headers.get("X-Correlation-ID") if request else None
+
+    try:
+        # Build search query with fuzzy matching
+        search_term = f"%{q.lower()}%"
+        query = db.query(Icon).filter(
+            or_(
+                func.lower(Icon.name).like(search_term),
+                func.lower(Icon.title).like(search_term),
+                func.lower(cast(Icon.tags, String)).like(search_term),
+                func.lower(cast(Icon.keywords, String)).like(search_term)
+            )
+        )
+
+        # Apply filters
+        if category_id:
+            query = query.filter(Icon.category_id == category_id)
+        if provider:
+            query = query.filter(Icon.provider == provider)
+
+        # Get total count
+        total = query.count()
+
+        # Apply pagination and ordering
+        icons = query.order_by(Icon.usage_count.desc(), Icon.name).offset((page - 1) * page_size).limit(page_size).all()
+
+        logger.info(
+            f"Icon search returned {len(icons)} results",
+            correlation_id=correlation_id,
+            search_query=q,
+            total=total
+        )
+
+        return {
+            "icons": icons,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }
+
+    except Exception as e:
+        logger.error(
+            f"Error searching icons: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to search icons")
+
+
+@app.get("/icons/{icon_id}", response_model=IconResponse)
+async def get_icon(
+    icon_id: str,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get a specific icon by ID."""
+    correlation_id = request.headers.get("X-Correlation-ID") if request else None
+
+    try:
+        icon = db.query(Icon).filter(Icon.id == icon_id).first()
+
+        if not icon:
+            raise HTTPException(status_code=404, detail="Icon not found")
+
+        logger.info(
+            f"Retrieved icon: {icon.name}",
+            correlation_id=correlation_id,
+            icon_id=icon_id
+        )
+
+        return icon
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error retrieving icon: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve icon")
+
+
+@app.get("/icons/recent", response_model=list[IconResponse])
+async def get_recent_icons(
+    request: Request,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """
+    Get recently used icons for a user.
+
+    Returns the most recently used icons, ordered by last use time.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        # Get recent icon IDs for user
+        recent = db.query(UserRecentIcon).filter(
+            UserRecentIcon.user_id == user_id
+        ).order_by(UserRecentIcon.used_at.desc()).limit(limit).all()
+
+        if not recent:
+            return []
+
+        # Get full icon details
+        icon_ids = [r.icon_id for r in recent]
+        icons = db.query(Icon).filter(Icon.id.in_(icon_ids)).all()
+
+        # Sort icons by recent usage order
+        icon_map = {icon.id: icon for icon in icons}
+        sorted_icons = [icon_map[icon_id] for icon_id in icon_ids if icon_id in icon_map]
+
+        logger.info(
+            f"Retrieved {len(sorted_icons)} recent icons",
+            correlation_id=correlation_id,
+            user_id=user_id
+        )
+
+        return sorted_icons
+
+    except Exception as e:
+        logger.error(
+            f"Error retrieving recent icons: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve recent icons")
+
+
+@app.post("/icons/{icon_id}/use")
+async def track_icon_usage(
+    icon_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Track icon usage for a user.
+
+    Updates:
+    - Icon usage count
+    - Icon last_used_at timestamp
+    - User recent icons list
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        # Verify icon exists
+        icon = db.query(Icon).filter(Icon.id == icon_id).first()
+        if not icon:
+            raise HTTPException(status_code=404, detail="Icon not found")
+
+        # Update icon usage stats
+        icon.usage_count += 1
+        icon.last_used_at = datetime.utcnow()
+
+        # Check if user has recently used this icon
+        recent = db.query(UserRecentIcon).filter(
+            UserRecentIcon.user_id == user_id,
+            UserRecentIcon.icon_id == icon_id
+        ).first()
+
+        if recent:
+            # Update existing recent icon
+            recent.used_at = datetime.utcnow()
+            recent.use_count += 1
+        else:
+            # Create new recent icon entry
+            recent = UserRecentIcon(
+                user_id=user_id,
+                icon_id=icon_id,
+                used_at=datetime.utcnow(),
+                use_count=1
+            )
+            db.add(recent)
+
+        db.commit()
+
+        logger.info(
+            f"Tracked icon usage",
+            correlation_id=correlation_id,
+            icon_id=icon_id,
+            user_id=user_id
+        )
+
+        return {"message": "Icon usage tracked successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error tracking icon usage: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to track icon usage")
+
+
+@app.get("/icons/favorites", response_model=list[IconResponse])
+async def get_favorite_icons(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Get favorited icons for a user.
+
+    Returns icons ordered by user's sort preference.
+    """
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        # Get favorite icon IDs for user
+        favorites = db.query(UserFavoriteIcon).filter(
+            UserFavoriteIcon.user_id == user_id
+        ).order_by(UserFavoriteIcon.sort_order, UserFavoriteIcon.created_at).all()
+
+        if not favorites:
+            return []
+
+        # Get full icon details
+        icon_ids = [f.icon_id for f in favorites]
+        icons = db.query(Icon).filter(Icon.id.in_(icon_ids)).all()
+
+        # Sort icons by favorite order
+        icon_map = {icon.id: icon for icon in icons}
+        sorted_icons = [icon_map[icon_id] for icon_id in icon_ids if icon_id in icon_map]
+
+        logger.info(
+            f"Retrieved {len(sorted_icons)} favorite icons",
+            correlation_id=correlation_id,
+            user_id=user_id
+        )
+
+        return sorted_icons
+
+    except Exception as e:
+        logger.error(
+            f"Error retrieving favorite icons: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve favorite icons")
+
+
+@app.post("/icons/{icon_id}/favorite")
+async def add_favorite_icon(
+    icon_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Add an icon to user's favorites."""
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        # Verify icon exists
+        icon = db.query(Icon).filter(Icon.id == icon_id).first()
+        if not icon:
+            raise HTTPException(status_code=404, detail="Icon not found")
+
+        # Check if already favorited
+        existing = db.query(UserFavoriteIcon).filter(
+            UserFavoriteIcon.user_id == user_id,
+            UserFavoriteIcon.icon_id == icon_id
+        ).first()
+
+        if existing:
+            return {"message": "Icon already in favorites"}
+
+        # Add to favorites
+        favorite = UserFavoriteIcon(
+            user_id=user_id,
+            icon_id=icon_id
+        )
+        db.add(favorite)
+        db.commit()
+
+        logger.info(
+            f"Added icon to favorites",
+            correlation_id=correlation_id,
+            icon_id=icon_id,
+            user_id=user_id
+        )
+
+        return {"message": "Icon added to favorites"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error adding favorite icon: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to add favorite icon")
+
+
+@app.delete("/icons/{icon_id}/favorite")
+async def remove_favorite_icon(
+    icon_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Remove an icon from user's favorites."""
+    correlation_id = request.headers.get("X-Correlation-ID", "unknown")
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        favorite = db.query(UserFavoriteIcon).filter(
+            UserFavoriteIcon.user_id == user_id,
+            UserFavoriteIcon.icon_id == icon_id
+        ).first()
+
+        if not favorite:
+            raise HTTPException(status_code=404, detail="Icon not in favorites")
+
+        db.delete(favorite)
+        db.commit()
+
+        logger.info(
+            f"Removed icon from favorites",
+            correlation_id=correlation_id,
+            icon_id=icon_id,
+            user_id=user_id
+        )
+
+        return {"message": "Icon removed from favorites"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error removing favorite icon: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to remove favorite icon")
 

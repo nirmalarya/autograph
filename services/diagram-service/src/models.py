@@ -609,3 +609,117 @@ class ExportHistory(Base):
         Index('idx_export_history_status', 'status'),
         Index('idx_export_history_expires', 'expires_at'),
     )
+
+
+class IconCategory(Base):
+    """Icon category table for organizing icon library."""
+    __tablename__ = "icon_categories"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(100), nullable=False, unique=True)
+    slug = Column(String(100), nullable=False, unique=True, index=True)
+    provider = Column(String(50), nullable=False)  # simple-icons, aws, azure, gcp
+    description = Column(Text)
+    icon_count = Column(Integer, default=0)
+    sort_order = Column(Integer, default=0)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    icons = relationship("Icon", back_populates="category")
+
+    __table_args__ = (
+        Index('idx_icon_categories_provider', 'provider'),
+        Index('idx_icon_categories_slug', 'slug'),
+    )
+
+
+class Icon(Base):
+    """Icon library table with 3000+ icons from various providers."""
+    __tablename__ = "icons"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(200), nullable=False)
+    slug = Column(String(200), nullable=False, index=True)
+    title = Column(String(200), nullable=False)  # Display title
+    category_id = Column(String(36), ForeignKey("icon_categories.id", ondelete="SET NULL"))
+    provider = Column(String(50), nullable=False)  # simple-icons, aws, azure, gcp
+
+    # Icon data
+    svg_data = Column(Text, nullable=False)  # SVG content
+    svg_url = Column(String(512))  # Optional external URL
+
+    # Metadata
+    tags = Column(JSON, default=[])  # Array of search tags
+    keywords = Column(JSON, default=[])  # Additional searchable keywords
+    hex_color = Column(String(7))  # Brand/default color
+
+    # Usage tracking
+    usage_count = Column(Integer, default=0)
+    last_used_at = Column(DateTime(timezone=True))
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    category = relationship("IconCategory", back_populates="icons")
+    recent_uses = relationship("UserRecentIcon", back_populates="icon")
+    favorites = relationship("UserFavoriteIcon", back_populates="icon")
+
+    __table_args__ = (
+        Index('idx_icons_slug', 'slug'),
+        Index('idx_icons_name', 'name'),
+        Index('idx_icons_provider', 'provider'),
+        Index('idx_icons_category', 'category_id'),
+        Index('idx_icons_usage_count', 'usage_count'),
+    )
+
+
+class UserRecentIcon(Base):
+    """Tracks recently used icons per user for quick access."""
+    __tablename__ = "user_recent_icons"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    icon_id = Column(String(36), ForeignKey("icons.id", ondelete="CASCADE"), nullable=False)
+
+    # Tracking
+    used_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    use_count = Column(Integer, default=1)
+
+    # Relationships
+    user = relationship("User")
+    icon = relationship("Icon", back_populates="recent_uses")
+
+    __table_args__ = (
+        Index('idx_user_recent_icons_user', 'user_id', 'used_at'),
+        Index('idx_user_recent_icons_icon', 'icon_id'),
+    )
+
+
+class UserFavoriteIcon(Base):
+    """User-favorited icons for quick access."""
+    __tablename__ = "user_favorite_icons"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    icon_id = Column(String(36), ForeignKey("icons.id", ondelete="CASCADE"), nullable=False)
+
+    # Metadata
+    note = Column(Text)  # Optional user note
+    sort_order = Column(Integer, default=0)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    user = relationship("User")
+    icon = relationship("Icon", back_populates="favorites")
+
+    __table_args__ = (
+        Index('idx_user_favorite_icons_user', 'user_id', 'sort_order'),
+        Index('idx_user_favorite_icons_icon', 'icon_id'),
+    )
