@@ -6,10 +6,52 @@ import Editor, { OnMount } from '@monaco-editor/react';
 interface MermaidEditorProps {
   value: string;
   onChange: (value: string) => void;
+  jumpToLine?: number;
 }
 
-export default function MermaidEditor({ value, onChange }: MermaidEditorProps) {
+export default function MermaidEditor({ value, onChange, jumpToLine }: MermaidEditorProps) {
   const editorRef = useRef<any>(null);
+
+  // Effect to handle jumping to a specific line
+  useEffect(() => {
+    if (jumpToLine && editorRef.current) {
+      // Reveal the line in the center of the editor
+      editorRef.current.revealLineInCenter(jumpToLine);
+
+      // Set cursor position to that line
+      editorRef.current.setPosition({ lineNumber: jumpToLine, column: 1 });
+
+      // Focus the editor
+      editorRef.current.focus();
+
+      // Optionally highlight the line temporarily
+      const decorations = editorRef.current.deltaDecorations(
+        [],
+        [
+          {
+            range: {
+              startLineNumber: jumpToLine,
+              startColumn: 1,
+              endLineNumber: jumpToLine,
+              endColumn: 1000,
+            },
+            options: {
+              isWholeLine: true,
+              className: 'error-line-highlight',
+              glyphMarginClassName: 'error-line-glyph',
+            },
+          },
+        ]
+      );
+
+      // Clear the highlight after 2 seconds
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.deltaDecorations(decorations, []);
+        }
+      }, 2000);
+    }
+  }, [jumpToLine]);
 
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -97,6 +139,21 @@ export default function MermaidEditor({ value, onChange }: MermaidEditorProps) {
           'editor.background': '#ffffff',
         },
       });
+
+      // Add CSS for error line highlighting
+      const style = document.createElement('style');
+      style.textContent = `
+        .error-line-highlight {
+          background-color: rgba(255, 0, 0, 0.1);
+          border-left: 3px solid #ff0000;
+        }
+        .error-line-glyph {
+          background-color: #ff0000;
+          width: 5px !important;
+          margin-left: 3px;
+        }
+      `;
+      document.head.appendChild(style);
     }
 
     // Set the theme

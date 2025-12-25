@@ -6,11 +6,13 @@ import mermaid from 'mermaid';
 interface MermaidPreviewProps {
   code: string;
   theme?: 'default' | 'dark' | 'forest' | 'neutral';
+  onErrorLineClick?: (lineNumber: number) => void;
 }
 
-export default function MermaidPreview({ code, theme = 'default' }: MermaidPreviewProps) {
+export default function MermaidPreview({ code, theme = 'default', onErrorLineClick }: MermaidPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>('');
+  const [errorLine, setErrorLine] = useState<number | null>(null);
   const [isRendering, setIsRendering] = useState(false);
 
   // Reinitialize mermaid when theme changes
@@ -26,6 +28,38 @@ export default function MermaidPreview({ code, theme = 'default' }: MermaidPrevi
     });
   }, [theme]);
 
+  // Helper function to extract line number from error message
+  const extractLineNumber = (errorMessage: string): number | null => {
+    // Try various patterns to extract line numbers
+    const patterns = [
+      /line\s+(\d+)/i,
+      /at\s+line\s+(\d+)/i,
+      /on\s+line\s+(\d+)/i,
+      /:(\d+):/,
+      /\[line\s+(\d+)\]/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = errorMessage.match(pattern);
+      if (match && match[1]) {
+        return parseInt(match[1], 10);
+      }
+    }
+
+    return null;
+  };
+
+  // Helper function to format error message with line number
+  const formatErrorMessage = (errorMessage: string, lineNum: number | null): string => {
+    if (lineNum !== null) {
+      // If error doesn't already start with line number, add it
+      if (!errorMessage.toLowerCase().startsWith('line')) {
+        return `Line ${lineNum}: ${errorMessage}`;
+      }
+    }
+    return errorMessage;
+  };
+
   useEffect(() => {
     const renderDiagram = async () => {
       if (!containerRef.current || !code.trim()) {
@@ -37,6 +71,7 @@ export default function MermaidPreview({ code, theme = 'default' }: MermaidPrevi
 
       setIsRendering(true);
       setError('');
+      setErrorLine(null);
 
       try {
         // Clear previous content
@@ -47,13 +82,18 @@ export default function MermaidPreview({ code, theme = 'default' }: MermaidPrevi
 
         // Render the diagram
         const { svg } = await mermaid.render(id, code);
-        
+
         if (containerRef.current) {
           containerRef.current.innerHTML = svg;
         }
       } catch (err: any) {
         console.error('Mermaid rendering error:', err);
-        setError(err.message || 'Failed to render diagram');
+        const errorMessage = err.message || 'Failed to render diagram';
+        const lineNum = extractLineNumber(errorMessage);
+
+        setErrorLine(lineNum);
+        setError(formatErrorMessage(errorMessage, lineNum));
+
         if (containerRef.current) {
           containerRef.current.innerHTML = '';
         }
@@ -77,8 +117,23 @@ export default function MermaidPreview({ code, theme = 'default' }: MermaidPrevi
       {error ? (
         <div className="text-center p-6 max-w-2xl">
           <div className="text-red-600 mb-2 text-xl">⚠️ Syntax Error</div>
-          <div className="text-sm text-gray-600 bg-red-50 border border-red-200 rounded p-4">
+          <div
+            className={`text-sm text-gray-600 bg-red-50 border border-red-200 rounded p-4 ${
+              errorLine !== null ? 'cursor-pointer hover:bg-red-100 transition' : ''
+            }`}
+            onClick={() => {
+              if (errorLine !== null && onErrorLineClick) {
+                onErrorLineClick(errorLine);
+              }
+            }}
+            title={errorLine !== null ? `Click to jump to line ${errorLine}` : ''}
+          >
             <pre className="whitespace-pre-wrap font-mono text-left">{error}</pre>
+            {errorLine !== null && (
+              <div className="mt-2 text-xs text-blue-600 font-semibold">
+                📍 Click to jump to line {errorLine}
+              </div>
+            )}
           </div>
           <div className="mt-4 text-xs text-gray-500">
             Check your Mermaid syntax and try again

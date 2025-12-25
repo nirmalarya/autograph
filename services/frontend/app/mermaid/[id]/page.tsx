@@ -30,6 +30,10 @@ const MermaidPreview = dynamic(() => import('./MermaidPreview'), {
   ),
 });
 
+const SnippetsLibrary = dynamic(() => import('./SnippetsLibrary'), {
+  ssr: false,
+});
+
 // Default Mermaid code templates
 const DEFAULT_CODE = `graph TD
     A[Start] --> B{Is it working?}
@@ -54,6 +58,7 @@ export default function MermaidDiagramPage() {
   const [splitPosition, setSplitPosition] = useState(50); // Split percentage
   const [mermaidTheme, setMermaidTheme] = useState<'default' | 'dark' | 'forest' | 'neutral'>('default');
   const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const [jumpToLine, setJumpToLine] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     // Check authentication
@@ -305,7 +310,10 @@ export default function MermaidDiagramPage() {
                 </span>
               )}
               <span className="text-sm text-gray-600">{user?.email}</span>
-              
+
+              {/* Snippets Library */}
+              <SnippetsLibrary onInsert={setCode} />
+
               {/* Theme selector */}
               <div className="relative theme-menu-container">
                 <button 
@@ -395,7 +403,7 @@ export default function MermaidDiagramPage() {
             <p className="text-xs text-gray-500">Write your Mermaid diagram code</p>
           </div>
           <div className="flex-1 overflow-hidden">
-            <MermaidEditor value={code} onChange={setCode} />
+            <MermaidEditor value={code} onChange={setCode} jumpToLine={jumpToLine} />
           </div>
         </div>
 
@@ -434,7 +442,11 @@ export default function MermaidDiagramPage() {
             <p className="text-xs text-gray-500">Your diagram updates in real-time</p>
           </div>
           <div className="flex-1 overflow-auto">
-            <MermaidPreview code={code} theme={mermaidTheme} />
+            <MermaidPreview
+              code={code}
+              theme={mermaidTheme}
+              onErrorLineClick={(lineNumber) => setJumpToLine(lineNumber)}
+            />
           </div>
         </div>
       </div>
