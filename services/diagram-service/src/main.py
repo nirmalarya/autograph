@@ -7771,39 +7771,6 @@ async def search_icons(
         raise HTTPException(status_code=500, detail="Failed to search icons")
 
 
-@app.get("/icons/{icon_id}", response_model=IconResponse)
-async def get_icon(
-    icon_id: str,
-    request: Request = None,
-    db: Session = Depends(get_db)
-):
-    """Get a specific icon by ID."""
-    correlation_id = request.headers.get("X-Correlation-ID") if request else None
-
-    try:
-        icon = db.query(Icon).filter(Icon.id == icon_id).first()
-
-        if not icon:
-            raise HTTPException(status_code=404, detail="Icon not found")
-
-        logger.info(
-            f"Retrieved icon: {icon.name}",
-            correlation_id=correlation_id,
-            icon_id=icon_id
-        )
-
-        return icon
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Error retrieving icon: {str(e)}",
-            correlation_id=correlation_id
-        )
-        raise HTTPException(status_code=500, detail="Failed to retrieve icon")
-
-
 @app.get("/icons/recent", response_model=list[IconResponse])
 async def get_recent_icons(
     request: Request,
@@ -7973,6 +7940,39 @@ async def get_favorite_icons(
             correlation_id=correlation_id
         )
         raise HTTPException(status_code=500, detail="Failed to retrieve favorite icons")
+
+
+@app.get("/icons/{icon_id}", response_model=IconResponse)
+async def get_icon(
+    icon_id: str,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get a specific icon by ID."""
+    correlation_id = request.headers.get("X-Correlation-ID") if request else None
+
+    try:
+        icon = db.query(Icon).filter(Icon.id == icon_id).first()
+
+        if not icon:
+            raise HTTPException(status_code=404, detail="Icon not found")
+
+        logger.info(
+            f"Retrieved icon: {icon.name}",
+            correlation_id=correlation_id,
+            icon_id=icon_id
+        )
+
+        return icon
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error retrieving icon: {str(e)}",
+            correlation_id=correlation_id
+        )
+        raise HTTPException(status_code=500, detail="Failed to retrieve icon")
 
 
 @app.post("/icons/{icon_id}/favorite")
