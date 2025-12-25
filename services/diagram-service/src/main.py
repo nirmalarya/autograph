@@ -423,30 +423,48 @@ app.add_middleware(
 # Middleware to track metrics
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
-    """Middleware to track request metrics."""
+    """Middleware to track request metrics and detect slow requests."""
     # Track active connections
     active_connections.inc()
-    
+
     # Track request start time
     start_time = time.time()
-    
+
     try:
         response = await call_next(request)
-        
+
         # Track request duration
         duration = time.time() - start_time
         request_duration.labels(
             method=request.method,
             path=request.url.path
         ).observe(duration)
-        
+
         # Track request count
         request_count.labels(
             method=request.method,
             path=request.url.path,
             status_code=response.status_code
         ).inc()
-        
+
+        # Detect and log slow requests (> 1 second)
+        if duration > 1.0:
+            correlation_id = getattr(request.state, 'correlation_id', 'unknown')
+            user_id = getattr(request.state, 'user_id', None)
+
+            # Log slow request with details
+            logger.warning(
+                "Slow request detected",
+                correlation_id=correlation_id,
+                duration_seconds=round(duration, 3),
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                user_id=user_id,
+                query_params=dict(request.query_params),
+                client_ip=request.client.host if request.client else None
+            )
+
         return response
     finally:
         # Always decrement active connections
