@@ -1191,3 +1191,129 @@ Previous: 34/658 (5.2%)
 
 Completed: $(date '+%Y-%m-%d %H:%M:%S %Z')
 ================================================================================
+
+================================================================================
+SESSION: Feature #36 - Request Deduplication (Idempotency Keys)
+Started: $(date '+%Y-%m-%d %H:%M:%S %Z')
+================================================================================
+
+## Feature #36: Request Deduplication with Idempotency Keys
+
+### Description
+Request deduplication prevents duplicate operations using idempotency keys.
+When a request includes an Idempotency-Key header, the system:
+1. Checks Redis cache for previous execution with same key
+2. Returns cached response if found (duplicate prevented)
+3. Executes operation and caches response if not found
+
+### Implementation Status
+✅ ALREADY IMPLEMENTED - Middleware exists in API Gateway
+✅ Redis-backed caching with 24-hour TTL
+✅ Test endpoints in Auth Service
+
+### Validations Performed
+
+#### 1. Prevent Duplicate Execution ✅
+- Same idempotency key executes operation only once
+- Second request returns cached response
+- Counter increments only once (no duplicate)
+- X-Idempotency-Hit header indicates cache hit
+
+#### 2. Different Keys Execute New Operations ✅
+- Different idempotency keys create separate operations
+- Each key gets unique resource ID
+- Counter increments for each unique key
+
+#### 3. No Key Always Executes ✅
+- Requests without idempotency key execute every time
+- No caching without key
+- Each request gets unique resource ID
+
+#### 4. Header Variants Supported ✅
+- Both "Idempotency-Key" header accepted
+- Both "X-Idempotency-Key" header accepted
+- Same middleware handles both variants
+
+#### 5. GET Requests Not Cached ✅
+- Only POST/PUT/PATCH operations use idempotency
+- GET requests always execute (not cached)
+- Idempotency key ignored for GET
+
+#### 6. Redis Storage ✅
+- Idempotency keys stored in Redis
+- Cache key format: idempotency:{user_id}:{key}:{path}
+- 24-hour TTL on cached responses
+- Successful cache retrieval verified
+
+### Implementation Details
+
+#### Middleware Location
+- services/api-gateway/src/main.py (lines 1362-1460)
+
+#### Redis Key Structure
+```
+idempotency:{user_id}:{idempotency_key}:{request_path}
+```
+
+#### Cache Contents
+- HTTP status code
+- Response body (JSON)
+- Response headers (filtered)
+- 24-hour expiration
+
+#### Request Flow
+1. Middleware checks for Idempotency-Key or X-Idempotency-Key header
+2. Only applies to POST/PUT/PATCH methods
+3. Constructs Redis key with user ID, key, and path
+4. Checks Redis for existing cached response
+5. Returns cached response if found (with X-Idempotency-Hit: true)
+6. Processes request if not cached
+7. Caches successful responses (2xx status codes)
+
+### Files Created/Modified
+- validate_feature36_idempotency.py (comprehensive validation script)
+- spec/feature_list.json (marked feature 36 as passing)
+
+### Test Results
+```
+Validation Summary:
+✅ PASS: Prevent Duplicate Execution
+✅ PASS: Different Keys New Operations
+✅ PASS: No Key Always Executes
+✅ PASS: Header Variants
+✅ PASS: GET Not Cached
+✅ PASS: Redis Storage
+
+Results: 6/6 validations passed
+Duration: 2.36 seconds
+```
+
+### Key Features
+- **Duplicate Prevention**: Same key executes operation only once
+- **Cached Responses**: Subsequent requests get cached response
+- **Redis-Backed**: Persistent cache across API gateway instances
+- **Header Flexibility**: Supports both standard header variants
+- **Method-Specific**: Only POST/PUT/PATCH (not GET/DELETE)
+- **Path-Scoped**: Same key can be used for different endpoints
+- **User-Scoped**: Same key is separate per user
+- **TTL**: 24-hour expiration prevents stale data
+
+### Benefits
+- **Data Integrity**: Prevents accidental duplicate operations
+- **Client Retry Safety**: Clients can safely retry failed requests
+- **Network Resilience**: Handles duplicate requests from network issues
+- **Distributed Systems**: Works across multiple API gateway instances
+- **Performance**: Cached responses are faster than re-execution
+
+## Progress
+Total: 658 features
+Passing: 36/658 (5.5%)
+Previous: 35/658 (5.3%)
++1 feature this session
+
+## Regression Status
+✅ No regressions detected
+✅ All 35 baseline features still passing
+
+Completed: $(date '+%Y-%m-%d %H:%M:%S %Z')
+================================================================================
