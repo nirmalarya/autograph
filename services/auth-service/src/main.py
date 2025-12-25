@@ -2802,6 +2802,22 @@ async def confirm_password_reset(
         )
 
 
+@app.post("/reset-password")
+async def reset_password_alias(
+    request_data: PasswordResetConfirm,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Alias for /password-reset/confirm - frontend-friendly endpoint name.
+
+    Feature #79: Password reset flow with valid token
+
+    This endpoint allows users to reset their password using a valid reset token.
+    It's an alias to /password-reset/confirm for better frontend integration.
+    """
+    return await confirm_password_reset(request_data, request, db)
+
+
 @app.post("/password/change")
 async def change_password(
     request_data: PasswordChange,
