@@ -1338,7 +1338,56 @@ async def authenticate_request(request: Request, call_next):
         payload = verify_jwt_token(token)
         # Add user_id to request state for downstream services
         request.state.user_id = payload.get("sub")
-        
+
+        # Feature #114: OAuth 2.0 scope-based permissions
+        # If this is an OAuth access token, enforce scope-based permissions
+        token_type = payload.get("type")
+        if token_type == "oauth_access":
+            scopes = payload.get("scopes", [])
+            method = request.method.upper()
+
+            # Define scope requirements
+            # - read: Only GET/HEAD/OPTIONS allowed
+            # - write: All methods allowed (GET, POST, PUT, DELETE, PATCH)
+            # - admin: Full access (all methods + admin endpoints)
+
+            # Check if user has required scope for this method
+            has_permission = False
+
+            if method in ["GET", "HEAD", "OPTIONS"]:
+                # Read operations - any scope is sufficient
+                has_permission = bool(scopes)  # At least one scope required
+            elif method in ["POST", "PUT", "DELETE", "PATCH"]:
+                # Write operations - need 'write' or 'admin' scope
+                has_permission = "write" in scopes or "admin" in scopes
+
+            if not has_permission:
+                logger.warning(
+                    "OAuth permission denied: insufficient scope",
+                    correlation_id=correlation_id,
+                    user_id=payload.get("sub"),
+                    scopes=scopes,
+                    method=method,
+                    path=path
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "detail": f"Insufficient permissions. Required scope for {method} operations: write or admin",
+                        "required_scopes": ["write", "admin"] if method in ["POST", "PUT", "DELETE", "PATCH"] else ["read", "write", "admin"],
+                        "granted_scopes": scopes
+                    }
+                )
+
+            logger.info(
+                "OAuth permission granted",
+                correlation_id=correlation_id,
+                user_id=payload.get("sub"),
+                scopes=scopes,
+                method=method,
+                path=path
+            )
+
         logger.info(
             "Authentication successful",
             correlation_id=correlation_id,
@@ -1356,7 +1405,7 @@ async def authenticate_request(request: Request, call_next):
             status_code=e.status_code,
             content={"detail": e.detail}
         )
-    
+
     return await call_next(request)
 
 
