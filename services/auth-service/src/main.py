@@ -1982,8 +1982,8 @@ async def login(user_data: UserLogin, request: Request, db: Session = Depends(ge
         "role": user.role
     })
     
-    # Use 30 days for refresh token if remember_me is true, otherwise use default
-    refresh_token_expires_days = 30 if user_data.remember_me else None
+    # Use 30 days for refresh token if remember_me is true, otherwise use 1 day (session expiry)
+    refresh_token_expires_days = 30 if user_data.remember_me else 1
     refresh_token, jti = create_refresh_token(
         data={"sub": user.id}, 
         db=db, 
