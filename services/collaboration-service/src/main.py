@@ -301,6 +301,72 @@ async def publish_to_redis(channel: str, message: dict):
         logger.error(f"Failed to publish to Redis: {e}")
 
 
+async def redis_subscriber_task():
+    """
+    Background task to subscribe to Redis pub/sub channels.
+    Listens for messages from other service instances and broadcasts to local clients.
+    Feature #397: Redis pub/sub for cross-server broadcasting
+    """
+    global redis_client
+
+    logger.info("Starting Redis subscriber task...")
+
+    while True:
+        try:
+            # Create a new Redis connection for pub/sub
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+
+            pubsub_client = await redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                decode_responses=True
+            )
+
+            # Create pub/sub instance
+            pubsub = pubsub_client.pubsub()
+
+            # Subscribe to pattern for all room channels
+            await pubsub.psubscribe("room:*")
+            logger.info("Subscribed to Redis pattern: room:*")
+
+            # Listen for messages
+            async for message in pubsub.listen():
+                try:
+                    if message['type'] == 'pmessage':
+                        channel = message['channel']
+                        data = message['data']
+
+                        # Extract room_id from channel (format: "room:{room_id}")
+                        room_id = channel.split(":", 1)[1] if ":" in channel else None
+
+                        if not room_id:
+                            continue
+
+                        # Parse message
+                        try:
+                            msg_data = json.loads(data)
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to parse Redis message: {data}")
+                            continue
+
+                        logger.info(f"Received Redis message for room {room_id}: {msg_data}")
+
+                        # Broadcast to all local WebSocket clients in this room
+                        # This allows messages from other server instances to reach clients on this server
+                        await sio.emit('update', msg_data, room=room_id)
+                        logger.info(f"Broadcasted Redis message to local clients in room {room_id}")
+
+                except Exception as e:
+                    logger.error(f"Error processing Redis message: {e}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Redis subscriber error: {e}")
+            logger.info("Reconnecting to Redis in 5 seconds...")
+            await asyncio.sleep(5)
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize Redis connection on startup."""
@@ -309,10 +375,14 @@ async def startup_event():
         r = await get_redis()
         await r.ping()
         logger.info("Connected to Redis successfully")
-        
+
         # Start background task for checking away users
         asyncio.create_task(check_away_users())
         logger.info("Started presence monitoring task")
+
+        # Start Redis subscriber task for cross-server broadcasting (Feature #397)
+        asyncio.create_task(redis_subscriber_task())
+        logger.info("Started Redis subscriber task for cross-server broadcasting")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
 
