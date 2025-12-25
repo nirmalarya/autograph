@@ -171,7 +171,7 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
-            
+
             <div className="space-y-3">
               <a
                 href="/settings/security"
@@ -184,6 +184,12 @@ export default function SettingsPage() {
                 className="block py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition"
               >
                 Password & Login →
+              </a>
+              <a
+                href="/settings/api-keys"
+                className="block py-2 text-sm text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition"
+              >
+                API Keys →
               </a>
             </div>
           </div>

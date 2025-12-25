@@ -32,6 +32,11 @@ export const API_ENDPOINTS = {
       revoke: (tokenId: string) => `${API_BASE_URL}/api/auth/sessions/${tokenId}`,
       revokeAllOthers: `${API_BASE_URL}/api/auth/sessions/all/others`,
     },
+    apiKeys: {
+      create: `${API_BASE_URL}/api/auth/api-keys`,
+      list: `${API_BASE_URL}/api/auth/api-keys`,
+      revoke: (keyId: string) => `${API_BASE_URL}/api/auth/api-keys/${keyId}`,
+    },
   },
 
   // Diagram Service (via /api/diagrams)
