@@ -47,15 +47,16 @@ class AIServiceError:
     model: Optional[str] = None
     retry_possible: bool = False
     suggestion: Optional[str] = None
+    wait_time: Optional[int] = None  # Feature #366: Wait time for rate limiting
     timestamp: float = None
-    
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = time.time()
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
-        return {
+        result = {
             "error_code": self.code.value,
             "message": self.message,
             "severity": self.severity.value,
@@ -65,6 +66,13 @@ class AIServiceError:
             "suggestion": self.suggestion,
             "timestamp": self.timestamp,
         }
+
+        # Feature #366: Include wait_time for rate limiting
+        if self.wait_time is not None:
+            result["wait_time"] = self.wait_time
+            result["retry_after"] = self.wait_time  # Also include as retry_after for compatibility
+
+        return result
 
 
 # Feature #359: Multi-language error messages
@@ -230,20 +238,45 @@ class AIErrorHandler:
     def create_rate_limit_error(
         self,
         provider: str,
+        wait_time: Optional[int] = None,
         language: str = "en"
     ) -> AIServiceError:
-        """Create rate limit error."""
+        """
+        Feature #366: Create rate limit error with wait time.
+
+        Args:
+            provider: AI provider name
+            wait_time: Recommended wait time in seconds
+            language: Language code for error message
+
+        Returns:
+            AIServiceError object with retry information
+        """
         lang = language if language in ERROR_MESSAGES else self.default_language
         message = ERROR_MESSAGES[lang][ErrorCode.RATE_LIMIT]
-        
-        return AIServiceError(
+
+        # Enhance message with wait time if available
+        if wait_time:
+            if lang == "en":
+                message += f" Please wait {wait_time} seconds before retrying."
+            elif lang == "de":
+                message += f" Bitte warten Sie {wait_time} Sekunden, bevor Sie es erneut versuchen."
+            elif lang == "es":
+                message += f" Espere {wait_time} segundos antes de volver a intentarlo."
+            elif lang == "fr":
+                message += f" Veuillez attendre {wait_time} secondes avant de réessayer."
+
+        error = AIServiceError(
             code=ErrorCode.RATE_LIMIT,
             message=message,
             severity=ErrorSeverity.MEDIUM,
             provider=provider,
             retry_possible=True,
+            wait_time=wait_time,  # Feature #366: Include wait time
             suggestion=ERROR_SUGGESTIONS[ErrorCode.RATE_LIMIT]
         )
+
+        return error
     
     def create_network_error(
         self,
@@ -288,36 +321,49 @@ class AIErrorHandler:
         status_code: int,
         response_text: str,
         provider: str,
-        language: str = "en"
+        language: str = "en",
+        retry_after: Optional[int] = None
     ) -> AIServiceError:
         """
         Handle HTTP errors from AI providers.
-        
+
         Args:
             status_code: HTTP status code
             response_text: Response body text
             provider: AI provider name
             language: Language code
-            
+            retry_after: Retry-After header value (in seconds)
+
         Returns:
             Appropriate AIServiceError
         """
         # Track error frequency
         key = f"{provider}_{status_code}"
         self.error_counts[key] = self.error_counts.get(key, 0) + 1
-        
+
         # Feature #365: Invalid API key (401, 403)
         if status_code in [401, 403]:
             return self.create_invalid_api_key_error(provider, language)
-        
-        # Rate limiting (429)
+
+        # Feature #366: Rate limiting (429) with retry-after
         elif status_code == 429:
-            return self.create_rate_limit_error(provider, language)
-        
+            # Parse retry-after from header or response
+            wait_time = retry_after
+            if not wait_time:
+                # Try to extract from response text
+                import re
+                match = re.search(r'retry.*?(\d+)\s*second', response_text, re.IGNORECASE)
+                if match:
+                    wait_time = int(match.group(1))
+                else:
+                    wait_time = 60  # Default to 60 seconds if not specified
+
+            return self.create_rate_limit_error(provider, wait_time, language)
+
         # Timeout (408, 504)
         elif status_code in [408, 504]:
             return self.create_timeout_error(30.0, provider, language)
-        
+
         # Server errors (500-599)
         elif 500 <= status_code < 600:
             return self.create_provider_error(
@@ -325,7 +371,7 @@ class AIErrorHandler:
                 provider,
                 language
             )
-        
+
         # Feature #364: Generic API failure
         else:
             return self.create_api_failure_error(

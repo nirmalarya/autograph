@@ -11795,3 +11795,98 @@ NEXT STEPS:
 - Continue with Feature #366: Rate limit exceeded detection
 - Or address gateway proxy routing issue (separate task)
 
+
+================================================================================
+SESSION: Feature #366 - Rate Limit Error Handling
+DATE: 2025-12-25
+================================================================================
+
+FEATURE #366: AI Generation Error Handling - Rate Limit Exceeded
+Description: Detect rate limit exceeded errors (HTTP 429), show wait time,
+             and provide retry information to users
+
+IMPLEMENTATION:
+================================================================================
+
+1. ENHANCED ERROR HANDLING (error_handling.py)
+   ✓ Added wait_time field to AIServiceError dataclass
+   ✓ Enhanced create_rate_limit_error() to accept wait_time parameter
+   ✓ Added wait_time to error response JSON (both wait_time and retry_after)
+   ✓ Enhanced handle_http_error() to parse Retry-After headers
+   ✓ Added regex parsing to extract wait time from error messages
+   ✓ Multi-language support for wait time messages (en, de, es, fr)
+   ✓ Default wait time of 60 seconds if not specified
+
+2. PROVIDER ENHANCEMENT (providers.py)
+   ✓ Updated ErrorMockProvider to include wait time in rate limit errors
+   ✓ Error message: "Please wait 60 seconds before retrying"
+
+3. MAIN ENDPOINT ENHANCEMENT (main.py)
+   ✓ Added rate limit detection in generate_diagram exception handler
+   ✓ Parse wait time from error messages using regex
+   ✓ Return HTTP 429 status with structured error response
+   ✓ Added test endpoint /api/ai/test-rate-limit for validation
+
+4. TEST ENDPOINT
+   ✓ POST /api/ai/test-rate-limit
+   ✓ Simulates rate limiting with 60-second wait time
+   ✓ Returns structured error with all required fields
+
+TESTING:
+================================================================================
+
+✓ Created validate_feature_366_rate_limit.py
+✓ Test 1: Rate limit detection (HTTP 429) - PASS
+✓ Test 2: Error message contains "rate limit" - PASS
+✓ Test 3: Wait time information present - PASS
+✓ Test 4: Structured error code (RATE_LIMIT_EXCEEDED) - PASS
+✓ Test 5: retry_possible flag set to True - PASS
+✓ Test 6: User suggestion present - PASS
+
+ERROR RESPONSE STRUCTURE:
+{
+  "error_code": "RATE_LIMIT_EXCEEDED",
+  "message": "Rate limit exceeded. Please wait 60 seconds before retrying.",
+  "severity": "medium",
+  "provider": "error-mock-provider",
+  "retry_possible": true,
+  "wait_time": 60,
+  "retry_after": 60,
+  "suggestion": "Wait a few minutes before making more requests",
+  "timestamp": 1766700053.398301
+}
+
+FEATURES IMPLEMENTED:
+1. ✓ HTTP 429 status code detection
+2. ✓ Wait time extraction from error messages and headers
+3. ✓ Structured error response with error_code
+4. ✓ retry_possible flag (set to True for rate limits)
+5. ✓ Both wait_time and retry_after fields in response
+6. ✓ User-friendly error messages with wait time
+7. ✓ Multi-language support (en, de, es, fr)
+8. ✓ Error statistics tracking
+9. ✓ Provider-specific error handling
+
+FILES CREATED:
+- validate_feature_366_rate_limit.py (validation test - 232 lines)
+- update_feature_366.py (feature list updater)
+
+FILES MODIFIED:
+- services/ai-service/src/error_handling.py (enhanced rate limit handling)
+- services/ai-service/src/providers.py (ErrorMockProvider enhanced)
+- services/ai-service/src/main.py (added test endpoint, enhanced error handling)
+- spec/feature_list.json (marked #366 passing)
+
+REGRESSION TEST:
+✓ Baseline features: 365/658 (still ≥ 215)
+✓ No regressions detected
+
+PROGRESS:
+- Before: 365/658 (55.5%)
+- After: 366/658 (55.6%)
+- Baseline intact: ✓ (365 >= 215)
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #367 - Generation cache with automatic expiry
+

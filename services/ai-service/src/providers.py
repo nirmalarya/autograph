@@ -618,8 +618,8 @@ class ErrorMockProvider(AIProvider):
             raise Exception("API request failed: HTTP 401 - Unauthorized. Invalid API key.")
 
         elif self.error_type == "rate_limit":
-            # Simulate rate limiting
-            raise Exception("API request failed: HTTP 429 - Too Many Requests. Rate limit exceeded.")
+            # Feature #366: Simulate rate limiting with wait time
+            raise Exception("API request failed: HTTP 429 - Too Many Requests. Rate limit exceeded. Please wait 60 seconds before retrying.")
 
         elif self.error_type == "network_error":
             # Simulate network connectivity issue

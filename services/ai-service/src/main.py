@@ -473,10 +473,50 @@ async def generate_diagram(request: GenerateDiagramRequest):
             latency=0.0
         )
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate diagram: {str(e)}"
-        )
+        # Feature #366: Check if it's a rate limit error
+        error_str = str(e).lower()
+        if "429" in str(e) or "rate limit" in error_str:
+            from .error_handling import get_error_handler
+            error_handler = get_error_handler()
+
+            # Parse wait time from error message
+            import re
+            wait_time = None
+            match = re.search(r'(\d+)\s*second', str(e), re.IGNORECASE)
+            if match:
+                wait_time = int(match.group(1))
+
+            error_obj = error_handler.create_rate_limit_error(
+                provider=request.provider or "AI provider",
+                wait_time=wait_time,
+                language="en"
+            )
+
+            raise HTTPException(
+                status_code=429,
+                detail=error_obj.to_dict()
+            )
+
+        # Feature #365: Check if it's an auth error
+        elif "401" in str(e) or "403" in str(e) or "unauthorized" in error_str or "invalid api key" in error_str:
+            from .error_handling import get_error_handler
+            error_handler = get_error_handler()
+            error_obj = error_handler.create_invalid_api_key_error(
+                provider=request.provider or "AI provider",
+                language="en"
+            )
+
+            raise HTTPException(
+                status_code=401,
+                detail=error_obj.to_dict()
+            )
+
+        # Feature #364: Generic API failure
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate diagram: {str(e)}"
+            )
 
 
 @app.post("/api/ai/refine")
@@ -1686,6 +1726,53 @@ async def get_supported_languages():
 # ============================================================================
 # NEW ENDPOINTS FOR FEATURES #366-384
 # ============================================================================
+
+@app.post("/api/ai/test-rate-limit")
+async def test_rate_limit_error():
+    """
+    Feature #366: Test endpoint for rate limit error handling.
+
+    Simulates a rate limit error to test error handling and retry logic.
+    """
+    from .providers import ErrorMockProvider
+    from .error_handling import get_error_handler
+
+    try:
+        # Create error mock provider for rate limiting
+        provider = ErrorMockProvider(error_type="rate_limit")
+
+        # Try to generate (will fail with rate limit error)
+        await provider.generate_diagram(
+            prompt="Test prompt",
+            diagram_type=None,
+            model=None
+        )
+
+        # Should never reach here
+        return {"status": "This should not happen"}
+
+    except Exception as e:
+        logger.info(f"Rate limit error triggered as expected: {str(e)}")
+
+        # Parse wait time from error message
+        import re
+        wait_time = None
+        match = re.search(r'(\d+)\s*second', str(e), re.IGNORECASE)
+        if match:
+            wait_time = int(match.group(1))
+
+        # Create structured error response
+        error_handler = get_error_handler()
+        error_obj = error_handler.create_rate_limit_error(
+            provider="error-mock-provider",
+            wait_time=wait_time,
+            language="en"
+        )
+
+        raise HTTPException(
+            status_code=429,
+            detail=error_obj.to_dict()
+        )
 
 
 @app.get("/api/ai/cache/stats")
