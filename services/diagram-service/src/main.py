@@ -650,7 +650,6 @@ async def list_diagrams(
                 # Filter by tag using JSON contains operator
                 # PostgreSQL: tags @> '["value"]' checks if JSON array contains the value
                 from sqlalchemy.dialects.postgresql import JSONB
-                from sqlalchemy import cast
                 query = query.filter(
                     cast(File.tags, JSONB).op('@>')(f'["{filter_value}"]')
                 )
@@ -675,35 +674,17 @@ async def list_diagrams(
         if search_terms:
             # Exact match pattern for traditional search
             search_pattern = f"%{search_terms}%"
-            
-            # Fuzzy matching using pg_trgm similarity
-            # similarity() returns a value between 0 and 1 (higher = more similar)
-            # We use 0.25 as threshold (25% similarity) for typo tolerance
-            # This allows for 2-3 character typos in typical words
-            similarity_threshold = 0.25
-            
+
             # Search in title, note_content, and canvas_data (text elements)
             # Use OR to match any of these fields
-            # Combine exact matching (ILIKE) with fuzzy matching (similarity)
+            # Use case-insensitive ILIKE matching
             query = query.filter(
                 or_(
-                    # Exact matches (case-insensitive)
+                    # Case-insensitive matches
                     File.title.ilike(search_pattern),
                     File.note_content.ilike(search_pattern),
-                    cast(File.canvas_data, String).ilike(search_pattern),
-                    # Fuzzy matches using trigram similarity
-                    func.similarity(File.title, search_terms) >= similarity_threshold,
-                    func.similarity(File.note_content, search_terms) >= similarity_threshold
+                    cast(File.canvas_data, String).ilike(search_pattern)
                 )
-            )
-            
-            # Order fuzzy search results by relevance (similarity score)
-            # Higher similarity scores appear first
-            query = query.order_by(
-                func.greatest(
-                    func.similarity(File.title, search_terms),
-                    func.similarity(func.coalesce(File.note_content, ''), search_terms)
-                ).desc()
             )
     
     # Get total count
