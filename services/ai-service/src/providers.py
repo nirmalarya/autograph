@@ -83,7 +83,8 @@ class EnterpriseAIProvider(AIProvider):
         enhanced_prompt = self._build_enhanced_prompt(prompt, diagram_type)
         
         # Call MGA API (OpenAI-compatible format)
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        # Feature #363: 30-second timeout for AI generation
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(
                     self.endpoint,
@@ -129,6 +130,15 @@ class EnterpriseAIProvider(AIProvider):
                     "tokens_used": data.get("usage", {}).get("total_tokens", 0)
                 }
                 
+            except httpx.TimeoutException as e:
+                # Feature #363: Handle timeout with user-friendly message and retry option
+                logger.error(f"Enterprise AI generation timed out after 30 seconds: {str(e)}")
+                raise Exception(
+                    "AI generation timed out after 30 seconds. "
+                    "The request is taking longer than expected. "
+                    "Please try again or simplify your prompt. "
+                    "Retry available: yes"
+                ) from e
             except Exception as e:
                 logger.error(f"Enterprise AI generation failed: {str(e)}")
                 raise
@@ -496,6 +506,50 @@ class MockProvider(AIProvider):
             "provider": "mock",
             "model": self.default_model,
             "tokens_used": 100
+        }
+
+
+class SlowMockProvider(AIProvider):
+    """
+    Slow mock provider for testing timeout behavior.
+    Feature #363: Simulates slow AI responses to test timeout handling.
+    """
+
+    def __init__(self, delay_seconds: float = 35.0):
+        super().__init__("slow-mock-key")
+        self.default_model = "slow-mock-model"
+        self.delay_seconds = delay_seconds
+
+    def get_default_model(self) -> str:
+        return self.default_model
+
+    async def generate_diagram(
+        self,
+        prompt: str,
+        diagram_type: Optional[DiagramType] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Generate a mock diagram after a long delay to simulate timeout."""
+        import asyncio
+
+        logger.info(f"SlowMockProvider: Simulating {self.delay_seconds}s delay...")
+
+        # Simulate slow AI response (will timeout with 30s limit)
+        await asyncio.sleep(self.delay_seconds)
+
+        # This code will never be reached if timeout is working
+        mermaid_code = """graph TB
+    A[Slow Response]
+    B[Should Timeout]
+    A --> B"""
+
+        return {
+            "mermaid_code": mermaid_code,
+            "diagram_type": "architecture",
+            "explanation": "This should have timed out",
+            "provider": "slow-mock",
+            "model": self.default_model,
+            "tokens_used": 0
         }
 
 
