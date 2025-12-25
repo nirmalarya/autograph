@@ -435,6 +435,70 @@ class GeminiProvider(AIProvider):
         return "architecture"
 
 
+class MockProvider(AIProvider):
+    """Mock provider for testing without API keys."""
+
+    def __init__(self):
+        super().__init__("mock-key")
+        self.default_model = "mock-model"
+
+    def get_default_model(self) -> str:
+        return self.default_model
+
+    async def generate_diagram(
+        self,
+        prompt: str,
+        diagram_type: Optional[DiagramType] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Generate a simple mock diagram for testing."""
+        import asyncio
+
+        # Simulate some generation time
+        await asyncio.sleep(0.5)
+
+        # Generate simple mock Mermaid code
+        if diagram_type == DiagramType.SEQUENCE or "sequence" in prompt.lower() or "login" in prompt.lower():
+            mermaid_code = """sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    User->>Frontend: Request
+    Frontend->>Backend: API Call
+    Backend-->>Frontend: Response
+    Frontend-->>User: Display"""
+            detected_type = "sequence"
+        elif diagram_type == DiagramType.ERD or "database" in prompt.lower() or "schema" in prompt.lower():
+            mermaid_code = """erDiagram
+    USER ||--o{ ORDER : places
+    USER {
+        int id PK
+        string name
+    }
+    ORDER {
+        int id PK
+        int user_id FK
+    }"""
+            detected_type = "erd"
+        else:
+            mermaid_code = """graph TB
+    Frontend[Frontend]
+    Backend[Backend]
+    DB[(Database)]
+    Frontend -->|REST API| Backend
+    Backend -->|SQL| DB"""
+            detected_type = "architecture"
+
+        return {
+            "mermaid_code": mermaid_code,
+            "diagram_type": detected_type,
+            "explanation": f"Generated mock {detected_type} diagram for testing",
+            "provider": "mock",
+            "model": self.default_model,
+            "tokens_used": 100
+        }
+
+
 class AIProviderFactory:
     """Factory for creating AI providers with fallback chain."""
     
@@ -478,10 +542,12 @@ class AIProviderFactory:
                 logger.info("Gemini provider configured (FALLBACK 3)")
             except Exception as e:
                 logger.warning(f"Failed to configure Gemini: {e}")
-        
+
+        # Fallback 4: Mock provider (for testing without API keys)
         if not providers:
-            logger.error("No AI providers configured! Set at least one API key.")
-        
+            logger.warning("No API keys configured - using MockProvider for testing")
+            providers.append(MockProvider())
+
         return providers
     
     @staticmethod

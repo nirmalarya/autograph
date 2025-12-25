@@ -1,6 +1,7 @@
 """AI Service - AI diagram generation with MGA."""
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 import uuid
 import json
 import traceback
+import asyncio
 
 from .providers import AIProviderFactory, DiagramType
 from .layout_algorithms import LayoutAlgorithm
@@ -33,6 +35,7 @@ from .generation_cache import get_generation_cache
 from .ai_enhancements import get_ai_enhancements
 from .ai_management import get_ai_management
 from .error_handling import get_error_handler
+from .progress_tracker import get_progress_tracker, GenerationStatus
 import time
 
 load_dotenv()
@@ -259,6 +262,7 @@ class GenerateDiagramResponse(BaseModel):
     model: str
     tokens_used: int
     timestamp: str
+    generation_id: Optional[str] = None  # Feature #362: Track generation progress
     quality_score: Optional[float] = None
     quality_passed: Optional[bool] = None
     quality_issues: Optional[List[str]] = None
@@ -329,11 +333,12 @@ async def get_providers_status():
 async def generate_diagram(request: GenerateDiagramRequest):
     """
     Generate a diagram from natural language prompt.
-    
+
     Uses Enterprise MGA as primary provider with automatic fallback chain:
     MGA → OpenAI → Anthropic → Gemini
-    
+
     New Features:
+    - Feature #362: Generation progress tracking with AI thinking stages
     - Features #367-368: Generation cache with automatic expiry
     - Layout algorithms: force-directed, tree, circular (Features #321-323)
     - Icon intelligence: auto-detect AWS, Azure, GCP services (Features #324-326)
@@ -341,7 +346,12 @@ async def generate_diagram(request: GenerateDiagramRequest):
     - Auto-retry: regenerate if quality score < 80
     """
     try:
-        logger.info(f"Generating diagram for prompt: {request.prompt[:100]}...")
+        # Feature #362: Create generation tracking
+        tracker = get_progress_tracker()
+        generation_id = str(uuid.uuid4())
+        tracker.create_generation(generation_id)
+
+        logger.info(f"Generating diagram for prompt: {request.prompt[:100]}... [generation_id={generation_id}]")
         
         # Features #367-368: Check cache first
         cache = get_generation_cache()
@@ -382,7 +392,14 @@ async def generate_diagram(request: GenerateDiagramRequest):
                 layout_algorithm_enum = LayoutAlgorithm(request.layout_algorithm.lower())
             except ValueError:
                 logger.warning(f"Invalid layout algorithm: {request.layout_algorithm}")
-        
+
+        # Feature #362: Update progress - Analyzing
+        tracker.analyzing(generation_id)
+        await asyncio.sleep(0.1)  # Small delay for progress update
+
+        # Feature #362: Update progress - Generating
+        tracker.generating(generation_id)
+
         # Generate using enhanced method
         result = await AIProviderFactory.generate_enhanced(
             prompt=request.prompt,
@@ -392,12 +409,19 @@ async def generate_diagram(request: GenerateDiagramRequest):
             enable_icon_intelligence=request.enable_icon_intelligence,
             enable_quality_validation=request.enable_quality_validation
         )
+
+        # Feature #362: Update progress - Rendering
+        tracker.rendering(generation_id)
         
-        # Add timestamp
+        # Add timestamp and generation_id
         result["timestamp"] = datetime.utcnow().isoformat()
-        
+        result["generation_id"] = generation_id
+
+        # Feature #362: Mark as complete
+        tracker.complete(generation_id, result)
+
         logger.info(f"✓ Successfully generated {result['diagram_type']} diagram using {result['provider']}")
-        
+
         if result.get('quality_score'):
             logger.info(f"  Quality score: {result['quality_score']:.1f}/100")
         
@@ -435,7 +459,11 @@ async def generate_diagram(request: GenerateDiagramRequest):
         
     except Exception as e:
         logger.error(f"Diagram generation failed: {str(e)}")
-        
+
+        # Feature #362: Mark as failed
+        if 'generation_id' in locals():
+            tracker.fail(generation_id, str(e))
+
         # Track failure
         management = get_ai_management()
         management.track_provider_usage(
@@ -444,11 +472,7 @@ async def generate_diagram(request: GenerateDiagramRequest):
             tokens=0,
             latency=0.0
         )
-        
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate diagram: {str(e)}"
-        )
+
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate diagram: {str(e)}"
@@ -1540,39 +1564,87 @@ async def batch_generate(request: BatchGenerateRequest):
     }
 
 
+@app.get("/api/ai/generation-progress/stream/{generation_id}")
+async def stream_generation_progress(generation_id: str, request: Request):
+    """
+    Feature #362: Stream generation progress with Server-Sent Events (SSE).
+
+    Returns real-time progress updates for AI thinking stages:
+    - Analyzing prompt...
+    - Generating layout...
+    - Rendering diagram...
+    - Completed
+    """
+    async def event_generator():
+        """Generate SSE events for progress updates."""
+        tracker = get_progress_tracker()
+        last_update_idx = 0
+
+        try:
+            # Stream updates until completion or client disconnect
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    break
+
+                # Get all updates
+                updates = tracker.get_all(generation_id)
+
+                # Send new updates
+                if updates and len(updates) > last_update_idx:
+                    for update in updates[last_update_idx:]:
+                        data = {
+                            "generation_id": update.generation_id,
+                            "status": update.status,
+                            "progress": update.progress,
+                            "message": update.message,
+                            "timestamp": update.timestamp
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        last_update_idx = len(updates)
+
+                    # If completed or failed, close stream
+                    latest = updates[-1]
+                    if latest.status in [GenerationStatus.COMPLETED, GenerationStatus.FAILED]:
+                        break
+
+                # Wait before checking again
+                await asyncio.sleep(0.3)
+
+        except asyncio.CancelledError:
+            # Client disconnected
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
 @app.get("/api/ai/generation-progress/{generation_id}")
 async def get_generation_progress(generation_id: str):
     """
-    Feature #362: Get generation progress status.
-    
+    Feature #362: Get generation progress status (polling endpoint).
+
     Returns current progress of an ongoing generation.
+    Use /stream/{generation_id} for real-time SSE updates.
     """
-    analytics = get_analytics()
-    generation = analytics.get_generation(generation_id)
-    
-    if not generation:
+    tracker = get_progress_tracker()
+    latest_update = tracker.get_latest(generation_id)
+
+    if not latest_update:
         raise HTTPException(status_code=404, detail="Generation not found")
-    
-    # Determine progress based on generation state
-    if generation.success:
-        status = "completed"
-        progress = 100.0
-        message = "Generation completed successfully"
-    elif generation.error:
-        status = "failed"
-        progress = 100.0
-        message = f"Generation failed: {generation.error}"
-    else:
-        status = "in_progress"
-        progress = 50.0
-        message = "Generating diagram..."
-    
+
     return GenerationProgressUpdate(
-        generation_id=generation_id,
-        status=status,
-        progress=progress,
-        message=message,
-        timestamp=datetime.utcnow().isoformat()
+        generation_id=latest_update.generation_id,
+        status=latest_update.status,
+        progress=latest_update.progress,
+        message=latest_update.message,
+        timestamp=latest_update.timestamp
     )
 
 
