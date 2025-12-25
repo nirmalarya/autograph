@@ -5145,3 +5145,113 @@ FILES MODIFIED:
 
 ===== FEATURE 77 COMPLETE =====
 
+
+========================================
+SESSION: Feature #78 - Password Reset Request
+Date: 2025-12-25
+========================================
+
+FEATURE #78: Password Reset Flow - Request Reset Email
+------------------------------------------------------
+
+REQUIREMENTS:
+- POST /forgot-password endpoint
+- Request password reset for user email
+- Generate secure reset token
+- Store token in database with 1-hour expiry
+- Return 200 even for non-existent emails (prevent enumeration)
+
+IMPLEMENTATION:
+---------------
+1. Existing Implementation:
+   - Password reset functionality already existed at /password-reset/request
+   - PasswordResetToken model and table already in database
+   - Token generation, storage, and expiry logic complete
+
+2. Changes Made:
+   - Added /forgot-password endpoint as alias to /password-reset/request
+   - Allows frontend-friendly URL naming
+   - Maintains all existing functionality
+
+3. Files Modified:
+   - services/auth-service/src/main.py
+     * Added @app.post("/forgot-password") endpoint
+     * Delegates to request_password_reset() function
+   - Rebuilt and restarted auth-service container
+
+VALIDATION CREATED:
+------------------
+File: validate_feature78_password_reset_request.py
+
+Tests:
+1. ✅ User registration
+2. ✅ Password reset request via /forgot-password
+3. ✅ Verify reset token stored in database
+4. ✅ Token has secure length (43+ chars)
+5. ✅ Token is unused (is_used=False)
+6. ✅ Token expires in ~1 hour (3300-3900 seconds)
+7. ✅ Reset link format valid
+8. ✅ Non-existent email returns 200 (security)
+9. ✅ Multiple reset requests work
+10. ✅ Old tokens invalidated on new request
+11. ✅ New token is unused
+
+VALIDATION RESULTS:
+------------------
+✅ All 11 validation checks passed (100%)
+
+Test Details:
+- Registered unique test user
+- Requested password reset
+- Verified token in password_reset_tokens table
+- Token: 43 chars, urlsafe encoding
+- Expires: exactly 60 minutes from creation
+- is_used: false
+- Reset link: http://localhost:3000/reset-password?token=XXX
+- Non-existent email: Returns 200 (prevents user enumeration)
+- Multiple requests: Old tokens marked as used
+
+REGRESSION CHECK:
+----------------
+✅ Baseline features: 78/78 passing
+✅ No breaking changes detected
+✅ All existing features still work
+
+SECURITY FEATURES:
+-----------------
+1. User enumeration protection: Always returns 200
+2. Secure token generation: secrets.token_urlsafe(32)
+3. Token expiry: 1 hour from creation
+4. Old token invalidation: Previous unused tokens marked as used
+5. Database indexing: Fast token lookups
+6. Audit logging: All reset requests logged
+
+DATABASE:
+---------
+Table: password_reset_tokens
+- id: UUID
+- user_id: Foreign key to users
+- token: Unique, indexed (VARCHAR 255)
+- is_used: Boolean (default false)
+- used_at: Timestamp (nullable)
+- expires_at: Timestamp (indexed)
+- created_at: Timestamp (server default)
+
+PROGRESS:
+--------
+Total: 78/658 features passing (11.9%)
+New feature complete: ✅ Feature #78
+Baseline intact: ✅ 78/78
+
+FILES CREATED:
+-------------
+- validate_feature78_password_reset_request.py
+
+FILES MODIFIED:
+--------------
+- services/auth-service/src/main.py (added /forgot-password alias)
+- spec/feature_list.json (feature 78 marked as passing)
+- baseline_features.txt (updated to 78)
+
+===== FEATURE 78 COMPLETE =====
+

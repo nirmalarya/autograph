@@ -2639,6 +2639,16 @@ async def request_password_reset(
         }
 
 
+@app.post("/forgot-password")
+async def forgot_password_alias(
+    request_data: PasswordResetRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Alias for /password-reset/request - frontend-friendly endpoint name."""
+    return await request_password_reset(request_data, request, db)
+
+
 @app.post("/password-reset/confirm")
 async def confirm_password_reset(
     request_data: PasswordResetConfirm,
