@@ -175,3 +175,44 @@ SESSION 3 (continued) - Feature #8: JWT Authentication
 Session 3 Total: +2 features (Feature #7 and #8)
 
 Completed: 2025-12-24 21:08 EST
+
+=================================================================
+SESSION 3 (continued) - Feature #9: User-Based Rate Limiting
+=================================================================
+
+## Feature Completed
+✅ Feature #9: API Gateway rate limiting: 100 requests/min per user
+
+## Work Done
+1. Added JWT_SECRET environment variable to API gateway in docker-compose.yml
+2. Rebuilt and restarted API gateway to enable JWT authentication
+3. Created comprehensive rate limiting test (test_rate_limiting_user.py)
+4. Tested user-based rate limiting on /api/diagrams endpoint
+5. Verified all test scenarios:
+   - 100 requests within 1 minute: All succeed ✓
+   - 101st request: Correctly rate limited (429) ✓
+   - After 60 second wait: Rate limit resets ✓
+
+## Test Results
+✅ All 3 test scenarios passed
+- User-based rate limiting enforced: 100 req/min per user
+- Rate limit correctly returns 429 Too Many Requests
+- Rate limit window resets after 1 minute
+- Tested on protected routes (/api/diagrams, /api/ai, etc.)
+
+## Technical Details
+- Rate limiter uses slowapi library
+- Storage: Redis database 1
+- Key function: get_user_identifier (extracts user_id from JWT)
+- Fallback: IP-based limiting for non-authenticated requests
+- Protected routes: diagrams, ai, collaboration, git, export, integrations
+
+## Progress
+- Total: 658 features
+- Passing: 17/658 (2.6%)
+- Previous: 16/658 (2.4%)
+- +1 feature this session
+
+Session 3 Total: +3 features (Feature #7, #8, and #9)
+
+Completed: 2025-12-24 21:21 EST
