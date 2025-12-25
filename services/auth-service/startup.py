@@ -9,7 +9,8 @@ from pathlib import Path
 from src.main import app
 
 if __name__ == "__main__":
-    port = int(os.getenv("AUTH_SERVICE_PORT", "8081"))
+    # Internal port should always be 8085 to match healthcheck
+    port = 8085
     tls_enabled = os.getenv("TLS_ENABLED", "false").lower() in ("true", "1", "yes")
 
     if tls_enabled:
