@@ -7,14 +7,24 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=100
+      - -c
+      - log_statement=all
+      - -c
+      - log_duration=on
+      - -c
+      - log_line_prefix=%t [%p]:[%l-1] user=%u,db=%d,app=%a,client=%h
     ports:
-    - ${POSTGRES_PORT}:5432
+      - ${POSTGRES_PORT}:5432
     volumes:
-    - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test:
-      - CMD-SHELL
-      - pg_isready -U ${POSTGRES_USER}
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER}
       interval: 30s
       timeout: 10s
       retries: 3
