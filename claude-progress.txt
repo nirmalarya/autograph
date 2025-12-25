@@ -6164,3 +6164,61 @@ After:  94/658 features passing (14.3%)
 New feature: ✅ Feature #94 (MFA Recovery)
 
 ===== FEATURE #94 COMPLETE =====
+
+===== SESSION: Feature #95 - Session Timeout After Inactivity =====
+Date: 2025-12-25 10:57:00
+
+FEATURE: #95 - Session timeout after 30 minutes of inactivity
+Description: Automatic session expiration after 30 minutes without activity
+
+IMPLEMENTATION STATUS:
+======================
+✅ Feature was ALREADY IMPLEMENTED
+✅ All session timeout functionality working correctly
+
+VALIDATION PERFORMED:
+=====================
+1. Created test script: validate_feature95_session_timeout.py
+2. Tested session timeout flow:
+   - Login and create session
+   - Simulate 29 minutes inactivity (session valid)
+   - Verify action succeeds within timeout
+   - Simulate 31 minutes inactivity (session expired)
+   - Verify 401 error with inactivity message
+   - Confirm new login works
+
+KEY FINDINGS:
+=============
+- SESSION_INACTIVITY_TIMEOUT = 1800 seconds (30 minutes)
+- Last activity tracked in session data (Redis)
+- check_session_inactivity() validates timeout
+- update_session_activity() updates timestamp on each request
+- Expired sessions return 401 with "Session expired due to inactivity"
+- Expired sessions deleted from Redis
+
+VALIDATION RESULTS:
+===================
+✅ All session timeout functionality verified:
+  - Session valid after 29 minutes
+  - Session expired after 31 minutes
+  - 401 Unauthorized on expired session
+  - Correct error message
+  - Session cleaned up from Redis
+  - User can login again
+
+FILES CREATED:
+==============
+- validate_feature95_session_timeout.py
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (feature #95 → passes: true)
+- baseline_features.txt (94 → 95)
+
+PROGRESS UPDATE:
+================
+Before: 94/658 features passing (14.3%)
+After:  95/658 features passing (14.4%)
+New feature: ✅ Feature #95 (Session Timeout)
+
+===== FEATURE #95 COMPLETE =====
