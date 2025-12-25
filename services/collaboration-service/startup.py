@@ -5,8 +5,8 @@ import ssl
 import uvicorn
 from pathlib import Path
 
-# Import the FastAPI app
-from src.main import app
+# Import the Socket.IO ASGI app (wraps FastAPI + Socket.IO)
+from src.main import socket_app as app
 
 if __name__ == "__main__":
     # Internal port should always be 8083 to match healthcheck

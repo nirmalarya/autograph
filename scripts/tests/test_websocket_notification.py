@@ -27,9 +27,9 @@ received_messages = []
 def create_test_user():
     """Create a test user for the test."""
     global TEST_USER_ID
-    
+
     print("Creating test user...")
-    
+
     # Try to register
     register_response = requests.post(
         f"{AUTH_SERVICE_URL}/register",
@@ -39,14 +39,31 @@ def create_test_user():
             "full_name": "WebSocket Test User"
         }
     )
-    
-    if register_response.status_code == 200:
+
+    if register_response.status_code == 200 or register_response.status_code == 201:
         print(f"✅ User registered successfully")
+        # Verify email automatically for test user
+        try:
+            # Get user_id from registration response
+            user_data = register_response.json()
+            test_user_id = user_data.get("user_id")
+
+            if test_user_id:
+                # Verify email via admin endpoint (bypass email verification)
+                verify_response = requests.post(
+                    f"{AUTH_SERVICE_URL}/admin/verify-email/{test_user_id}",
+                    headers={"X-Admin-Secret": "admin-secret-key"}  # Use admin secret from env
+                )
+                if verify_response.status_code == 200:
+                    print(f"✅ Email verified for test user")
+        except Exception as e:
+            print(f"⚠️  Could not auto-verify email: {e}")
+
     elif register_response.status_code == 400:
         print(f"ℹ️  User already exists, proceeding with login")
     else:
         print(f"⚠️  Registration response: {register_response.status_code}")
-    
+
     # Login to get user ID
     login_response = requests.post(
         f"{AUTH_SERVICE_URL}/login",
@@ -55,7 +72,7 @@ def create_test_user():
             "password": TEST_USER_PASSWORD
         }
     )
-    
+
     if login_response.status_code != 200:
         print(f"❌ Failed to login: {login_response.status_code}")
         print(f"Response: {login_response.text}")
