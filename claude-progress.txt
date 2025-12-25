@@ -12276,3 +12276,75 @@ SUMMARY OF BATCH (#376-#378):
 All three features leveraging the ai_enhancements module successfully validated.
 
 Next Feature: #379 - AI provider usage analytics
+
+================================================================================
+SESSION: Feature #379 - AI Provider Usage Analytics
+TIME: 2025-12-25 17:48:10
+================================================================================
+
+FEATURE IMPLEMENTED: #379
+- AI provider usage analytics endpoint and UI page
+
+IMPLEMENTATION DETAILS:
+
+1. Enhanced AI Management Analytics (ai_management.py):
+   - Updated ProviderUsage dataclass to include total_cost and average_quality
+   - Enhanced track_provider_usage() to accept cost and quality parameters
+   - Modified get_provider_usage_analytics() to calculate and return cost/quality metrics
+   
+2. Updated API Endpoint (/api/ai/provider-usage-analytics):
+   - Returns total_generations count across all providers
+   - Returns per-provider analytics with cost and quality
+   - Calculates overall average quality score
+   - Calculates total cost across all providers
+   
+3. Created Frontend Page (/settings/ai-analytics):
+   - Summary cards showing:
+     * Total generations count
+     * Total cost
+     * Average quality score
+     * Active providers count
+   - Provider breakdown table with:
+     * Provider name
+     * Total requests
+     * Success rate
+     * Total tokens
+     * Average latency
+     * Estimated cost
+   - Dark mode support
+   - Responsive design
+
+FILES CREATED:
+- services/frontend/app/settings/ai-analytics/page.tsx
+- validate_feature_379_ai_analytics.py
+
+FILES MODIFIED:
+- services/ai-service/src/ai_management.py (enhanced with cost/quality tracking)
+- services/ai-service/src/main.py (enhanced endpoint response)
+
+TEST RESULTS:
+✓ Endpoint accessible at /api/ai/provider-usage-analytics
+✓ Returns total_generations field
+✓ Returns analytics array with per-provider data
+✓ Returns average_quality field  
+✓ Returns total_cost field
+✓ Each provider includes cost data
+✓ All required fields present in response
+
+QUALITY GATES:
+✓ API endpoint functional
+✓ Frontend page created
+✓ Data structure complete
+✓ Validation script passing
+✓ Service rebuilt and tested
+
+PROGRESS:
+- Session start: 378/658 (57.4%)
+- Current: 379/658 (57.6%)
+- Completed this session: +1 feature (#379)
+- Baseline intact: ✓ (379 >= 215)
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #380 - AI generation quality feedback
+

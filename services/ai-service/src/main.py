@@ -2040,12 +2040,31 @@ async def convert_diagram_to_documentation(request: DiagramToDocRequest):
 async def get_provider_usage_analytics():
     """
     Feature #379: AI provider usage analytics.
-    
-    Get detailed usage statistics per provider.
+
+    Get detailed usage statistics per provider including:
+    - Total generations count
+    - Generations per provider
+    - Average quality score
+    - Total cost
+    - Cost per provider
     """
     management = get_ai_management()
     analytics = management.get_provider_usage_analytics()
-    
+
+    # Calculate overall totals
+    total_generations = sum(a.total_requests for a in analytics)
+    total_cost = sum(a.total_cost for a in analytics)
+
+    # Calculate average quality across all providers
+    quality_sum = 0.0
+    quality_count = 0
+    for a in analytics:
+        if a.average_quality > 0:
+            quality_sum += a.average_quality
+            quality_count += 1
+
+    average_quality = quality_sum / quality_count if quality_count > 0 else 0.0
+
     return {
         "analytics": [
             {
@@ -2056,10 +2075,15 @@ async def get_provider_usage_analytics():
                 "total_tokens": a.total_tokens,
                 "average_latency": a.average_latency,
                 "success_rate": a.success_rate,
-                "last_used": a.last_used
+                "last_used": a.last_used,
+                "total_cost": a.total_cost,
+                "average_quality": a.average_quality
             }
             for a in analytics
         ],
+        "total_generations": total_generations,
+        "total_cost": total_cost,
+        "average_quality": average_quality,
         "timestamp": datetime.utcnow().isoformat()
     }
 

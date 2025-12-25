@@ -47,7 +47,7 @@ class DiagramImport:
 
 @dataclass
 class ProviderUsage:
-    """Usage statistics for an AI provider."""
+    """Usage statistics for an AI provider - Feature #379."""
     provider: str
     total_requests: int
     successful_requests: int
@@ -56,6 +56,8 @@ class ProviderUsage:
     average_latency: float
     success_rate: float
     last_used: Optional[float]
+    total_cost: float = 0.0
+    average_quality: float = 0.0
 
 
 @dataclass
@@ -171,16 +173,20 @@ class AIManagement:
         provider: str,
         success: bool,
         tokens: int,
-        latency: float
+        latency: float,
+        cost: float = 0.0,
+        quality: Optional[float] = None
     ):
         """
         Feature #379: Track provider usage for analytics.
-        
+
         Args:
             provider: Provider name
             success: Whether request was successful
             tokens: Tokens used
             latency: Request latency in seconds
+            cost: Estimated cost in USD
+            quality: Quality score (0-100) if available
         """
         if provider not in self.provider_stats:
             self.provider_stats[provider] = {
@@ -189,19 +195,28 @@ class AIManagement:
                 "failed_requests": 0,
                 "total_tokens": 0,
                 "total_latency": 0.0,
+                "total_cost": 0.0,
+                "total_quality": 0.0,
+                "quality_count": 0,
                 "last_used": None
             }
-        
+
         stats = self.provider_stats[provider]
         stats["total_requests"] += 1
-        
+
         if success:
             stats["successful_requests"] += 1
         else:
             stats["failed_requests"] += 1
-        
+
         stats["total_tokens"] += tokens
         stats["total_latency"] += latency
+        stats["total_cost"] += cost
+
+        if quality is not None:
+            stats["total_quality"] += quality
+            stats["quality_count"] += 1
+
         stats["last_used"] = time.time()
     
     def get_provider_usage_analytics(self) -> List[ProviderUsage]:
@@ -218,6 +233,10 @@ class AIManagement:
             if total == 0:
                 continue
             
+            avg_quality = 0.0
+            if stats["quality_count"] > 0:
+                avg_quality = stats["total_quality"] / stats["quality_count"]
+
             analytics.append(ProviderUsage(
                 provider=provider,
                 total_requests=total,
@@ -226,7 +245,9 @@ class AIManagement:
                 total_tokens=stats["total_tokens"],
                 average_latency=stats["total_latency"] / total,
                 success_rate=stats["successful_requests"] / total,
-                last_used=stats["last_used"]
+                last_used=stats["last_used"],
+                total_cost=stats["total_cost"],
+                average_quality=avg_quality
             ))
         
         return sorted(analytics, key=lambda x: x.total_requests, reverse=True)
