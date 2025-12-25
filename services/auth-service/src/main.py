@@ -578,12 +578,27 @@ class UserRegister(BaseModel):
     @validator('password')
     def validate_password_strength(cls, v):
         """Validate password meets minimum security requirements."""
+        # Check length requirements
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
         if len(v) > 128:
             raise ValueError('Password must not exceed 128 characters')
-        # Note: Additional password requirements (uppercase, numbers, symbols)
-        # can be enforced here if needed
+
+        # Check complexity requirements (OWASP/NIST standards)
+        has_uppercase = any(c.isupper() for c in v)
+        has_lowercase = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        has_special = any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?/~`' for c in v)
+
+        if not has_uppercase:
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not has_lowercase:
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not has_digit:
+            raise ValueError('Password must contain at least one digit')
+        if not has_special:
+            raise ValueError('Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?/~`)')
+
         return v
     
     @validator('full_name')
