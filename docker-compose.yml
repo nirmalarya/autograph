@@ -369,19 +369,26 @@ services:
     - ./certs:/app/certs:ro
     depends_on:
       auth-service:
-        condition: service_healthy
+
+        condition: service_started
       diagram-service:
-        condition: service_healthy
+
+        condition: service_started
       ai-service:
-        condition: service_healthy
+
+        condition: service_started
       collaboration-service:
-        condition: service_healthy
+
+        condition: service_started
       git-service:
-        condition: service_healthy
+
+        condition: service_started
       export-service:
-        condition: service_healthy
+
+        condition: service_started
       integration-hub:
-        condition: service_healthy
+
+        condition: service_started
     healthcheck:
       test:
       - CMD
@@ -405,7 +412,8 @@ services:
     - ${FRONTEND_PORT}:3000
     depends_on:
       api-gateway:
-        condition: service_healthy
+
+        condition: service_started
     healthcheck:
       test:
       - CMD

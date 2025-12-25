@@ -47,9 +47,9 @@ USER appuser
 # Expose port
 EXPOSE 8097
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8097/health')"
+# Health check - supports both HTTP and HTTPS
+#HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+#    CMD python -c "import os, urllib.request, ssl; scheme = 'https' if os.getenv('TLS_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'http'; ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE; urllib.request.urlopen(f'{scheme}://localhost:8097/health', timeout=5, context=ctx if scheme == 'https' else None)"
 
 # Run the application
 CMD ["python", "startup.py"]
