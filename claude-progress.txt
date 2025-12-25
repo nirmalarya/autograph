@@ -12064,3 +12064,67 @@ PROGRESS:
 - Completed this session: +3 features
 - Baseline intact: ✓ (370 >= 368)
 
+
+================================================================================
+SESSION: Feature #376 - AI-Powered Best Practices Check
+DATE: 2025-12-25
+================================================================================
+
+FEATURE COMPLETED: #376 - AI-powered best practices check
+
+IMPLEMENTATION DETAILS:
+The AI service already had a fully implemented best practices checking endpoint.
+The check_best_practices method analyzes Mermaid diagrams for common issues:
+
+1. Component naming violations (all caps detection)
+2. Bidirectional arrow usage (ambiguity warnings)  
+3. Proper spacing recommendations
+4. Orphaned node detection
+
+The endpoint at /api/ai/check-best-practices accepts:
+- mermaid_code: The diagram to analyze
+- diagram_type: Type of diagram (architecture, flowchart, etc.)
+
+Returns:
+- violations: Array of BestPracticeViolation objects with:
+  - severity: "error", "warning", or "info"
+  - category: Type of violation (naming, arrows, spacing, etc.)
+  - message: Description of the issue
+  - line_number: Optional line where violation occurs
+  - suggestion: Recommendation for fixing
+- total_violations: Count of violations
+- passed: Boolean indicating if diagram passed all checks
+- timestamp: When check was performed
+
+FILES CREATED:
+- validate_feature_376_best_practices.py (comprehensive validation test)
+
+TEST RESULTS:
+✓ Best practices endpoint responds correctly
+✓ Violations detected in problematic diagrams
+✓ Proper violation structure (severity, category, message, suggestion)
+✓ Response metadata includes total_violations, passed, timestamp
+✓ Severity levels validated (error, warning, info)
+✓ Categories properly assigned (naming, arrows, etc.)
+✓ Clean diagrams pass with zero violations
+
+QUALITY GATES:
+✓ Endpoint implemented and functional
+✓ Proper error handling
+✓ Comprehensive violation detection
+✓ Structured responses with metadata
+✓ End-to-end testing complete
+
+REGRESSION TEST:
+✓ Baseline features: 376/658 (still >= 215)
+✓ No regressions detected
+
+PROGRESS:
+- Before: 375/658 (57.0%)
+- After: 376/658 (57.1%)
+- Completed: +1 feature
+- Baseline intact: ✓ (376 >= 215)
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #377 - AI-powered diagram to code
