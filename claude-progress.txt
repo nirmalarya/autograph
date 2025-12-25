@@ -12574,3 +12574,72 @@ PROGRESS:
 STATUS: ✅ COMPLETE
 
 Next Feature: #385
+
+================================================================================
+SESSION: Feature #387 - Cursor Presence
+DATE: 2025-12-25 18:07:00
+================================================================================
+
+FEATURE: #387 - Real-time collaboration: Cursor presence: show all users' cursors
+
+IMPLEMENTATION STATUS:
+✅ Feature already fully implemented in collaboration-service
+
+KEY IMPLEMENTATION DETAILS:
+
+1. WebSocket Event Handler (lines 704-738):
+   - cursor_move(sid, data) event handler
+   - Accepts room_id, user_id, x, y coordinates
+   - Updates user presence with cursor position
+   - Broadcasts to all other users in room
+
+2. User Presence Tracking (lines 108-134):
+   - UserPresence dataclass with cursor_x, cursor_y fields
+   - Tracks cursor position per user
+   - Color-coded per user (8 predefined colors)
+   - Includes username, email, status
+
+3. Color Assignment (lines 82-86, 211-216):
+   - USER_COLORS array with 8 distinct colors
+   - assign_user_color() function
+   - Rotating assignment to new users
+
+4. Real-time Broadcasting (line 726-733):
+   - Emits 'cursor_update' event
+   - Includes: user_id, username, color, x, y, timestamp
+   - Uses skip_sid=sid to prevent echo to sender
+
+5. HTTP Endpoints:
+   - GET /rooms/{room_id}/users - Returns all users with cursor data
+   - Includes cursor coordinates in response
+
+VALIDATION:
+✅ Created validate_feature_387_cursor_presence.py
+✅ All 8 validation steps passed:
+   ✓ Collaboration service healthy
+   ✓ cursor_move event handler exists
+   ✓ User presence tracks cursor coordinates (cursor_x, cursor_y)
+   ✓ Color-coded cursors (8 colors: #FF6B6B, #4ECDC4, etc.)
+   ✓ Broadcasts include username, color, position
+   ✓ Real-time updates use skip_sid (no echo)
+   ✓ HTTP endpoint returns cursor data
+   ✓ Presence update mechanism working
+
+QUALITY GATES:
+✅ WebSocket event handler functional
+✅ Cursor coordinates tracked in UserPresence
+✅ Color-coded per user (8 distinct colors)
+✅ Real-time broadcasting with user details
+✅ Skip sender to prevent echo
+✅ HTTP endpoints working
+✅ No regressions (baseline: 388 >= 215)
+
+PROGRESS:
+- Session start: 387/658 (58.8%)
+- Current: 388/658 (59.0%)
+- Completed this session: +1 feature (#387)
+- Baseline intact: ✓ (388 >= 215)
+
+STATUS: ✅ COMPLETE
+
+Next Feature: #388 - Cursor presence: color-coded per user
