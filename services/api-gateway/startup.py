@@ -23,15 +23,15 @@ if __name__ == "__main__":
         ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
         ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
         ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
-
-        # Security options (TLS 1.3 ciphers are enabled by default)
-        ssl_context.options |= ssl.OP_NO_TLSv1
-        ssl_context.options |= ssl.OP_NO_TLSv1_1
-        ssl_context.options |= ssl.OP_NO_TLSv1_2
         ssl_context.options |= ssl.OP_NO_COMPRESSION
 
         print(f"Starting api-gateway with TLS 1.3 on port {port}")
-        uvicorn.run(app, host="0.0.0.0", port=port, ssl=ssl_context)
+
+        # Use Config and Server for SSL context control
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, ssl_version=ssl.PROTOCOL_TLS_SERVER)
+        server = uvicorn.Server(config)
+        server.config.ssl = ssl_context
+        server.run()
     else:
         print(f"Starting api-gateway without TLS on port {port}")
         uvicorn.run(app, host="0.0.0.0", port=port)
