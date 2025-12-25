@@ -146,21 +146,38 @@ class SAMLHandler:
         }
     
     def map_groups_to_role(self, groups: list, provider: str) -> str:
-        """Map SAML groups to AutoGraph role."""
+        """Map SAML groups to AutoGraph role.
+
+        If user is in multiple groups, returns the highest privilege role.
+        Role hierarchy: admin > editor > viewer
+        """
         config = self.get_saml_config(provider)
         if not config:
             return "viewer"
-        
+
         # Get group mappings
         group_mappings = config.get("group_mapping", {})
-        
-        # Check each group
+
+        # Role hierarchy (higher number = higher privilege)
+        role_hierarchy = {
+            "viewer": 1,
+            "editor": 2,
+            "admin": 3
+        }
+
+        # Find all matching roles
+        matched_roles = []
         for group in groups:
             if group in group_mappings:
-                return group_mappings[group]
-        
-        # Default role
-        return config.get("default_role", "viewer")
+                role = group_mappings[group]
+                matched_roles.append(role)
+
+        # If no matches, return default
+        if not matched_roles:
+            return config.get("default_role", "viewer")
+
+        # Return highest privilege role
+        return max(matched_roles, key=lambda r: role_hierarchy.get(r, 0))
     
     def _build_saml_settings(self, config: dict, request_data: dict) -> dict:
         """Build SAML settings dictionary for OneLogin library."""
