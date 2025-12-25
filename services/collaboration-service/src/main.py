@@ -177,8 +177,12 @@ app.add_middleware(
 )
 
 
-# Wrap with Socket.IO ASGI app
-socket_app = socketio.ASGIApp(sio, app)
+# Mount Socket.IO on the app instead of wrapping
+# This allows both Socket.IO and HTTP routes to coexist
+app.mount("/socket.io", socketio.ASGIApp(sio))
+
+# Export app as socket_app for compatibility with startup.py
+socket_app = app
 
 # Redis connection for pub/sub
 redis_client = None
@@ -1153,6 +1157,273 @@ async def get_room_connection_quality(room_id: str):
 offline_queues: Dict[str, List[dict]] = {}  # user_id -> list of queued operations
 
 
+# Operational Transform state tracking
+# Track the last known state of each element for OT conflict resolution
+element_states: Dict[str, Dict[str, any]] = {}  # room_id -> {element_id: state}
+operation_history: Dict[str, List[dict]] = {}  # room_id -> list of operations
+
+
+@dataclass
+class Operation:
+    """Represents a single operation on an element."""
+    operation_id: str
+    user_id: str
+    element_id: str
+    operation_type: str  # 'move', 'resize', 'style', 'delete', 'create'
+    old_value: any
+    new_value: any
+    timestamp: datetime
+    transformed: bool = False
+
+    def to_dict(self):
+        return {
+            **asdict(self),
+            'timestamp': self.timestamp.isoformat()
+        }
+
+
+def transform_operations(op1: Operation, op2: Operation) -> tuple:
+    """
+    Operational Transform: Transform two concurrent operations.
+
+    Returns (op1', op2') where:
+    - op1' is op1 transformed against op2
+    - op2' is op2 transformed against op1
+
+    This implements a simple OT algorithm for concurrent edits.
+    """
+    # If operations are on different elements, no transformation needed
+    if op1.element_id != op2.element_id:
+        return op1, op2
+
+    # Same element - need to resolve conflict
+    logger.info(f"OT: Transforming concurrent operations on element {op1.element_id}")
+    logger.info(f"  Op1: {op1.operation_type} by {op1.user_id} at {op1.timestamp}")
+    logger.info(f"  Op2: {op2.operation_type} by {op2.user_id} at {op2.timestamp}")
+
+    # Strategy: Last-write-wins based on timestamp (with tie-breaker by user_id)
+    # In production, more sophisticated OT algorithms could be used
+
+    if op1.timestamp < op2.timestamp:
+        # op2 wins - op1 is superseded
+        logger.info(f"OT: Op2 wins (later timestamp)")
+        op1.transformed = True
+        op2.transformed = True
+        return op2, op2  # Use op2's value
+    elif op2.timestamp < op1.timestamp:
+        # op1 wins - op2 is superseded
+        logger.info(f"OT: Op1 wins (later timestamp)")
+        op1.transformed = True
+        op2.transformed = True
+        return op1, op1  # Use op1's value
+    else:
+        # Same timestamp - use lexicographic ordering of user_id as tie-breaker
+        if op1.user_id < op2.user_id:
+            logger.info(f"OT: Op1 wins (tie-breaker)")
+            op1.transformed = True
+            op2.transformed = True
+            return op1, op1
+        else:
+            logger.info(f"OT: Op2 wins (tie-breaker)")
+            op1.transformed = True
+            op2.transformed = True
+            return op2, op2
+
+
+def apply_operational_transform(room_id: str, operation: Operation) -> Operation:
+    """
+    Apply operational transform to resolve conflicts with concurrent operations.
+
+    Returns the transformed operation that should be applied.
+    """
+    if room_id not in operation_history:
+        operation_history[room_id] = []
+
+    # Check for concurrent operations on the same element
+    concurrent_ops = [
+        op for op in operation_history[room_id]
+        if op['element_id'] == operation.element_id
+        and abs((datetime.fromisoformat(op['timestamp']) - operation.timestamp).total_seconds()) < 1.0
+        and op['user_id'] != operation.user_id
+        and not op.get('transformed', False)
+    ]
+
+    transformed_op = operation
+
+    for concurrent_op_dict in concurrent_ops:
+        # Convert dict back to Operation
+        concurrent_op = Operation(
+            operation_id=concurrent_op_dict['operation_id'],
+            user_id=concurrent_op_dict['user_id'],
+            element_id=concurrent_op_dict['element_id'],
+            operation_type=concurrent_op_dict['operation_type'],
+            old_value=concurrent_op_dict['old_value'],
+            new_value=concurrent_op_dict['new_value'],
+            timestamp=datetime.fromisoformat(concurrent_op_dict['timestamp']),
+            transformed=concurrent_op_dict.get('transformed', False)
+        )
+
+        # Transform
+        transformed_op, _ = transform_operations(transformed_op, concurrent_op)
+
+    # Record operation in history
+    operation_history[room_id].append(operation.to_dict())
+
+    # Keep only last 1000 operations per room
+    if len(operation_history[room_id]) > 1000:
+        operation_history[room_id] = operation_history[room_id][-1000:]
+
+    return transformed_op
+
+
+@sio.event
+async def element_update_ot(sid, data):
+    """
+    Handle element update with operational transform for conflict resolution.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id",
+        "element_id": "element-id",
+        "operation_type": "move",
+        "old_value": {...},
+        "new_value": {...}
+    }
+    Feature #396: Operational Transform for concurrent edits
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        element_id = data.get('element_id')
+        operation_type = data.get('operation_type', 'update')
+        old_value = data.get('old_value')
+        new_value = data.get('new_value')
+
+        if not room_id or not user_id or not element_id:
+            return {"success": False, "error": "room, user_id, and element_id required"}
+
+        # Create operation
+        import uuid
+        operation = Operation(
+            operation_id=str(uuid.uuid4()),
+            user_id=user_id,
+            element_id=element_id,
+            operation_type=operation_type,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=datetime.utcnow()
+        )
+
+        # Apply operational transform
+        transformed_op = apply_operational_transform(room_id, operation)
+
+        logger.info(f"OT: Applied transform for {operation_type} on {element_id} by {user_id}")
+        logger.info(f"  Original: {new_value}")
+        logger.info(f"  Transformed: {transformed_op.new_value}")
+
+        # Broadcast the transformed operation to all clients
+        await sio.emit('element_update_resolved', {
+            'element_id': transformed_op.element_id,
+            'operation_type': transformed_op.operation_type,
+            'value': transformed_op.new_value,
+            'resolved_by_ot': transformed_op.transformed,
+            'timestamp': transformed_op.timestamp.isoformat()
+        }, room=room_id)
+
+        # Update element state
+        if room_id not in element_states:
+            element_states[room_id] = {}
+        element_states[room_id][element_id] = transformed_op.new_value
+
+        return {
+            "success": True,
+            "transformed": transformed_op.transformed,
+            "final_value": transformed_op.new_value
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle OT element update: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/ot/apply")
+async def apply_ot_operation(operation_data: dict):
+    """
+    HTTP endpoint to apply an operation with operational transform.
+    Feature #396: Operational Transform via HTTP
+    """
+    try:
+        room_id = operation_data.get('room')
+        user_id = operation_data.get('user_id')
+        element_id = operation_data.get('element_id')
+        operation_type = operation_data.get('operation_type', 'update')
+        old_value = operation_data.get('old_value')
+        new_value = operation_data.get('new_value')
+
+        if not room_id or not user_id or not element_id:
+            raise HTTPException(
+                status_code=400,
+                detail="room, user_id, and element_id required"
+            )
+
+        # Create operation
+        import uuid
+        operation = Operation(
+            operation_id=str(uuid.uuid4()),
+            user_id=user_id,
+            element_id=element_id,
+            operation_type=operation_type,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=datetime.utcnow()
+        )
+
+        # Apply operational transform
+        transformed_op = apply_operational_transform(room_id, operation)
+
+        logger.info(f"HTTP OT: Applied transform for {operation_type} on {element_id}")
+
+        # Broadcast the transformed operation
+        await sio.emit('element_update_resolved', {
+            'element_id': transformed_op.element_id,
+            'operation_type': transformed_op.operation_type,
+            'value': transformed_op.new_value,
+            'resolved_by_ot': transformed_op.transformed,
+            'timestamp': transformed_op.timestamp.isoformat()
+        }, room=room_id)
+
+        # Update element state
+        if room_id not in element_states:
+            element_states[room_id] = {}
+        element_states[room_id][element_id] = transformed_op.new_value
+
+        return {
+            "success": True,
+            "transformed": transformed_op.transformed,
+            "final_value": transformed_op.new_value,
+            "operation_id": transformed_op.operation_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to apply OT operation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ot/history/{room_id}")
+async def get_operation_history(room_id: str, limit: int = 100):
+    """
+    Get operation history for a room.
+    Feature #396: View OT operation history
+    """
+    try:
+        history = operation_history.get(room_id, [])
+        return {
+            "room": room_id,
+            "operations": history[-limit:],
+            "count": len(history)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get operation history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/offline/queue")
 async def queue_offline_operation(operation: dict):
     """
@@ -1163,13 +1434,13 @@ async def queue_offline_operation(operation: dict):
         user_id = operation.get('user_id')
         if not user_id:
             raise HTTPException(status_code=400, detail="user_id required")
-        
+
         if user_id not in offline_queues:
             offline_queues[user_id] = []
-        
+
         operation['queued_at'] = datetime.utcnow().isoformat()
         offline_queues[user_id].append(operation)
-        
+
         return {
             "success": True,
             "queued": len(offline_queues[user_id]),
