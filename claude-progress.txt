@@ -8621,3 +8621,127 @@ NEXT FEATURE: #132 (TBD)
 SESSION COMPLETE ✅
 ================================================================================
 
+
+================================================================================
+SESSION: Feature #131 - Duplicate Diagram
+Date: 2025-12-25
+================================================================================
+
+FEATURE IMPLEMENTED: #131
+Title: Duplicate diagram creates copy with new UUID
+Category: functional
+
+IMPLEMENTATION STATUS:
+✅ Endpoint already existed: POST /api/diagrams/{diagram_id}/duplicate
+✅ Full implementation verified in services/diagram-service/src/main.py
+✅ All requirements met out-of-the-box
+
+VALIDATION SCRIPT CREATED: validate_feature131_duplicate_diagram.py
+
+Test coverage (10 steps):
+1. Register test user and verify email
+2. Login and obtain JWT token
+3. Create original diagram with title 'Original' and 2 shapes
+4. Call duplicate endpoint
+5. Verify new diagram created
+6. Verify new diagram has different UUID
+7. Verify new diagram title: 'Original (Copy)'
+8. Verify canvas_data copied exactly
+9. Verify new diagram has fresh version history (version 1)
+10. Verify original diagram unchanged
+
+ACTUAL RESULTS:
+✓ All 10 validation steps passed ✓
+✓ Original: df7005a3-6e88-4bdc-9ed3-62eba1eea102 - 'Original' (v1)
+✓ Duplicate: d7c1847d-f754-4237-b47a-751740f6be2f - 'Original (Copy)' (v1)
+✓ Canvas data: 2 shapes copied perfectly
+✓ Different UUIDs confirmed
+✓ Fresh version history confirmed
+
+REGRESSION TESTING:
+✅ Baseline check: 131/131 features still passing
+✅ No existing functionality broken
+✅ All services healthy
+
+FILES CREATED:
+- validate_feature131_duplicate_diagram.py
+- SESSION_SUMMARY_FEATURE131_DUPLICATE.md
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #131 marked as passing)
+- baseline_features.txt (updated to 132)
+
+PROGRESS UPDATE:
+Before: 131/658 features passing (19.9%)
+After:  132/658 features passing (20.1%)
+Baseline: 132 features preserved
+Remaining: 526 features to implement
+
+NEXT FEATURE: #132 - Move diagram to folder
+
+SESSION COMPLETE ✅
+================================================================================
+
+
+================================================================================
+SESSION: Feature #133 - Move Diagram to Folder
+DATE: December 25, 2025, 10:44 AM
+================================================================================
+
+FEATURE #133: Move diagram to folder
+STATUS: ✅ PASSING (out-of-the-box)
+
+VALIDATION RESULTS:
+✅ Endpoint already exists: PUT /api/diagrams/{diagram_id}/folder
+✅ Alternative endpoint: PUT /api/diagrams/{diagram_id}/move
+✅ Folder creation: POST /api/diagrams/folders
+✅ Full implementation verified in services/diagram-service/src/main.py
+✅ All requirements met out-of-the-box
+
+VALIDATION SCRIPT CREATED: validate_feature133_move_to_folder.py
+
+Test coverage (11 steps):
+1. Register test user and verify email
+2. Login and obtain JWT token
+3. Create folder 'Architecture Diagrams'
+4. Create test diagram
+5. Move diagram to folder using PUT /{diagram_id}/folder
+6. Verify folder_id updated
+7. Query database (via API) to confirm
+8. List diagrams in folder - verify appears
+9. Move diagram back to root
+10. Verify diagram at root level
+11. All functionality working perfectly
+
+ACTUAL RESULTS:
+✓ All 11 validation steps passed ✓
+✓ Folder created: c98232b0-01f0-492f-a8bf-555a54398e12
+✓ Diagram created: 7ed6a2e9-670f-49f1-8dd9-87fbf455c16a
+✓ Diagram moved to folder successfully
+✓ folder_id updated correctly
+✓ Appears in folder listing
+✓ Moved back to root successfully
+
+REGRESSION TESTING:
+✅ Baseline check: 133/133 features still passing
+✅ No existing functionality broken
+✅ All services healthy
+
+FILES CREATED:
+- validate_feature133_move_to_folder.py
+- SESSION_SUMMARY_FEATURE133_MOVE_TO_FOLDER.md
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #133 marked as passing)
+- baseline_features.txt (updated to 133)
+
+PROGRESS UPDATE:
+Before: 132/658 features passing (20.1%)
+After:  133/658 features passing (20.2%)
+Baseline: 133 features preserved
+Remaining: 525 features to implement
+
+NEXT FEATURE: #134 - Next in queue
+
+SESSION COMPLETE ✅
+================================================================================
