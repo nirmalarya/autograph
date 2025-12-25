@@ -5255,3 +5255,75 @@ FILES MODIFIED:
 
 ===== FEATURE 78 COMPLETE =====
 
+
+===== SESSION: Feature #79 - Password Reset Flow =====
+Date: $(date)
+
+FEATURE IMPLEMENTED:
+-------------------
+Feature #79: Password reset flow: reset password with valid token
+
+IMPLEMENTATION SUMMARY:
+----------------------
+Added /reset-password endpoint as frontend-friendly alias to the existing
+password reset confirmation functionality.
+
+Changes Made:
+1. services/auth-service/src/main.py
+   - Added @app.post("/reset-password") endpoint
+   - Delegates to existing confirm_password_reset() function
+   - Accepts token and new_password
+   - Validates token (exists, not used, not expired)
+   - Updates password hash
+   - Marks token as used
+   - Invalidates all sessions
+   - Revokes all refresh tokens
+
+VALIDATION RESULTS:
+------------------
+✅ All 12 validation checks passed (100%)
+
+Test Details:
+1. User registration
+2. Email verification
+3. Password reset request
+4. Token retrieval from database
+5. Token unused verification
+6. Token expiry validation
+7. Password reset with token
+8. Success message verification
+9. Password hash update verification
+10. Token invalidation verification
+11. Token reuse prevention (400 error)
+12. Login with new password
+
+REGRESSION CHECK:
+----------------
+✅ Baseline features: 79/79 passing
+✅ No regressions detected
+✅ All existing features still work
+
+SECURITY FEATURES:
+-----------------
+1. Token validation (exists, not used, not expired)
+2. Password strength requirements enforced
+3. One-time token use
+4. Session invalidation on password change
+5. Refresh token revocation
+6. Audit logging
+
+PROGRESS UPDATE:
+---------------
+Before: 78/658 features passing (11.9%)
+After:  79/658 features passing (12.0%)
+New feature: ✅ Feature #79
+
+FILES:
+------
+Modified: services/auth-service/src/main.py
+Created: validate_feature79_password_reset.py
+Updated: spec/feature_list.json, baseline_features.txt
+
+===== FEATURE #79 COMPLETE =====
+
+Thu Dec 25 04:15:57 EST 2025
