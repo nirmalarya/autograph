@@ -8472,3 +8472,73 @@ Remaining: 529 features
 
 SESSION COMPLETE
 ================================================================================
+
+================================================================================
+SESSION: Feature #130 - Restore Diagram from Trash
+DATE: 2025-12-25 10:20
+================================================================================
+
+FEATURE #130: Restore diagram from trash ✅
+
+IMPLEMENTATION STATUS:
+- ✅ Restore endpoint already implemented in diagram service
+- ✅ API gateway already proxies all diagram routes
+- ✅ No code changes needed - feature was already complete!
+
+ENDPOINT DETAILS:
+- Route: POST /api/diagrams/{diagram_id}/restore
+- Authorization: JWT token required
+- Validates: User owns the diagram
+- Actions:
+  * Gets diagram from trash (is_deleted=True)
+  * Sets is_deleted=False
+  * Clears deleted_at timestamp
+  * Returns success with diagram info
+
+VALIDATION TEST:
+Created: validate_feature130_restore_diagram.py
+
+Test coverage (12 steps):
+1. Register test user
+2. Verify email (database bypass)
+3. Login and obtain JWT token
+4. Create test diagram
+5. Verify diagram appears in active list
+6. Soft delete diagram (move to trash)
+7. Verify diagram removed from active list
+8. Database check: is_deleted=True, deleted_at set
+9. Call restore endpoint
+10. Verify diagram returned to active list
+11. Database check: is_deleted=False, deleted_at=None
+12. Verify diagram accessible via GET endpoint
+
+ALL 12 STEPS PASSED ✅
+
+REGRESSION TESTING:
+✅ Baseline preserved: 129/129 features still passing
+✅ No breaking changes
+✅ All services healthy
+
+DATABASE CHANGES:
+- None (existing schema supports feature)
+
+API CHANGES:
+- None (endpoint already exists)
+
+FILES CREATED:
+- validate_feature130_restore_diagram.py (comprehensive end-to-end test)
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #130 marked as passing)
+- baseline_features.txt (updated to 130)
+
+PROGRESS UPDATE:
+Before: 129/658 features passing (19.6%)
+After:  130/658 features passing (19.8%)
+Baseline: 130 features preserved
+Remaining: 528 features to implement
+
+NEXT FEATURE: #131 (TBD)
+
+SESSION COMPLETE ✅
+================================================================================
