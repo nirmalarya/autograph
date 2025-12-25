@@ -675,15 +675,24 @@ async def list_diagrams(
             # Exact match pattern for traditional search
             search_pattern = f"%{search_terms}%"
 
-            # Search in title, note_content, and canvas_data (text elements)
-            # Use OR to match any of these fields
-            # Use case-insensitive ILIKE matching
+            # Import fuzzy matching function from PostgreSQL pg_trgm extension
+            from sqlalchemy import func
+
+            # Fuzzy matching with typo tolerance using trigram similarity
+            # Threshold: 0.3 (30% similarity) - good balance for typo tolerance
+            # The % operator returns true if similarity is above the threshold set by set_limit()
             query = query.filter(
                 or_(
-                    # Case-insensitive matches
+                    # Exact case-insensitive matches (backward compatibility)
                     File.title.ilike(search_pattern),
                     File.note_content.ilike(search_pattern),
-                    cast(File.canvas_data, String).ilike(search_pattern)
+                    cast(File.canvas_data, String).ilike(search_pattern),
+                    # Fuzzy matches for typo tolerance (new)
+                    # Use COALESCE to handle NULL values (similarity returns NULL if input is NULL)
+                    func.coalesce(func.similarity(File.title, search_terms), 0) > 0.3,
+                    func.coalesce(func.similarity(File.note_content, search_terms), 0) > 0.3
+                    # Note: canvas_data is JSONB, fuzzy matching on cast is expensive
+                    # We rely on exact match for canvas data to maintain performance
                 )
             )
     
