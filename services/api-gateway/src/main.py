@@ -928,6 +928,7 @@ PUBLIC_ROUTES = [
     "/api/auth/register",
     "/api/auth/login",
     "/api/auth/token",
+    "/api/auth/email/verify",  # Email verification (Feature #65)
     "/api/auth/oauth/",  # OAuth endpoints (Feature #112-115)
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints

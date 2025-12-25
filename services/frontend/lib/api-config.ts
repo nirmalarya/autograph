@@ -19,10 +19,18 @@ export const API_ENDPOINTS = {
     login: `${API_BASE_URL}/api/auth/login`,
     logout: `${API_BASE_URL}/api/auth/logout`,
     refresh: `${API_BASE_URL}/api/auth/refresh`,
+    password: {
+      change: `${API_BASE_URL}/api/auth/password/change`,
+    },
     mfa: {
       setup: `${API_BASE_URL}/api/auth/mfa/setup`,
       verify: `${API_BASE_URL}/api/auth/mfa/verify`,
       disable: `${API_BASE_URL}/api/auth/mfa/disable`,
+    },
+    sessions: {
+      list: `${API_BASE_URL}/api/auth/sessions`,
+      revoke: (tokenId: string) => `${API_BASE_URL}/api/auth/sessions/${tokenId}`,
+      revokeAllOthers: `${API_BASE_URL}/api/auth/sessions/all/others`,
     },
   },
 

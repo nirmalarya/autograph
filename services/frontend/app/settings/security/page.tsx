@@ -20,6 +20,13 @@ export default function SecuritySettingsPage() {
   const [success, setSuccess] = useState('');
   const [setupLoading, setSetupLoading] = useState(false);
 
+  // Password change states
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+
   useEffect(() => {
     // Check if user is authenticated
     const token = localStorage.getItem('access_token');
@@ -118,6 +125,66 @@ export default function SecuritySettingsPage() {
     }
   };
 
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+      setError('New passwords do not match');
+      return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters long');
+      return;
+    }
+
+    setPasswordChangeLoading(true);
+
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(API_ENDPOINTS.auth.password.change, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.detail || 'Failed to change password');
+        return;
+      }
+
+      setSuccess('Password changed successfully! You will be logged out for security. Please login again with your new password.');
+      setShowPasswordChange(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+
+      // Logout after 2 seconds
+      setTimeout(() => {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        router.push('/login');
+      }, 2000);
+    } catch (err) {
+      setError('Network error. Please check if the auth service is running.');
+      console.error('Password change error:', err);
+    } finally {
+      setPasswordChangeLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
@@ -180,6 +247,102 @@ export default function SecuritySettingsPage() {
             <p className="text-sm text-red-800">{error}</p>
           </div>
         )}
+
+        {/* Password Change Section */}
+        <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 mb-6">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                Change Password
+              </h2>
+              <p className="text-gray-600">
+                Update your password to keep your account secure
+              </p>
+            </div>
+          </div>
+
+          {!showPasswordChange ? (
+            <div>
+              <p className="text-gray-700 mb-6">
+                Changing your password will log you out of all devices for security.
+                You'll need to log in again with your new password.
+              </p>
+              <Button
+                onClick={() => setShowPasswordChange(true)}
+                variant="primary"
+                size="lg"
+              >
+                Change Password
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handlePasswordChange} className="space-y-4">
+              <Input
+                type="password"
+                id="current_password"
+                name="current_password"
+                label="Current Password"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Enter your current password"
+                autoComplete="current-password"
+              />
+
+              <Input
+                type="password"
+                id="new_password"
+                name="new_password"
+                label="New Password"
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter your new password (min 8 characters)"
+                minLength={8}
+                autoComplete="new-password"
+              />
+
+              <Input
+                type="password"
+                id="confirm_password"
+                name="confirm_password"
+                label="Confirm New Password"
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm your new password"
+                minLength={8}
+                autoComplete="new-password"
+              />
+
+              <div className="flex gap-4">
+                <Button
+                  type="submit"
+                  disabled={passwordChangeLoading || !currentPassword || !newPassword || !confirmPassword}
+                  variant="primary"
+                  size="lg"
+                  loading={passwordChangeLoading}
+                >
+                  Change Password
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordChange(false);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmPassword('');
+                    setError('');
+                  }}
+                  variant="secondary"
+                  size="lg"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
 
         <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
           <div className="flex items-start justify-between mb-6">
