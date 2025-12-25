@@ -73,16 +73,16 @@ def validate_feature_58():
     print("=" * 80)
     print()
 
-    # Services to test
+    # Services to test (using their standard ports with TLS)
     services = [
-        ("api-gateway", "localhost", 8443),
-        ("auth-service", "localhost", 8445),
-        ("diagram-service", "localhost", 8442),
-        ("ai-service", "localhost", 8444),
-        ("collaboration-service", "localhost", 8443),
-        ("git-service", "localhost", 8447),
-        ("export-service", "localhost", 8497),
-        ("integration-hub", "localhost", 8499),
+        ("api-gateway", "localhost", 8080),
+        ("auth-service", "localhost", 8085),
+        ("diagram-service", "localhost", 8082),
+        ("ai-service", "localhost", 8084),
+        ("collaboration-service", "localhost", 8083),
+        ("git-service", "localhost", 8087),
+        ("export-service", "localhost", 8097),
+        ("integration-hub", "localhost", 8099),
     ]
 
     all_results = []

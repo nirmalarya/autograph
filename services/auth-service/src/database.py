@@ -15,9 +15,19 @@ load_dotenv()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 from shared.python.retry import retry, DATABASE_RETRY_CONFIG
 
-# Database URL
+# Try to import secrets manager (optional - falls back to env vars if not available)
+try:
+    from shared.python.secrets_manager import get_secret_or_env
+    SECRETS_MANAGER_AVAILABLE = True
+except ImportError:
+    SECRETS_MANAGER_AVAILABLE = False
+    # Fallback function
+    def get_secret_or_env(secret_name, env_var, default=None):
+        return os.getenv(env_var, default)
+
+# Database URL - Try secrets manager first, fall back to environment variables
 POSTGRES_USER = os.getenv("POSTGRES_USER", "autograph")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+POSTGRES_PASSWORD = get_secret_or_env("POSTGRES_PASSWORD", "POSTGRES_PASSWORD", "autograph_dev_password")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "autograph")
