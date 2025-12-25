@@ -5470,3 +5470,63 @@ FILES MODIFIED:
 ===== FEATURE #81 COMPLETE =====
 
 Thu Dec 25 04:24:30 EST 2025
+
+===== SESSION: Feature #86 - Login Rate Limiting =====
+Date: Thu Dec 25 04:30:00 EST 2025
+
+FEATURE #86: Login rate limiting: 5 attempts per 15 minutes
+
+STATUS: ✅ COMPLETE
+
+IMPLEMENTATION APPROACH:
+- Feature was already implemented in auth service
+- Rate limiting logic exists in check_rate_limit() function
+- Uses Redis to track login attempts by IP address
+- Configuration: 5 attempts per 900 seconds (15 minutes)
+- Returns 429 Too Many Requests when limit exceeded
+
+VALIDATION STEPS:
+1. Register test user
+2. Attempt 5 failed logins with wrong password → All return 401
+3. Attempt 6th login → Returns 429 Too Many Requests
+4. Verify error message contains rate limit info
+5. Verify rate limit is IP-based (persists across accounts)
+6. Confirm 15-minute window configured
+
+VALIDATION RESULTS:
+✅ All 6 validation checks passed (100%)
+
+Test Details:
+1. User registration ✅
+2. 5 failed login attempts return 401 ✅
+3. 6th attempt returns 429 ✅
+4. Error message: "Too many login attempts. Please try again in X seconds" ✅
+5. Rate limit is IP-based ✅
+6. Rate limit window is 15 minutes ✅
+
+KEY FEATURES VERIFIED:
+1. IP-based rate limiting (not account-based)
+2. 5 attempts per 15 minutes enforcement
+3. Clear error messaging with TTL
+4. Redis-backed tracking for distributed systems
+5. Rate limit persists even with correct password
+
+REGRESSION CHECK:
+✅ Baseline features: 81/81 passing
+✅ No regressions detected
+✅ All existing features still work
+
+PROGRESS UPDATE:
+Before: 81/658 features passing (12.3%)
+After:  82/658 features passing (12.5%)
+New feature: ✅ Feature #86
+
+FILES CREATED:
+- validate_feature86_login_rate_limiting.py
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #86 → passes: true)
+- baseline_features.txt (81 → 82)
+
+===== FEATURE #86 COMPLETE =====
+
