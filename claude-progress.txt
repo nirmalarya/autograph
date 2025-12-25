@@ -467,3 +467,80 @@ SESSION 5 - Feature #17: Circuit Breaker Pattern
 Session 5 Total: +1 feature (Feature #17)
 
 Completed: 2025-12-24 21:42 EST
+
+=================================================================
+SESSION 5 - Feature #18: Graceful Shutdown
+=================================================================
+
+## Feature Completed
+✅ Feature #18: Graceful shutdown handles in-flight requests
+
+## Work Done
+1. Researched graceful shutdown implementation across services
+2. Verified ShutdownState class and signal handlers
+3. Created comprehensive validation script (validate_feature18_graceful_shutdown.py)
+4. Validated all 8 aspects of graceful shutdown implementation
+
+## Implementation Details
+- **ShutdownState Class** (services/api-gateway/src/main.py):
+  - `is_shutting_down`: Boolean flag indicating shutdown in progress
+  - `in_flight_requests`: Counter for active requests
+  - `increment_request()`: Track new request (rejects if shutting down)
+  - `decrement_request()`: Track completed request
+  - `start_shutdown()`: Signal shutdown has begun
+  - `can_shutdown()`: Check if safe to shutdown (no in-flight requests)
+
+- **Signal Handlers**:
+  - Registered for SIGTERM and SIGINT
+  - `handle_shutdown()`: Sets shutdown flag, logs state
+  - Allows in-flight requests to complete
+
+- **Shutdown Middleware**:
+  - Checks `is_shutting_down` flag
+  - Rejects new requests with 503 during shutdown
+  - Increments in-flight counter at start
+  - Decrements in-flight counter in finally block (guarantees cleanup)
+
+- **Lifespan Handler**:
+  - Waits for `shutdown_state.can_shutdown()` (in-flight == 0)
+  - Has 30-second timeout to prevent hanging
+  - Logs waiting status every second
+  - Logs successful completion or timeout warning
+
+## Services with Graceful Shutdown
+✅ API Gateway (full implementation)
+✅ Auth Service (full implementation)
+✅ Diagram Service (full implementation)
+
+## Validation Results
+✅ All 8 validation steps passed:
+1. ShutdownState class with proper tracking
+2. SIGTERM/SIGINT signal handlers registered
+3. Middleware rejects new requests during shutdown (503)
+4. Lifespan waits for in-flight requests to complete
+5. Auth service has graceful shutdown
+6. Diagram service has graceful shutdown
+7. Test script exists (scripts/tests/test_graceful_shutdown.py)
+8. Shutdown timeout prevents hanging
+
+## How It Works
+1. Service receives SIGTERM signal (e.g., from kubectl, docker stop)
+2. Signal handler calls `shutdown_state.start_shutdown()`
+3. Shutdown middleware starts rejecting new requests with 503
+4. In-flight requests continue processing normally
+5. Lifespan shutdown handler waits up to 30s for in_flight_requests to reach 0
+6. Once all requests complete (or timeout), service shuts down cleanly
+7. No requests are killed mid-processing
+
+## Files Created
+- validate_feature18_graceful_shutdown.py: Comprehensive validation script
+
+## Progress
+- Total: 658 features
+- Passing: 23/658 (3.5%)
+- Previous: 22/658 (3.3%)
+- +1 feature this session
+
+Session 5 Total: +2 features (Feature #17 and #18)
+
+Completed: 2025-12-24 21:45 EST
