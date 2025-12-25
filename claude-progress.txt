@@ -8387,3 +8387,88 @@ Remaining: 530 features
 
 SESSION COMPLETE
 ================================================================================
+
+================================================================================
+SESSION: Feature #129 - Hard Delete with MinIO Cleanup
+Date: 2025-12-25
+Time: 10:09 AM
+================================================================================
+
+FEATURE #129: Delete diagram hard deletes permanently
+STATUS: ✅ COMPLETE
+
+IMPLEMENTATION:
+Enhanced the hard delete functionality in diagram-service to properly clean up
+all resources when a diagram is permanently deleted.
+
+CODE CHANGES:
+1. Modified services/diagram-service/src/main.py:
+   - Enhanced delete_diagram() endpoint to delete MinIO files
+   - Added MinIO client integration for file cleanup
+   - Delete thumbnail: thumbnails/{diagram_id}.png
+   - Delete all diagram files: diagrams/{diagram_id}/*
+   - Graceful error handling (files may not exist)
+   - Return count of deleted MinIO files in response
+
+IMPLEMENTATION DETAILS:
+The hard delete flow now:
+1. Connects to MinIO with credentials from environment
+2. Attempts to delete thumbnail (with error handling)
+3. Lists and deletes all files with prefix diagrams/{id}/
+4. Deletes all version records from database
+5. Deletes diagram record from database
+6. Returns summary with versions_deleted and minio_files_deleted
+
+KEY FEATURES:
+- Graceful error handling if files don't exist
+- Separate try/catch blocks for thumbnail vs diagram files
+- Detailed logging for each deletion operation
+- Transaction safety (database commit after all operations)
+
+VALIDATION:
+Created comprehensive test: validate_feature129_hard_delete.py
+
+Test flow:
+1. ✅ Register and verify test user
+2. ✅ Login and get JWT token
+3. ✅ Create test diagram
+4. ✅ Soft delete diagram (move to trash)
+5. ✅ Verify diagram appears in trash
+6. ✅ Hard delete with permanent=true
+7. ✅ Verify 200 OK response
+8. ✅ Verify diagram record deleted from database
+9. ✅ Verify all versions deleted from database
+10. ✅ Verify thumbnail deleted from MinIO
+11. ✅ Verify all diagram files deleted from MinIO
+
+All 11 acceptance criteria PASSED ✅
+
+INFRASTRUCTURE SETUP:
+- Created MinIO "diagrams" bucket (was missing)
+- Verified MinIO connectivity and permissions
+- Tested file deletion with real MinIO operations
+
+FILES MODIFIED:
+- services/diagram-service/src/main.py (added MinIO cleanup to hard delete)
+- spec/feature_list.json (marked feature #129 as passing)
+- baseline_features.txt (updated count to 129)
+- validate_feature129_hard_delete.py (new comprehensive test)
+
+REGRESSION TESTING:
+✅ Baseline check: 128/128 features still passing (no regressions)
+✅ No existing functionality broken
+✅ All services healthy and responding
+
+SERVICE RESTART:
+- Rebuilt diagram-service with new MinIO integration
+- Restarted container successfully
+- Service healthy in 10 seconds
+
+PROGRESS:
+Before: 128/658 features (19.4%)
+After:  129/658 features (19.6%)
+Baseline: 129 features preserved
+Remaining: 529 features
+
+SESSION COMPLETE
+================================================================================
