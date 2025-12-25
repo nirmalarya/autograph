@@ -109,18 +109,28 @@ class EnterpriseAIProvider(AIProvider):
                     }
                 )
                 
+                # Feature #364: Handle non-200 status codes with user-friendly errors
                 if response.status_code != 200:
-                    raise Exception(f"MGA API error: {response.status_code} - {response.text}")
-                
+                    from .error_handling import get_error_handler
+                    error_handler = get_error_handler()
+                    error = error_handler.handle_http_error(
+                        status_code=response.status_code,
+                        response_text=response.text,
+                        provider="enterprise_ai"
+                    )
+                    error_msg = f"{error.message}. Retry available: {'yes' if error.retry_possible else 'no'}. {error.suggestion}"
+                    logger.error(f"Enterprise AI API error: {error_msg}")
+                    raise Exception(error_msg)
+
                 data = response.json()
                 mermaid_code = data["choices"][0]["message"]["content"].strip()
-                
+
                 # Clean up code fences if present
                 mermaid_code = self._clean_mermaid_code(mermaid_code)
-                
+
                 # Detect actual diagram type
                 detected_type = diagram_type or self._detect_diagram_type(mermaid_code, prompt)
-                
+
                 return {
                     "mermaid_code": mermaid_code,
                     "diagram_type": detected_type,
@@ -129,7 +139,7 @@ class EnterpriseAIProvider(AIProvider):
                     "model": model,
                     "tokens_used": data.get("usage", {}).get("total_tokens", 0)
                 }
-                
+
             except httpx.TimeoutException as e:
                 # Feature #363: Handle timeout with user-friendly message and retry option
                 logger.error(f"Enterprise AI generation timed out after 30 seconds: {str(e)}")
@@ -139,8 +149,29 @@ class EnterpriseAIProvider(AIProvider):
                     "Please try again or simplify your prompt. "
                     "Retry available: yes"
                 ) from e
+            except httpx.NetworkError as e:
+                # Feature #364: Handle network errors with user-friendly message
+                from .error_handling import get_error_handler
+                error_handler = get_error_handler()
+                error = error_handler.create_network_error(
+                    details=str(e),
+                    provider="enterprise_ai"
+                )
+                error_msg = f"{error.message}. Retry available: yes. {error.suggestion}"
+                logger.error(f"Enterprise AI network error: {error_msg}")
+                raise Exception(error_msg) from e
             except Exception as e:
-                logger.error(f"Enterprise AI generation failed: {str(e)}")
+                # Feature #364: Handle general API failures
+                if "API error:" not in str(e):  # Don't double-wrap our own errors
+                    from .error_handling import get_error_handler
+                    error_handler = get_error_handler()
+                    error = error_handler.create_api_failure_error(
+                        details=str(e),
+                        provider="enterprise_ai"
+                    )
+                    error_msg = f"{error.message}. Retry available: yes. {error.suggestion}"
+                    logger.error(f"Enterprise AI generation failed: {error_msg}")
+                    raise Exception(error_msg) from e
                 raise
     
     def _build_enhanced_prompt(self, prompt: str, diagram_type: Optional[DiagramType]) -> str:
@@ -553,9 +584,54 @@ class SlowMockProvider(AIProvider):
         }
 
 
+class ErrorMockProvider(AIProvider):
+    """
+    Error mock provider for testing API failure handling.
+    Feature #364: Simulates API failures to test error handling and fallback.
+    """
+
+    def __init__(self, error_type: str = "api_failure"):
+        super().__init__("error-mock-key")
+        self.default_model = "error-mock-model"
+        self.error_type = error_type  # api_failure, invalid_key, rate_limit, network_error
+
+    def get_default_model(self) -> str:
+        return self.default_model
+
+    async def generate_diagram(
+        self,
+        prompt: str,
+        diagram_type: Optional[DiagramType] = None,
+        model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Raise various errors to simulate API failures."""
+        import httpx
+
+        logger.info(f"ErrorMockProvider: Simulating {self.error_type} error...")
+
+        if self.error_type == "api_failure":
+            # Simulate HTTP 500 error from API
+            raise Exception("API request failed: HTTP 500 - Internal Server Error. The AI provider is experiencing issues.")
+
+        elif self.error_type == "invalid_key":
+            # Simulate authentication error
+            raise Exception("API request failed: HTTP 401 - Unauthorized. Invalid API key.")
+
+        elif self.error_type == "rate_limit":
+            # Simulate rate limiting
+            raise Exception("API request failed: HTTP 429 - Too Many Requests. Rate limit exceeded.")
+
+        elif self.error_type == "network_error":
+            # Simulate network connectivity issue
+            raise httpx.NetworkError("Connection failed: Unable to reach AI provider endpoint")
+
+        else:
+            raise Exception(f"Simulated error: {self.error_type}")
+
+
 class AIProviderFactory:
     """Factory for creating AI providers with fallback chain."""
-    
+
     @staticmethod
     def create_provider_chain() -> List[AIProvider]:
         """Create provider chain: MGA → OpenAI → Anthropic → Gemini."""
