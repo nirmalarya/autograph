@@ -9878,3 +9878,78 @@ FILES MODIFIED:
 PROGRESS: 157/658 features (23.9%)
 BASELINE: All 157 features passing ✅
 SESSION STATUS: ✅ COMPLETE
+
+================================================================================
+SESSION: Feature #158 - Diagram Collaborator Count
+Date: 2025-12-25
+Status: ✅ COMPLETE
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #158: Diagram collaboration count tracking
+- Automatically tracks number of collaborators on each diagram
+- Owner (1) + number of unique users diagram is shared with
+
+IMPLEMENTATION APPROACH:
+Used database triggers instead of application logic for robustness and consistency.
+
+DATABASE CHANGES:
+1. Created trigger function: update_file_collaborator_count()
+   - Counts unique shared_with_user_id values
+   - Filters for active shares only (is_active = true)
+   - Updates files.collaborator_count = 1 + share_count
+
+2. Created 3 triggers on shares table:
+   - trigger_share_insert_update_collaborator_count (AFTER INSERT)
+   - trigger_share_update_update_collaborator_count (AFTER UPDATE)
+   - trigger_share_delete_update_collaborator_count (AFTER DELETE)
+
+3. Initialized all 187 existing files with correct counts
+
+WHY TRIGGERS INSTEAD OF APPLICATION LOGIC:
+- Application already had partial logic (only for user shares)
+- Triggers ensure consistency regardless of how shares are modified
+- Prevents race conditions and missed updates
+- No need to update multiple endpoints
+- Database guarantees correctness
+
+VALIDATION (All 8 steps passed):
+✅ Step 1: User A creates diagram
+✅ Step 2: Verify collaborator_count=1 (owner)
+✅ Step 3: Share with User B
+✅ Step 4: Verify collaborator_count=2
+✅ Step 5: Share with User C and D
+✅ Step 6: Verify collaborator_count=4
+✅ Step 7: Remove User B's access
+✅ Step 8: Verify collaborator_count=3
+
+REGRESSION TESTING:
+✅ Baseline features: 157 → 158 (all passing)
+✅ No breaking changes
+✅ Existing share creation/deletion still works
+✅ Triggers fire correctly on all operations
+
+TECHNICAL DETAILS:
+- Trigger function uses COALESCE(NEW.file_id, OLD.file_id) to work on INSERT/UPDATE/DELETE
+- Only counts shares where shared_with_user_id IS NOT NULL (excludes public/token shares)
+- Only counts active shares (is_active = true)
+- Returns COALESCE(NEW, OLD) to support all trigger types
+
+FILES CREATED:
+- add_collaborator_count_triggers.sql - Database migration
+- validate_feature158_collaborator_count.py - Comprehensive test script
+
+FILES MODIFIED:
+- spec/feature_list.json - Feature #158 marked as passing
+- baseline_features.txt - Updated to 158
+
+BUGS FIXED DURING IMPLEMENTATION:
+1. Initial test used /auth/profile endpoint (doesn't exist) → changed to /auth/me
+2. Email verification required for login → added auto-verification in test
+3. Share endpoint expected shared_with_email not shared_with_user_id → fixed param
+4. Revoke endpoint was /shares/{id} (plural) → corrected to /share/{id} (singular)
+
+PROGRESS: 158/658 features (24.0%)
+BASELINE: All 158 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
