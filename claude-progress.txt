@@ -9805,3 +9805,76 @@ PROGRESS: 155/658 features (23.6%)
 BASELINE: All 155 features passing ✅
 SESSION STATUS: ✅ COMPLETE
 
+
+========================================
+SESSION: Feature #156 - Diagram Size Calculation and Display
+========================================
+DATE: 2025-12-25
+FEATURE: #156 - Diagram size calculation and display
+
+IMPLEMENTATION OVERVIEW:
+Added human-readable size display functionality to diagram responses
+
+CHANGES MADE:
+1. Added format_size_display() helper function
+   - Formats bytes to human-readable strings (B, KB, MB, GB)
+   - Uses 2 decimal places for precision
+   
+2. Updated enrich_diagram_response() function
+   - Calculates size_bytes using existing calculate_diagram_size()
+   - Adds size_display field with formatted string
+   
+3. Updated DiagramResponse model
+   - Added size_display: Optional[str] field
+   - Documents format as "e.g., '1.5 KB', '2.3 MB'"
+   
+4. Fixed update_diagram endpoint
+   - Changed return from raw model to enrich_diagram_response(diagram)
+   - Ensures size fields are included in update responses
+
+CODE LOCATIONS:
+- Format function: services/diagram-service/src/main.py (lines 571-588)
+- Enrich function: services/diagram-service/src/main.py (lines 591-597)
+- DiagramResponse model: services/diagram-service/src/main.py (line 1147)
+- Update endpoint fix: services/diagram-service/src/main.py (line 2832)
+
+VALIDATION SCRIPT:
+- validate_feature156_diagram_size.py
+
+TEST RESULTS (All 8 steps passed):
+✅ Step 1: Create diagram with 100 shapes (15303 bytes, 14.94 KB)
+✅ Step 2: Calculate canvas_data JSON size (matches expected)
+✅ Step 3: Verify size displayed in dashboard
+✅ Step 4: Verify size shown in KB format
+✅ Step 5: Add 1000 more shapes (171403 bytes, 167.39 KB)  
+✅ Step 6: Verify size increases proportionally (11.20x increase)
+✅ Step 7: Test with large note content (26014 bytes added)
+✅ Step 8: Verify total size includes canvas + note (41317 bytes, 40.35 KB)
+
+ENDPOINT BEHAVIOR:
+- GET /api/diagrams - includes size_bytes and size_display
+- POST /api/diagrams - includes size_bytes and size_display
+- PUT /api/diagrams/{id} - includes size_bytes and size_display
+- Size calculation: JSON.stringify(canvas_data) + note_content lengths
+
+HUMAN-READABLE FORMAT:
+- 0-1023 bytes: "X B"
+- 1KB-1MB: "X.XX KB"
+- 1MB-1GB: "X.XX MB"
+- 1GB+: "X.XX GB"
+
+REGRESSION TESTING:
+✅ Baseline intact: 156 → 157 features passing
+✅ No breaking changes to existing endpoints
+✅ Size calculation working for all diagram types
+
+FILES MODIFIED:
+- services/diagram-service/src/main.py (4 changes)
+- spec/feature_list.json (feature #156 → passing)
+- baseline_features.txt (updated to 157)
+- validate_feature156_diagram_size.py (created)
+- claude-progress.txt (this file)
+
+PROGRESS: 157/658 features (23.9%)
+BASELINE: All 157 features passing ✅
+SESSION STATUS: ✅ COMPLETE

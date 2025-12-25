@@ -554,24 +554,46 @@ async def metrics():
 def calculate_diagram_size(diagram: File) -> int:
     """Calculate total size of diagram in bytes (canvas_data + note_content)."""
     size = 0
-    
+
     # Calculate canvas_data size
     if diagram.canvas_data:
         # Convert JSONB to JSON string and get byte size
         canvas_json = json.dumps(diagram.canvas_data)
         size += len(canvas_json.encode('utf-8'))
-    
+
     # Calculate note_content size
     if diagram.note_content:
         size += len(diagram.note_content.encode('utf-8'))
-    
+
     return size
+
+
+def format_size_display(size_bytes: int) -> str:
+    """Format size in bytes to human-readable string (KB, MB, GB)."""
+    if size_bytes == 0:
+        return "0 B"
+    elif size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        # Display in KB
+        size_kb = size_bytes / 1024
+        return f"{size_kb:.2f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        # Display in MB
+        size_mb = size_bytes / (1024 * 1024)
+        return f"{size_mb:.2f} MB"
+    else:
+        # Display in GB
+        size_gb = size_bytes / (1024 * 1024 * 1024)
+        return f"{size_gb:.2f} GB"
 
 
 def enrich_diagram_response(diagram: File) -> Dict[str, Any]:
     """Enrich diagram with calculated fields like size."""
     diagram_dict = DiagramResponse.model_validate(diagram).model_dump()
-    diagram_dict['size_bytes'] = calculate_diagram_size(diagram)
+    size_bytes = calculate_diagram_size(diagram)
+    diagram_dict['size_bytes'] = size_bytes
+    diagram_dict['size_display'] = format_size_display(size_bytes)
     return diagram_dict
 
 
@@ -1122,7 +1144,8 @@ class DiagramResponse(BaseModel):
     last_accessed_at: Optional[datetime] = None
     last_activity: Optional[datetime] = None  # Last activity (view, edit, comment)
     size_bytes: Optional[int] = None  # Total size in bytes (canvas_data + note_content)
-    
+    size_display: Optional[str] = None  # Human-readable size (e.g., "1.5 KB", "2.3 MB")
+
     class Config:
         from_attributes = True
 
@@ -2805,8 +2828,8 @@ async def update_diagram(
         user_id=user_id,
         new_version=diagram.current_version
     )
-    
-    return diagram
+
+    return enrich_diagram_response(diagram)
 
 
 @app.delete("/{diagram_id}")
