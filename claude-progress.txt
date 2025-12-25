@@ -9080,3 +9080,55 @@ FILES MODIFIED:
 PROGRESS: 139/658 features (21.1%)
 SESSION COMPLETE ✅
 ================================================================================
+
+================================================================================
+SESSION: Feature #140 - Diagram Templates
+Date: 2025-12-25
+================================================================================
+
+FEATURE: #140 - Diagram templates: save frequently-used patterns
+
+DISCOVERY:
+✅ Feature was already fully implemented in the codebase!
+- Template model exists in models.py (lines 537-569)
+- All API endpoints already implemented in main.py:
+  * POST /templates - Create template
+  * GET /templates - List templates with filtering
+  * GET /templates/{id} - Get single template
+  * POST /templates/{id}/use - Create diagram from template
+  * DELETE /templates/{id} - Delete template
+
+IMPLEMENTATION STATUS:
+✅ Database schema: templates table exists
+✅ POST /templates: Create template with name, description, category, tags
+✅ GET /templates: List templates with optional category filter
+✅ GET /templates/{id}: Retrieve single template
+✅ POST /templates/{id}/use: Create new diagram from template
+✅ DELETE /templates/{id}: Delete template (owner only)
+✅ Usage count tracking: Increments when template is used
+
+TEST RESULTS:
+✅ All 10 test steps passed:
+  1. Created diagram with microservices architecture pattern
+  2. Saved diagram as template
+  3. Verified template saved correctly
+  4. Listed available templates
+  5. Filtered templates by category (Architecture)
+  6. Created new diagram from template
+  7. Verified diagram has template content (shapes, notes)
+  8. Verified template usage count incremented
+  9. Deleted template (owner only)
+  10. Verified template no longer accessible
+
+REGRESSION TESTING:
+✅ Baseline features: 140/140 passing (no regressions)
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #140 → passing)
+- baseline_features.txt (updated to 140)
+
+PROGRESS: 140/658 features (21.3%)
+BASELINE: All 140 features passing ✅
+SESSION STATUS: ✅ COMPLETE
+
+================================================================================
