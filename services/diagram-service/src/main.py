@@ -2864,29 +2864,93 @@ async def delete_diagram(
         raise HTTPException(status_code=403, detail="Not authorized to delete this diagram")
     
     if permanent:
-        # Hard delete: permanently remove from database
-        # First, delete all versions
+        # Hard delete: permanently remove from database and MinIO
+
+        # First, delete files from MinIO
+        minio_files_deleted = 0
+        try:
+            from minio import Minio
+            minio_client = Minio(
+                os.getenv("MINIO_ENDPOINT", "minio:9000"),
+                access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+                secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+                secure=False
+            )
+
+            bucket_name = "diagrams"
+
+            # Delete thumbnail
+            try:
+                thumbnail_object = f"thumbnails/{diagram_id}.png"
+                minio_client.remove_object(bucket_name, thumbnail_object)
+                minio_files_deleted += 1
+                logger.info(
+                    "Deleted thumbnail from MinIO",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    object_name=thumbnail_object
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete thumbnail from MinIO (may not exist)",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    error=str(e)
+                )
+
+            # Delete any other files associated with this diagram
+            # (canvas exports, etc.)
+            try:
+                prefix = f"diagrams/{diagram_id}/"
+                objects = minio_client.list_objects(bucket_name, prefix=prefix, recursive=True)
+                for obj in objects:
+                    minio_client.remove_object(bucket_name, obj.object_name)
+                    minio_files_deleted += 1
+                    logger.info(
+                        "Deleted file from MinIO",
+                        correlation_id=correlation_id,
+                        diagram_id=diagram_id,
+                        object_name=obj.object_name
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete diagram files from MinIO",
+                    correlation_id=correlation_id,
+                    diagram_id=diagram_id,
+                    error=str(e)
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to connect to MinIO for cleanup",
+                correlation_id=correlation_id,
+                diagram_id=diagram_id,
+                error=str(e)
+            )
+
+        # Delete all versions from database
         versions_deleted = db.query(Version).filter(Version.file_id == diagram_id).delete()
-        
+
         # Then delete the diagram itself
         db.delete(diagram)
         db.commit()
-        
+
         logger.info(
             "Diagram permanently deleted",
             correlation_id=correlation_id,
             diagram_id=diagram_id,
             user_id=user_id,
-            versions_deleted=versions_deleted
+            versions_deleted=versions_deleted,
+            minio_files_deleted=minio_files_deleted
         )
-        
+
         # Update metrics
         diagrams_updated.inc()
-        
+
         return {
             "message": "Diagram permanently deleted",
             "id": diagram_id,
-            "versions_deleted": versions_deleted
+            "versions_deleted": versions_deleted,
+            "minio_files_deleted": minio_files_deleted
         }
     else:
         # Soft delete: set is_deleted=True and deleted_at timestamp
