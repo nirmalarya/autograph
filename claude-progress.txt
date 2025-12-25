@@ -8910,3 +8910,56 @@ DOCKER REBUILD:
 PROGRESS: 136/658 features (20.7%)
 SESSION COMPLETE ✅
 ================================================================================
+
+================================================================================
+SESSION: Feature #137 - Share Expiration
+DATE: December 25, 2025, 10:58 AM
+================================================================================
+
+FEATURE #137: Share diagram with expiration date
+STATUS: ✅ PASSING (out-of-the-box)
+
+VALIDATION RESULTS:
+✅ Share created with expiration date (expires_in_days parameter)
+✅ Expiration date calculated correctly (+7 days)
+✅ Share accessible before expiration (200 OK)
+✅ Share rejected after expiration (410 Gone)
+✅ Proper error message: "Share link has expired"
+
+Test coverage (8 steps):
+1. Register and login
+2. Create test diagram  
+3. Create share with 7-day expiration (POST /{diagram_id}/share)
+4. Verify expiration date in response
+5. Access share before expiration → 200 OK
+6. Simulate expiration (update DB to past date)
+7. Access expired share → 410 Gone
+8. Verify diagram not accessible
+
+ACTUAL RESULTS:
+✓ All 8 validation steps passed ✓
+✓ Expiration: 2026-01-01 (7 days from now)
+✓ Access before expiration: 200 OK
+✓ Access after expiration: 410 Gone
+✓ Error message: "Share link has expired"
+
+IMPLEMENTATION DETAILS:
+- expires_in_days parameter in share creation request
+- expires_at calculated as now + N days (timezone-aware)
+- Expiration check on every access
+- HTTP 410 Gone for expired shares (correct status code)
+
+REGRESSION TESTING:
+✅ Baseline check: 137/137 features passing
+✅ No existing functionality broken
+
+FILES CREATED:
+- validate_feature137_share_expiration.py
+
+FILES MODIFIED:
+- spec/feature_list.json (feature #137 passing)
+- baseline_features.txt (updated to 137)
+
+PROGRESS: 137/658 features (20.8%)
+SESSION COMPLETE ✅
+================================================================================
