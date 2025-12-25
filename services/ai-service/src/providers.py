@@ -498,8 +498,19 @@ class MockProvider(AIProvider):
         # Simulate some generation time
         await asyncio.sleep(0.5)
 
-        # Generate simple mock Mermaid code
-        if diagram_type == DiagramType.SEQUENCE or "sequence" in prompt.lower() or "login" in prompt.lower():
+        # Determine diagram type (prioritize explicit parameter over prompt detection)
+        if diagram_type:
+            # Use explicitly provided diagram_type
+            detected_type = diagram_type.value if isinstance(diagram_type, DiagramType) else diagram_type
+        elif "sequence" in prompt.lower() or "login" in prompt.lower():
+            detected_type = "sequence"
+        elif "database" in prompt.lower() or "schema" in prompt.lower():
+            detected_type = "erd"
+        else:
+            detected_type = "architecture"
+
+        # Generate simple mock Mermaid code based on detected type
+        if detected_type == "sequence":
             mermaid_code = """sequenceDiagram
     participant User
     participant Frontend
@@ -508,8 +519,7 @@ class MockProvider(AIProvider):
     Frontend->>Backend: API Call
     Backend-->>Frontend: Response
     Frontend-->>User: Display"""
-            detected_type = "sequence"
-        elif diagram_type == DiagramType.ERD or "database" in prompt.lower() or "schema" in prompt.lower():
+        elif detected_type == "erd":
             mermaid_code = """erDiagram
     USER ||--o{ ORDER : places
     USER {
@@ -520,15 +530,14 @@ class MockProvider(AIProvider):
         int id PK
         int user_id FK
     }"""
-            detected_type = "erd"
         else:
+            # Default to architecture/flowchart
             mermaid_code = """graph TB
     Frontend[Frontend]
     Backend[Backend]
     DB[(Database)]
     Frontend -->|REST API| Backend
     Backend -->|SQL| DB"""
-            detected_type = "architecture"
 
         return {
             "mermaid_code": mermaid_code,

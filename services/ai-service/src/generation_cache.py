@@ -82,24 +82,27 @@ class GenerationCache:
     ) -> str:
         """
         Create hash of prompt and parameters.
-        
+
         Args:
             prompt: User's diagram prompt
             diagram_type: Diagram type
-            provider: AI provider
-            model: AI model
-            
+            provider: AI provider (NOT included in hash for cross-provider caching)
+            model: AI model (NOT included in hash for cross-model caching)
+
         Returns:
             SHA256 hash string
+
+        Note:
+            Provider and model are accepted but NOT used in the hash.
+            This allows same prompt to hit cache regardless of provider/model.
         """
-        # Include relevant parameters in hash
+        # Only include prompt and diagram_type in hash
+        # Provider/model are stored but not part of cache key
         key = json.dumps({
             "prompt": prompt.strip().lower(),
-            "diagram_type": diagram_type,
-            "provider": provider,
-            "model": model
+            "diagram_type": diagram_type
         }, sort_keys=True)
-        
+
         return hashlib.sha256(key.encode()).hexdigest()
     
     def get(

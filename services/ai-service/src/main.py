@@ -426,6 +426,7 @@ async def generate_diagram(request: GenerateDiagramRequest):
             logger.info(f"  Quality score: {result['quality_score']:.1f}/100")
         
         # Store in cache
+        # Note: provider/model are stored but not used in cache key (see generation_cache.py)
         cache.put(
             prompt=request.prompt,
             mermaid_code=result["mermaid_code"],
