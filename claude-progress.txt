@@ -14349,3 +14349,74 @@ BENEFITS OF TWO-LAYER APPROACH:
 spec/feature_list.json: Feature #415 passes = true ✅
 Total features passing: 416/658 (63.2%)
 =============================================================================
+
+=============================================================================
+SESSION: Feature #417 - Viewer Permission Enforcement
+DATE: 2025-12-25
+=============================================================================
+
+FEATURE IMPLEMENTED: Real-time collaboration: Collaborative permissions: viewer cannot edit
+
+IMPLEMENTATION DETAILS:
+
+1. Permission Check Helper Function:
+   - Created check_edit_permission(room_id, user_id) function
+   - Returns (has_permission: bool, error_message: Optional[str])
+   - Checks if user is in room
+   - Verifies user role (VIEWER role blocked, EDITOR and ADMIN allowed)
+   - Returns standardized error message: "You have view-only access"
+
+2. Permission Checks Added to 8 Event Handlers:
+   a) diagram_update: Blocks viewers from sending diagram updates
+   b) element_edit: Blocks viewers from starting element edits
+   c) shape_created: Blocks viewers from creating shapes
+   d) shape_deleted: Blocks viewers from deleting shapes  
+   e) delta_update: Blocks viewers from sending delta updates
+   f) element_update_ot: Blocks viewers from OT operations
+   g) annotation_draw: Blocks viewers from drawing annotations
+   h) lock_element: Blocks viewers from locking elements
+
+3. Each permission check:
+   - Gets user_id from event data or session map
+   - Calls check_edit_permission()
+   - Returns {"success": False, "error": message, "permission_denied": True}
+   - Logs warning with user_id, room_id, and reason
+
+VALIDATION RESULTS:
+✅ connect_user_a: User A connected successfully
+✅ connect_user_b: User B connected successfully
+✅ user_a_join_as_editor: User A joined as EDITOR role
+✅ user_b_join_as_viewer: User B joined as VIEWER role
+✅ user_b_sees_user_a: User B can see User A in room
+✅ user_b_cursor_visible: User B's cursor visible to User A
+✅ user_b_diagram_update_blocked: diagram_update blocked correctly
+✅ user_b_shape_created_blocked: shape_created blocked correctly
+✅ user_b_element_edit_blocked: element_edit blocked correctly
+✅ user_b_lock_element_blocked: lock_element blocked correctly
+✅ viewer_gets_correct_error_message: Error message is correct
+
+KEY BEHAVIORS:
+- Viewers CAN: See edits, move cursor, be visible to others
+- Viewers CANNOT: Edit, create, delete, lock, annotate, send updates
+- Error message is consistent: "You have view-only access"
+- Permission denied responses include "permission_denied": true flag
+
+FILES CREATED/MODIFIED:
+- services/collaboration-service/src/main.py (added permission checks)
+- validate_feature_417_viewer_permissions.py (E2E test, 269 lines)
+- spec/feature_list.json (feature #417 passes = true)
+
+BUILD NOTES:
+- Had to rebuild Docker image to pick up code changes
+- Container doesn't have source volume mount
+- Used: docker-compose build collaboration-service
+- Service restarted successfully and passed health check
+
+SECURITY IMPACT:
+This is a critical security feature ensuring that users with view-only
+access cannot modify shared diagrams. All editing operations are now
+properly gated by role-based permissions.
+
+spec/feature_list.json: Feature #417 passes = true ✅
+Total features passing: 417/658 (63.4%)
+=============================================================================
