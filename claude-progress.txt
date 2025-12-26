@@ -17009,3 +17009,87 @@ PROGRESS: 457/658 features (69.5%)
 
 Session complete: Feature 456 PASSING ✅
 
+
+================================================================================
+SESSION: Feature 458 - Version Snapshots with Full canvas_data
+TIMESTAMP: 2025-12-26 05:43 EST
+================================================================================
+
+FEATURE IMPLEMENTED:
+====================
+Feature #458: Version history - Version snapshots with full canvas_data per version
+
+STEPS EXECUTED:
+===============
+1. Create v1 with 5 shapes
+2. Edit to v2 with 10 shapes
+3. View v1
+4. Verify only 5 shapes
+5. View v2
+6. Verify 10 shapes
+
+FINDINGS:
+=========
+The version system ALREADY implements full canvas_data snapshots correctly!
+
+In services/diagram-service/src/main.py, the create_version_snapshot function (line 1249):
+```python
+new_version = Version(
+    file_id=file.id,
+    version_number=next_version_number,
+    canvas_data=file.canvas_data,  # <-- Full snapshot stored here!
+    note_content=file.note_content,
+    description=description,
+    created_by=created_by
+)
+```
+
+Each version stores the COMPLETE canvas_data from the file at that point in time.
+The Version model (models.py line 230) has a canvas_data field (JSONB type) that stores
+the full TLDraw canvas state.
+
+E2E TEST RESULTS:
+=================
+✓ Created diagram with 5 shapes (v1)
+✓ Updated to 10 shapes (v2)
+✓ Version 1 correctly stores and returns 5 shapes
+✓ Version 2 correctly stores and returns 10 shapes
+✓ Each version is independent (viewing v1 doesn't show v2's shapes)
+✓ Current diagram matches latest version (v2)
+
+FILES CREATED:
+==============
+- test_feature_458_version_snapshots.py (E2E test)
+- create_test_user_458.sql (test user setup)
+- generate_hash_458.py (password hash utility)
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (marked #458 as passing)
+
+TECHNICAL DETAILS:
+==================
+Version Storage Architecture:
+- Each Version row stores complete canvas_data snapshot (JSONB column)
+- Versions are immutable once created
+- Viewing a version returns its exact canvas_data
+- No delta/diff storage - full snapshots for data integrity
+- JSONB provides efficient storage and querying
+
+This approach ensures:
+1. Complete history preservation
+2. Easy version comparison
+3. Reliable rollback capability
+4. No dependency on other versions
+5. Simple implementation
+
+REGRESSION CHECK:
+=================
+- Baseline: 431 features passing
+- Current: 458 features passing (+27 from baseline)
+- No regressions detected
+- All existing version features still working
+
+PROGRESS: 458/658 features (69.6%)
+
+Session complete: Feature 458 PASSING ✅
