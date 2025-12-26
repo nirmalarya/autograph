@@ -21635,3 +21635,60 @@ REGRESSION CHECK:
 - All services healthy
 - No breaking changes
 
+
+================================================================================
+SESSION: ISO 27001 Compliance Report - Feature 542
+DATE: 2025-12-26
+================================================================================
+
+Feature 542: Enterprise: Compliance reports: ISO 27001 format
+
+DESCRIPTION:
+Enterprise compliance reporting feature that generates comprehensive ISO 27001:2013
+compliance reports covering Annex A controls with security evidence and audit trails.
+
+IMPLEMENTATION:
+- Endpoint: GET /admin/compliance/report/iso27001 (auth-service)
+- Query params: start_date, end_date (ISO format, optional)
+- Default period: 90 days
+- Returns: Comprehensive ISO 27001:2013 compliance report JSON
+
+ANNEX A CONTROLS COVERED:
+1. A.9 Access Control (authentication, authorization, access logging)
+2. A.12 Operations Security (config changes, operational procedures)
+3. A.16 Incident Management (security incidents tracking)
+4. A.18 Compliance (compliance reporting, audit logs)
+
+TESTING:
+Created test_feature_542_iso27001_report.py
+- Generate report for 7-day period
+- Verify all 4 Annex A controls present and Implemented
+- Verify audit trail metrics included
+- Verify information security objectives documented
+- All tests passing with real data
+
+TEST RESULTS:
+- 2612 total audit events tracked
+- A.9 Access Control: 1258 events
+- A.12 Operations Security: 24 events
+- A.16 Incident Management: 320 events
+- A.18 Compliance: 9 events
+- All controls marked as Implemented
+- Audit trail: 100% completeness, Protected integrity
+
+INFORMATION SECURITY OBJECTIVES:
+- Confidentiality: Maintained via access controls
+- Integrity: Ensured via audit logging
+- Availability: Monitored via system logs
+
+PROGRESS UPDATE:
+Before: 542/658 features passing (82.4%)
+After:  543/658 features passing (82.5%)
+Remaining: 115 features
+
+REGRESSION CHECK:
+- No baseline features affected
+- All services healthy
+- No breaking changes
+- Compliance reporting works alongside SOC 2 and GDPR reports
+
