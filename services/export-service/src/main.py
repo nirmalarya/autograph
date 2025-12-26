@@ -918,11 +918,41 @@ async def export_png(request: ExportRequest):
         height = height * request.scale
         
         logger.info(f"Export dimensions: {width}x{height} (scale: {request.scale}x)")
-        
+        logger.info(f"Background requested: '{request.background}'")
+
         # Create image with background
-        bg_color = 'white' if request.background == 'white' else (255, 255, 255, 0)
-        img = Image.new('RGBA' if request.background == 'transparent' else 'RGB', 
-                       (width, height), color=bg_color)
+        # Parse background color
+        if request.background == "white":
+            bg_color = (255, 255, 255)
+            mode = 'RGB'
+        elif request.background == "transparent":
+            bg_color = (255, 255, 255, 0)
+            mode = 'RGBA'
+        elif request.background and request.background.startswith('#'):
+            # Parse hex color (e.g., #3498db)
+            hex_color = request.background.lstrip('#')
+            if len(hex_color) == 6:
+                r = int(hex_color[0:2], 16)
+                g = int(hex_color[2:4], 16)
+                b = int(hex_color[4:6], 16)
+                bg_color = (r, g, b)
+                mode = 'RGB'
+            else:
+                # Invalid hex, default to white
+                bg_color = (255, 255, 255)
+                mode = 'RGB'
+        else:
+            # Try to use Pillow's color name parser
+            try:
+                from PIL import ImageColor
+                bg_color = ImageColor.getrgb(request.background)
+                mode = 'RGB'
+            except:
+                # Default to white if color parsing fails
+                bg_color = (255, 255, 255)
+                mode = 'RGB'
+
+        img = Image.new(mode, (width, height), color=bg_color)
         
         # Add some visual indication with anti-aliasing
         from PIL import ImageDraw, ImageFont
@@ -2515,7 +2545,39 @@ async def export_diagram_png(canvas_data, width, height, scale, quality, backgro
     """Generate PNG for a single diagram."""
     # Create a simple placeholder image for now
     # In production, this would render the actual canvas
-    img = Image.new('RGBA', (width, height), (255, 255, 255, 255) if background == "white" else (0, 0, 0, 0))
+
+    # Parse background color
+    if background == "white":
+        bg_color = (255, 255, 255, 255)
+        mode = 'RGB'
+    elif background == "transparent":
+        bg_color = (0, 0, 0, 0)
+        mode = 'RGBA'
+    elif background and background.startswith('#'):
+        # Parse hex color (e.g., #3498db)
+        hex_color = background.lstrip('#')
+        if len(hex_color) == 6:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            bg_color = (r, g, b)
+            mode = 'RGB'
+        else:
+            # Invalid hex, default to white
+            bg_color = (255, 255, 255, 255)
+            mode = 'RGB'
+    else:
+        # Try to use Pillow's color name parser
+        try:
+            from PIL import ImageColor
+            bg_color = ImageColor.getrgb(background)
+            mode = 'RGB'
+        except:
+            # Default to white if color parsing fails
+            bg_color = (255, 255, 255, 255)
+            mode = 'RGB'
+
+    img = Image.new(mode, (width, height), bg_color)
     draw = ImageDraw.Draw(img)
     
     # Add some simple shapes from canvas_data
