@@ -1,0 +1,132 @@
+================================================================================
+SESSION: Feature #478 - Version Sharing
+DATE: 2025-12-26
+TIME: 10:53 AM - 11:02 AM
+================================================================================
+
+FEATURE #478: Version history: Version sharing: share link to specific version
+===============================================================================
+
+DISCOVERY:
+==========
+✓ Version sharing functionality already implemented in diagram service
+✓ Two endpoints exist:
+  - POST /{diagram_id}/versions/{version_id}/share
+  - GET /version-shared/{token}
+✓ Database model already supports version_id in shares table
+
+BUGS FOUND & FIXED:
+===================
+1. CRITICAL BUG in create_version_share_link (lines 6659-6660):
+   - Used 'File.id' and 'File.is_deleted' instead of 'FileModel.id' and 'FileModel.is_deleted'
+   - Caused AttributeError: 'function' object has no attribute 'id'
+   - Fixed by changing File -> FileModel
+
+2. MISSING PUBLIC ROUTE in API Gateway:
+   - /api/diagrams/version-shared/ was not in PUBLIC_ROUTES
+   - Caused 401 Unauthorized when accessing shared versions
+   - Fixed by adding route to PUBLIC_ROUTES (line 936)
+
+IMPLEMENTATION DETAILS:
+=======================
+Version Sharing Flow:
+1. User selects a specific version of their diagram
+2. User creates share link via POST /{diagram_id}/versions/{version_id}/share
+3. System generates unique token and creates Share record with version_id
+4. Share link is public (no auth required): /version-shared/{token}
+5. Anyone with token can view the specific version (read-only)
+
+Security & Permissions:
+- Only diagram owner can create version shares
+- Version shares are ALWAYS read-only (permission: "view")
+- No edit permission allowed for version shares
+- Expiration support via optional expires_in_days parameter
+- Analytics tracked: view_count, last_accessed_at
+
+Read-Only Enforcement:
+- Permission hardcoded to "view" (line 6692)
+- is_read_only flag returned as true (line 6828)
+- Version content immutable by design
+
+TEST IMPLEMENTATION:
+====================
+Created comprehensive E2E test (test_feature_478_version_sharing.py):
+1. Create diagram with multiple versions (4 versions total)
+2. Retrieve version list via API
+3. Select specific version (#2 with known content)
+4. Create public share link for that version
+5. Access share link without authentication
+6. Verify:
+   ✓ Correct version number returned
+   ✓ is_read_only = true
+   ✓ permission = "view"
+   ✓ Canvas data matches selected version
+   ✓ Diagram title included
+   ✓ No auth required for access
+
+TEST RESULTS:
+=============
+✅ All test steps passing
+✅ Share link created successfully
+✅ Public access working (no auth)
+✅ Read-only enforcement confirmed
+✅ Version content accurate
+✅ Token-based access working
+
+SERVICES REBUILT:
+=================
+1. diagram-service (bug fix applied)
+2. api-gateway (public route added)
+
+Both services healthy and operational.
+
+REGRESSION CHECK:
+=================
+Baseline: 477 passing features
+Current: 477 passing features
+✅ No regressions
+
+PROGRESS:
+=========
+478/658 features passing (72.6%)
+180 features remaining
+
+FILES MODIFIED:
+===============
+- services/diagram-service/src/main.py
+  * Fixed line 6659: File.id -> FileModel.id
+  * Fixed line 6660: File.is_deleted -> FileModel.is_deleted
+- services/api-gateway/src/main.py
+  * Added line 936: "/api/diagrams/version-shared/" to PUBLIC_ROUTES
+- spec/feature_list.json (marked feature 478 as passing)
+
+FILES CREATED:
+==============
+- test_feature_478_version_sharing.py (378 lines, comprehensive E2E test)
+- create_test_user_478.sql (test user with proper bcrypt hash)
+- generate_hash_478.py (password hash generator utility)
+
+QUALITY GATES:
+==============
+✓ Feature working end-to-end
+✓ All test scenarios passing
+✓ Critical bugs fixed
+✓ No regressions
+✓ Security properly enforced (read-only)
+✓ Public access working as designed
+✓ Analytics tracking implemented
+
+NOTES:
+======
+- This feature was already implemented but had critical bugs preventing use
+- The bugs would have completely blocked version sharing functionality
+- Fixed bugs enable both features:
+  * #478 (version sharing)
+  * Future features relying on version shares
+- Version sharing provides important capability for:
+  * Sharing historical states
+  * Collaboration on specific versions
+  * Version-specific reviews
+  * Permanent links to versions
+
+Next up: Feature #479
