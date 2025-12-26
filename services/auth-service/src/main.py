@@ -1735,7 +1735,50 @@ async def register(user_data: UserRegister, request: Request, db: Session = Depe
         except Exception as e:
             # Log but don't block registration if check fails
             logger.error("Error checking email domain restriction", exc=e)
-        
+
+        # Check license seat limit
+        try:
+            license_config_json = redis_client.get("config:license")
+            if license_config_json:
+                license_config = json.loads(license_config_json)
+                seat_limit = license_config.get("max_seats")
+
+                if seat_limit is not None and seat_limit > 0:
+                    # Count current users
+                    current_user_count = db.query(User).count()
+
+                    if current_user_count >= seat_limit:
+                        logger.warning(
+                            "Registration blocked - license limit reached",
+                            email=user_data.email,
+                            current_seats=current_user_count,
+                            max_seats=seat_limit
+                        )
+                        create_audit_log(
+                            db=db,
+                            action="registration_blocked",
+                            ip_address=client_ip,
+                            user_agent=user_agent,
+                            extra_data={
+                                "email": user_data.email,
+                                "reason": "license_limit_reached",
+                                "current_seats": current_user_count,
+                                "max_seats": seat_limit
+                            }
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="License limit reached"
+                        )
+        except json.JSONDecodeError:
+            # If config is invalid, allow registration
+            pass
+        except HTTPException:
+            raise
+        except Exception as e:
+            # Log but don't block registration if check fails
+            logger.error("Error checking license seat limit", exc=e)
+
         # Check if user already exists (case-insensitive)
         existing_user = get_user_by_email(db, user_data.email)
         if existing_user:
@@ -8883,6 +8926,98 @@ class LicenseInfo(BaseModel):
     used_seats: int
     available_seats: int
     seat_utilization_percentage: float
+
+
+class LicenseConfig(BaseModel):
+    """License configuration for the entire system."""
+    max_seats: int
+
+
+@app.post("/admin/config/license")
+async def set_license_config(
+    config: LicenseConfig,
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Configure license settings for the system.
+
+    Feature #554: Enterprise: License management: seat count enforcement
+
+    Args:
+        config: License configuration including max_seats
+
+    Returns:
+        Success message with applied configuration
+    """
+    try:
+        # Validate max_seats
+        if config.max_seats < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_seats must be non-negative"
+            )
+
+        # Store configuration in Redis
+        license_config = {
+            "max_seats": config.max_seats,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin_user.id
+        }
+
+        redis_client.set("config:license", json.dumps(license_config))
+
+        logger.info(
+            "License configuration updated",
+            max_seats=config.max_seats,
+            admin_user_id=admin_user.id
+        )
+
+        return {
+            "message": "License configuration updated successfully",
+            "config": license_config
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error updating license configuration", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update license configuration"
+        )
+
+
+@app.get("/admin/config/license")
+async def get_license_config(
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Get current license configuration.
+
+    Returns:
+        Current license configuration
+    """
+    try:
+        license_config_json = redis_client.get("config:license")
+
+        if not license_config_json:
+            # Return default configuration
+            return {
+                "max_seats": 0,  # 0 means unlimited
+                "enabled": False
+            }
+
+        license_config = json.loads(license_config_json)
+        license_config["enabled"] = license_config.get("max_seats", 0) > 0
+
+        return license_config
+
+    except Exception as e:
+        logger.error("Error fetching license configuration", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch license configuration"
+        )
 
 
 @app.get("/admin/license/seat-count")
