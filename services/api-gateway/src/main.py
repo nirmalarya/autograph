@@ -933,6 +933,7 @@ PUBLIC_ROUTES = [
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints
     "/api/diagrams/shared/",  # Public shared diagram access
+    "/api/diagrams/version-shared/",  # Public shared version access (Feature #478)
     "/test/",  # All test endpoints on gateway
 ]
 

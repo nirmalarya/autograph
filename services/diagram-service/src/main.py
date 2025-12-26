@@ -6656,8 +6656,8 @@ async def create_version_share_link(
     
     # Get diagram to check ownership
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
