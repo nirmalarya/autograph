@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useOfflineStorage } from '@/hooks/useOfflineStorage';
 import ExportDialog from '../../components/ExportDialog';
+import CommentThread from '../../components/CommentThread';
 import { API_ENDPOINTS } from '@/lib/api-config';
 
 // Dynamically import TLDraw to avoid SSR issues
@@ -42,7 +43,10 @@ export default function CanvasEditorPage() {
   const [commentTextStart, setCommentTextStart] = useState<number | null>(null);
   const [commentTextEnd, setCommentTextEnd] = useState<number | null>(null);
   const [commentTextContent, setCommentTextContent] = useState<string>('');
-  
+  const [showCommentsPanel, setShowCommentsPanel] = useState(false);
+  const [comments, setComments] = useState<any[]>([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+
   // Offline storage hook
   const {
     isOnline,
@@ -356,11 +360,100 @@ export default function CanvasEditorPage() {
       // Optionally, add a visual indicator to the shape
       // This would require storing comment metadata and rendering icons
 
+      // Refresh comments if panel is open
+      if (showCommentsPanel) {
+        fetchComments();
+      }
+
     } catch (err) {
       console.error('Failed to create comment:', err);
       alert('Failed to add comment. Please try again.');
     }
-  }, [commentText, commentElementId, commentPosition, commentTextStart, commentTextEnd, commentTextContent, diagramId, router]);
+  }, [commentText, commentElementId, commentPosition, commentTextStart, commentTextEnd, commentTextContent, diagramId, router, showCommentsPanel]);
+
+  const fetchComments = useCallback(async () => {
+    if (!diagramId) return;
+
+    setLoadingComments(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) return;
+
+      const payload = JSON.parse(atob(token.split('.')[1]));
+
+      const response = await fetch(API_ENDPOINTS.diagrams.comments.list(diagramId), {
+        headers: {
+          'X-User-ID': payload.sub,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setComments(data.comments || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch comments:', err);
+    } finally {
+      setLoadingComments(false);
+    }
+  }, [diagramId]);
+
+  const handleResolveComment = useCallback(async (commentId: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) return;
+
+      const payload = JSON.parse(atob(token.split('.')[1]));
+
+      const response = await fetch(API_ENDPOINTS.diagrams.comments.resolve(diagramId, commentId), {
+        method: 'POST',
+        headers: {
+          'X-User-ID': payload.sub,
+        },
+      });
+
+      if (response.ok) {
+        alert('Comment resolved!');
+        fetchComments(); // Refresh comments
+      }
+    } catch (err) {
+      console.error('Failed to resolve comment:', err);
+      alert('Failed to resolve comment');
+    }
+  }, [diagramId, fetchComments]);
+
+  const handleDeleteComment = useCallback(async (commentId: string) => {
+    if (!confirm('Are you sure you want to delete this comment?')) return;
+
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) return;
+
+      const payload = JSON.parse(atob(token.split('.')[1]));
+
+      const response = await fetch(API_ENDPOINTS.diagrams.comments.delete(diagramId, commentId), {
+        method: 'DELETE',
+        headers: {
+          'X-User-ID': payload.sub,
+        },
+      });
+
+      if (response.ok) {
+        alert('Comment deleted!');
+        fetchComments(); // Refresh comments
+      }
+    } catch (err) {
+      console.error('Failed to delete comment:', err);
+      alert('Failed to delete comment');
+    }
+  }, [diagramId, fetchComments]);
+
+  // Fetch comments when panel is opened
+  useEffect(() => {
+    if (showCommentsPanel) {
+      fetchComments();
+    }
+  }, [showCommentsPanel, fetchComments]);
 
   // Add Ctrl+S / Cmd+S keyboard shortcut for manual save
   useEffect(() => {
@@ -510,7 +603,18 @@ export default function CanvasEditorPage() {
               >
                 Export
               </button>
-              <button 
+              <button
+                onClick={() => setShowCommentsPanel(!showCommentsPanel)}
+                className={`px-4 py-2 text-sm font-medium transition rounded-md ${
+                  showCommentsPanel
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+                title="View comments and threads"
+              >
+                💬 Comments {comments.length > 0 && `(${comments.length})`}
+              </button>
+              <button
                 onClick={() => {
                   const editor = (window as any).tldrawEditor;
                   if (editor) {
@@ -527,16 +631,54 @@ export default function CanvasEditorPage() {
         </div>
       </nav>
 
-      {/* Canvas Area - Full height with TLDraw */}
-      <div className="flex-1 relative bg-white overflow-hidden">
-        <TLDrawCanvas
-          initialData={diagram?.canvas_data}
-          onSave={handleSave}
-          theme={canvasTheme}
-          diagramId={diagramId}
-          onAddComment={handleAddComment}
-          onAddNoteComment={handleAddNoteComment}
-        />
+      {/* Canvas Area with Comments Panel */}
+      <div className="flex-1 flex relative bg-white overflow-hidden">
+        {/* Main Canvas */}
+        <div className={`transition-all duration-300 ${showCommentsPanel ? 'flex-1' : 'w-full'}`}>
+          <TLDrawCanvas
+            initialData={diagram?.canvas_data}
+            onSave={handleSave}
+            theme={canvasTheme}
+            diagramId={diagramId}
+            onAddComment={handleAddComment}
+            onAddNoteComment={handleAddNoteComment}
+          />
+        </div>
+
+        {/* Comments Panel */}
+        {showCommentsPanel && (
+          <div className="w-96 border-l border-gray-200 bg-gray-50 overflow-y-auto">
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Comments & Threads
+                </h2>
+                <button
+                  onClick={() => setShowCommentsPanel(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {loadingComments ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <p className="text-sm text-gray-500">Loading comments...</p>
+                </div>
+              ) : (
+                <CommentThread
+                  diagramId={diagramId}
+                  comments={comments}
+                  onReply={() => {}}
+                  onResolve={handleResolveComment}
+                  onDelete={handleDeleteComment}
+                  onRefresh={fetchComments}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Export Dialog */}
