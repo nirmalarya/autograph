@@ -15625,3 +15625,95 @@ TECHNICAL NOTES:
 
 SESSION COMPLETE: Feature #434 ✅ PASSING
 
+================================================================================
+SESSION: Feature #435 - Delete Own Comments
+DATE: 2025-12-26 01:28 EST
+================================================================================
+
+FEATURE IMPLEMENTED: #435
+Title: Delete Own Comments
+Description: Comments: Delete comments: delete own
+
+IMPLEMENTATION DETAILS:
+
+1. Backend (Already Existed):
+   - Endpoint: DELETE /{diagram_id}/comments/{comment_id}/delete
+   - Located in: services/diagram-service/src/main.py
+   - Ownership checks: User must be comment owner, diagram owner, or admin
+   - Auto-decrement comment count on diagram
+   - Cascading deletes for mentions and reactions
+   - Returns 403 if user tries to delete someone else's comment
+
+2. Frontend (Already Existed):
+   - Delete button in CommentThread.tsx component
+   - Confirmation dialog before deletion
+   - Handler refreshes comment list after deletion
+   - API endpoint configured in api-config.ts
+
+3. Security Features:
+   - Authentication required (X-User-ID header)
+   - Authorization check (must be owner/diagram owner/admin)
+   - 403 Forbidden for unauthorized deletion attempts
+   - Comment permanently deleted (no soft delete for comments)
+
+TEST RESULTS:
+
+Test file: test_feature_435_delete_comment.py
+
+✅ Main Test: Delete Own Comment
+   - User can register and login
+   - User can create diagram
+   - User can post comment
+   - User can delete their own comment
+   - Comment permanently deleted (404)
+   - Comment removed from list
+   - Comment count decreases correctly
+
+✅ Security Test: Cannot Delete Others' Comments
+   - Created two separate users
+   - User 1 posts comment on their diagram
+   - User 2 attempts to delete User 1's comment
+   - Delete rejected with 403 Forbidden
+   - Error message: "You can only delete your own comments"
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 435 features
+✅ No regressions (baseline improved by +4)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 435 (was 434)
+Percentage: 66.1%
+Remaining: 223 features
+
+NEXT FEATURE: #436 (to be determined)
+
+TECHNICAL NOTES:
+
+1. Delete Behavior:
+   - Permanent deletion (not soft delete)
+   - Cascades to comment_mentions and comment_reactions
+   - Comment count trigger automatically decrements diagram.comment_count
+   - Returns success message with deleted comment_id
+
+2. Authorization Rules:
+   - Comment owner can delete
+   - Diagram owner can delete any comment on their diagram
+   - Admin users can delete any comment
+   - All others get 403 Forbidden
+
+3. Edge Cases Handled:
+   - Comment not found: 404
+   - Missing authentication: 401
+   - Not authorized to delete: 403
+   - Diagram comment count never goes below 0
+
+4. Frontend Integration:
+   - Delete button visible on all comments
+   - Confirmation prompt before deletion
+   - Automatic refresh after successful deletion
+   - Error alerts if deletion fails
+
+SESSION COMPLETE: Feature #435 ✅ PASSING
+
