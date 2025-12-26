@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
     const subscription = await request.json();
 
     // Get auth token from cookies
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const accessToken = cookieStore.get('access_token')?.value;
 
     if (!accessToken) {

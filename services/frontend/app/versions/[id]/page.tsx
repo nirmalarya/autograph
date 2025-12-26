@@ -44,17 +44,17 @@ export default function VersionComparePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ v1?: string; v2?: string; mode?: string }>;
+  searchParams: Promise<{ v1?: string; v2?: string; mode?: string; view?: string }>;
 }) {
   const unwrappedParams = use(params);
   const unwrappedSearchParams = use(searchParams);
   const router = useRouter();
-  
+
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [selectedV1, setSelectedV1] = useState<number>(
     parseInt(unwrappedSearchParams.v1 || "1")
   );
@@ -63,6 +63,9 @@ export default function VersionComparePage({
   );
   const [viewMode, setViewMode] = useState<"side-by-side" | "overlay">(
     (unwrappedSearchParams.mode as "side-by-side" | "overlay") || "side-by-side"
+  );
+  const [pageView, setPageView] = useState<"timeline" | "compare">(
+    (unwrappedSearchParams.view as "timeline" | "compare") || "timeline"
   );
   
   // Label editing state
@@ -120,7 +123,11 @@ export default function VersionComparePage({
         if (!response.ok) throw new Error("Failed to fetch versions");
 
         const data = await response.json();
-        setVersions(data.versions || []);
+        // Sort versions by version_number descending (newest first)
+        const sortedVersions = (data.versions || []).sort((a: Version, b: Version) =>
+          b.version_number - a.version_number
+        );
+        setVersions(sortedVersions);
       } catch (err) {
         console.error("Error fetching versions:", err);
         setError("Failed to load versions");
@@ -387,6 +394,18 @@ export default function VersionComparePage({
     }
   };
 
+  const handleViewChange = (view: "timeline" | "compare") => {
+    setPageView(view);
+    const params = new URLSearchParams();
+    params.set("view", view);
+    if (view === "compare") {
+      params.set("v1", selectedV1.toString());
+      params.set("v2", selectedV2.toString());
+      params.set("mode", viewMode);
+    }
+    router.push(`/versions/${diagramId}?${params.toString()}`);
+  };
+
   if (loading && !comparison) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -428,7 +447,32 @@ export default function VersionComparePage({
               >
                 ← Back
               </button>
-              <h1 className="text-2xl font-bold">Version Comparison</h1>
+              <div className="flex items-center gap-4">
+                <h1 className="text-2xl font-bold">Version History</h1>
+                {/* View Switcher */}
+                <div className="flex border rounded">
+                  <button
+                    onClick={() => handleViewChange("timeline")}
+                    className={`px-4 py-2 text-sm ${
+                      pageView === "timeline"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    Timeline
+                  </button>
+                  <button
+                    onClick={() => handleViewChange("compare")}
+                    className={`px-4 py-2 text-sm ${
+                      pageView === "compare"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    Compare
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Search and Filters */}
@@ -507,86 +551,208 @@ export default function VersionComparePage({
               )}
             </div>
 
-            {/* Version Selectors */}
-            <div className="flex gap-4 items-center">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Version 1
-                </label>
-                <select
-                  value={selectedV1}
-                  onChange={(e) =>
-                    handleVersionChange(parseInt(e.target.value), selectedV2)
-                  }
-                  className="border rounded px-3 py-2"
-                >
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.version_number}>
-                      v{v.version_number}
-                      {v.label ? ` - ${v.label}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <span className="text-gray-400 mt-6">vs</span>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Version 2
-                </label>
-                <select
-                  value={selectedV2}
-                  onChange={(e) =>
-                    handleVersionChange(selectedV1, parseInt(e.target.value))
-                  }
-                  className="border rounded px-3 py-2"
-                >
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.version_number}>
-                      v{v.version_number}
-                      {v.label ? ` - ${v.label}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* View Mode Toggle */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  View Mode
-                </label>
-                <div className="flex border rounded">
-                  <button
-                    onClick={() => handleModeChange("side-by-side")}
-                    className={`px-4 py-2 ${
-                      viewMode === "side-by-side"
-                        ? "bg-blue-600 text-white"
-                        : "bg-white text-gray-700 hover:bg-gray-50"
-                    }`}
+            {/* Version Selectors - Only show in compare mode */}
+            {pageView === "compare" && (
+              <div className="flex gap-4 items-center">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Version 1
+                  </label>
+                  <select
+                    value={selectedV1}
+                    onChange={(e) =>
+                      handleVersionChange(parseInt(e.target.value), selectedV2)
+                    }
+                    className="border rounded px-3 py-2"
                   >
-                    Side-by-Side
-                  </button>
-                  <button
-                    onClick={() => handleModeChange("overlay")}
-                    className={`px-4 py-2 ${
-                      viewMode === "overlay"
-                        ? "bg-blue-600 text-white"
-                        : "bg-white text-gray-700 hover:bg-gray-50"
-                    }`}
+                    {versions.map((v) => (
+                      <option key={v.id} value={v.version_number}>
+                        v{v.version_number}
+                        {v.label ? ` - ${v.label}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <span className="text-gray-400 mt-6">vs</span>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Version 2
+                  </label>
+                  <select
+                    value={selectedV2}
+                    onChange={(e) =>
+                      handleVersionChange(selectedV1, parseInt(e.target.value))
+                    }
+                    className="border rounded px-3 py-2"
                   >
-                    Overlay
-                  </button>
+                    {versions.map((v) => (
+                      <option key={v.id} value={v.version_number}>
+                        v{v.version_number}
+                        {v.label ? ` - ${v.label}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* View Mode Toggle */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    View Mode
+                  </label>
+                  <div className="flex border rounded">
+                    <button
+                      onClick={() => handleModeChange("side-by-side")}
+                      className={`px-4 py-2 ${
+                        viewMode === "side-by-side"
+                          ? "bg-blue-600 text-white"
+                          : "bg-white text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      Side-by-Side
+                    </button>
+                    <button
+                      onClick={() => handleModeChange("overlay")}
+                      className={`px-4 py-2 ${
+                        viewMode === "overlay"
+                          ? "bg-blue-600 text-white"
+                          : "bg-white text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      Overlay
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Content */}
-      {comparison && (
-        <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-4 py-6">
+        {pageView === "timeline" ? (
+          /* Timeline View */
+          <div className="bg-white rounded-lg shadow">
+            <div className="p-6 border-b">
+              <h2 className="text-lg font-semibold">Version Timeline</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                {versions.length} version{versions.length !== 1 ? "s" : ""} • Newest first
+              </p>
+            </div>
+
+            {/* Timeline List */}
+            <div className="divide-y">
+              {versions.length === 0 ? (
+                <div className="p-8 text-center text-gray-500">
+                  No versions found
+                </div>
+              ) : (
+                versions.map((version, index) => (
+                  <div
+                    key={version.id}
+                    className="p-6 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex gap-6">
+                      {/* Timeline Dot */}
+                      <div className="flex flex-col items-center">
+                        <div
+                          className={`w-4 h-4 rounded-full ${
+                            index === 0
+                              ? "bg-blue-600"
+                              : "bg-gray-300"
+                          }`}
+                        />
+                        {index < versions.length - 1 && (
+                          <div className="w-0.5 bg-gray-200 flex-1 mt-2" style={{ minHeight: "60px" }} />
+                        )}
+                      </div>
+
+                      {/* Version Content */}
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <h3 className="text-lg font-semibold">
+                                Version {version.version_number}
+                              </h3>
+                              {version.label && (
+                                <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                                  {version.label}
+                                </span>
+                              )}
+                              {index === 0 && (
+                                <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs rounded">
+                                  Latest
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-600 mt-1">
+                              {new Date(version.created_at).toLocaleString()} by{" "}
+                              {version.user.full_name}
+                            </p>
+                            {version.description && (
+                              <p className="text-sm text-gray-700 mt-2 bg-gray-50 p-3 rounded">
+                                {version.description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Thumbnail */}
+                          {version.thumbnail_url && (
+                            <div className="ml-4">
+                              <OptimizedImage
+                                src={version.thumbnail_url}
+                                alt={`Version ${version.version_number}`}
+                                className="w-32 h-24 object-cover border rounded"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-2 mt-4">
+                          <button
+                            onClick={() => handleEditLabel(version.id, version.label)}
+                            className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
+                          >
+                            {version.label ? "Edit Label" : "+ Add Label"}
+                          </button>
+                          <button
+                            onClick={() => handleEditDescription(version.id, version.description)}
+                            className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
+                          >
+                            {version.description ? "Edit Comment" : "+ Add Comment"}
+                          </button>
+                          <button
+                            onClick={() => handleShareVersion(version.id, version.version_number)}
+                            disabled={sharingVersion === version.id}
+                            className="px-3 py-1 text-sm text-green-600 hover:bg-green-50 rounded border border-green-200 disabled:opacity-50"
+                          >
+                            {sharingVersion === version.id ? "Sharing..." : "Share"}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedV1(version.version_number);
+                              setSelectedV2(version.version_number > 1 ? version.version_number - 1 : 1);
+                              handleViewChange("compare");
+                            }}
+                            className="px-3 py-1 text-sm text-gray-600 hover:bg-gray-100 rounded border border-gray-300"
+                          >
+                            Compare
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        ) : comparison && (
+          /* Comparison View */
+          <div>
           {/* Summary */}
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-lg font-semibold mb-4">Summary</h2>
@@ -1022,8 +1188,9 @@ export default function VersionComparePage({
               </div>
             )}
           </div>
-        </div>
-      )}
+          </div>
+        )}
+      </div>
       
       {/* Share Modal */}
       {showShareModal && (
