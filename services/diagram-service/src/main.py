@@ -2390,6 +2390,168 @@ async def move_diagram_to_folder(
         raise HTTPException(status_code=500, detail=f"Failed to move diagram to folder: {str(e)}")
 
 
+# ==========================================
+# MENTIONS API ENDPOINTS
+# ==========================================
+# Note: These MUST come before /{diagram_id} route to avoid path conflicts
+
+@app.get("/mentions")
+async def get_user_mentions(
+    request: Request,
+    unread_only: bool = False,
+    db: Session = Depends(get_db)
+):
+    """Get all mentions for the current user."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(
+        "Fetching user mentions",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        unread_only=unread_only
+    )
+
+    # Build query
+    query = db.query(Mention).filter(Mention.user_id == user_id)
+
+    if unread_only:
+        query = query.filter(Mention.is_read == False)
+
+    # Order by most recent first
+    mentions = query.order_by(Mention.created_at.desc()).all()
+
+    # Fetch related data for each mention
+    result = []
+    for mention in mentions:
+        comment = db.query(Comment).filter(Comment.id == mention.comment_id).first()
+        if comment:
+            # Get comment author
+            comment_author = db.query(User).filter(User.id == comment.user_id).first()
+            # Get diagram
+            diagram = db.query(File).filter(File.id == comment.file_id).first()
+
+            result.append({
+                "id": mention.id,
+                "comment_id": mention.comment_id,
+                "comment": {
+                    "content": comment.content,
+                    "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                    "user": {
+                        "id": comment_author.id if comment_author else None,
+                        "email": comment_author.email if comment_author else None,
+                        "full_name": comment_author.full_name if comment_author else None
+                    }
+                },
+                "diagram": {
+                    "id": diagram.id if diagram else None,
+                    "title": diagram.title if diagram else None
+                } if diagram else None,
+                "is_read": mention.is_read,
+                "read_at": mention.read_at.isoformat() if mention.read_at else None,
+                "created_at": mention.created_at.isoformat() if mention.created_at else None
+            })
+
+    logger.info(
+        "Mentions fetched",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        count=len(result)
+    )
+
+    return {
+        "mentions": result,
+        "total": len(result),
+        "unread": len([m for m in result if not m["is_read"]])
+    }
+
+
+@app.post("/mentions/{mention_id}/mark-read")
+async def mark_mention_read(
+    mention_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Mark a mention as read."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Get mention
+    mention = db.query(Mention).filter(
+        Mention.id == mention_id,
+        Mention.user_id == user_id
+    ).first()
+
+    if not mention:
+        raise HTTPException(status_code=404, detail="Mention not found")
+
+    # Mark as read
+    mention.is_read = True
+    mention.read_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(mention)
+
+    logger.info(
+        "Mention marked as read",
+        correlation_id=correlation_id,
+        mention_id=mention_id,
+        user_id=user_id
+    )
+
+    return {
+        "message": "Mention marked as read",
+        "mention_id": mention_id,
+        "read_at": mention.read_at.isoformat()
+    }
+
+
+@app.post("/mentions/mark-all-read")
+async def mark_all_mentions_read(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Mark all mentions for the current user as read."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Update all unread mentions
+    updated_count = db.query(Mention).filter(
+        Mention.user_id == user_id,
+        Mention.is_read == False
+    ).update({
+        "is_read": True,
+        "read_at": datetime.utcnow()
+    }, synchronize_session=False)
+
+    db.commit()
+
+    logger.info(
+        "All mentions marked as read",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        count=updated_count
+    )
+
+    return {
+        "message": "All mentions marked as read",
+        "count": updated_count
+    }
+
+
+# ==========================================
+# DIAGRAM DETAIL ENDPOINTS
+# ==========================================
+
 @app.get("/{diagram_id}")
 async def get_diagram(
     diagram_id: str,
@@ -4132,11 +4294,18 @@ async def create_comment(
     mentioned_usernames = re.findall(mention_pattern, comment_data.content)
     
     for username in mentioned_usernames:
-        # Find user by email (assuming username is email prefix)
+        # Find user by email (exact match before @ sign or full email match)
+        # Try exact email prefix match first (username@...)
         mentioned_user = db.query(User).filter(
-            User.email.like(f"{username}%")
+            User.email.like(f"{username}@%")
         ).first()
-        
+
+        # If not found, try exact email match
+        if not mentioned_user:
+            mentioned_user = db.query(User).filter(
+                User.email == f"{username}"
+            ).first()
+
         if mentioned_user:
             mention = Mention(
                 id=str(uuid.uuid4()),
