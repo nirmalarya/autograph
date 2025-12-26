@@ -9020,6 +9020,98 @@ async def get_license_config(
         )
 
 
+@app.get("/admin/license/seat-utilization")
+async def get_license_seat_utilization(
+    admin_user: User = Depends(get_admin_user)
+):
+    """
+    Get current license seat utilization metrics.
+
+    Feature #556: Track license seat usage and alert at 90% threshold.
+
+    Returns:
+        License seat utilization including:
+        - total_seats: Maximum number of seats available
+        - used_seats: Number of seats currently in use
+        - available_seats: Number of seats remaining
+        - utilization_percentage: Percentage of seats used
+        - alert_triggered: True if utilization >= 90%
+        - enabled: Whether license limits are active
+    """
+    try:
+        # Get license configuration
+        license_config_json = redis_client.get("config:license")
+
+        if not license_config_json:
+            # No license configured - unlimited seats
+            with SessionLocal() as db:
+                total_users = db.query(func.count(User.id)).scalar()
+
+            return {
+                "enabled": False,
+                "total_seats": 0,  # 0 means unlimited
+                "used_seats": total_users,
+                "available_seats": None,  # Unlimited
+                "utilization_percentage": 0,
+                "alert_triggered": False,
+                "message": "License limits not configured (unlimited seats)"
+            }
+
+        license_config = json.loads(license_config_json)
+        max_seats = license_config.get("max_seats", 0)
+
+        if max_seats <= 0:
+            # Unlimited seats
+            with SessionLocal() as db:
+                total_users = db.query(func.count(User.id)).scalar()
+
+            return {
+                "enabled": False,
+                "total_seats": 0,
+                "used_seats": total_users,
+                "available_seats": None,
+                "utilization_percentage": 0,
+                "alert_triggered": False,
+                "message": "License limits not enabled (unlimited seats)"
+            }
+
+        # Get current user count
+        with SessionLocal() as db:
+            used_seats = db.query(func.count(User.id)).scalar()
+
+        # Calculate metrics
+        available_seats = max_seats - used_seats
+        utilization_percentage = (used_seats / max_seats) * 100 if max_seats > 0 else 0
+        alert_triggered = utilization_percentage >= 90.0
+
+        # Log alert if triggered
+        if alert_triggered:
+            logger.warning(
+                "License seat utilization alert",
+                used_seats=used_seats,
+                total_seats=max_seats,
+                utilization=f"{utilization_percentage:.1f}%"
+            )
+
+        return {
+            "enabled": True,
+            "total_seats": max_seats,
+            "used_seats": used_seats,
+            "available_seats": available_seats,
+            "utilization_percentage": round(utilization_percentage, 2),
+            "alert_triggered": alert_triggered,
+            "alert_threshold": 90.0,
+            "message": "License utilization tracking active"
+        }
+
+    except Exception as e:
+        logger.error("Error calculating license utilization", exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to calculate license utilization"
+        )
+
+
 @app.get("/admin/license/seat-count")
 async def get_seat_count(
     team_id: str = None,
