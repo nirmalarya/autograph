@@ -18486,3 +18486,84 @@ PROGRESS UPDATE:
 NEXT:
 =====
 Feature #483: Version history: Version export: export specific version
+
+================================================================================
+SESSION: $(date '+%Y-%m-%d %H:%M:%S')
+FEATURE #483: Version Export - Export Specific Version - VERIFIED PASSING
+================================================================================
+
+OVERVIEW:
+=========
+Feature #483 tests that users can export specific versions of diagrams (not just
+the current version) to PNG, SVG, and PDF formats.
+
+FEATURE DESCRIPTION:
+====================
+Version history: Version export: export specific version
+
+TEST RESULTS:
+=============
+✅ All 6 tests passed:
+1. Export version 1 as PNG - PASS
+2. Export version 1 as SVG - PASS
+3. Export version 1 as PDF - PASS
+4. Export version 3 as PNG - PASS
+5. PNG format correct - PASS
+6. Filenames include version numbers - PASS
+
+IMPLEMENTATION STATUS:
+======================
+✅ Feature already implemented - no code changes needed
+✅ Endpoints exist in diagram service:
+   - POST /{diagram_id}/versions/{version_id}/export/png
+   - POST /{diagram_id}/versions/{version_id}/export/svg
+   - POST /{diagram_id}/versions/{version_id}/export/pdf
+
+KEY FEATURES VERIFIED:
+======================
+✅ Can export old versions (not just current)
+✅ Supports PNG, SVG, and PDF formats
+✅ Filenames include version numbers (e.g., diagram_xxx_v1.png)
+✅ Returns correct Content-Type headers:
+   - image/png for PNG exports
+   - image/svg+xml for SVG exports
+   - application/pdf for PDF exports
+✅ Export count incremented on diagram
+✅ Version content properly decompressed if needed
+
+ENDPOINTS VERIFIED:
+===================
+- POST /diagrams/{id}/versions/{version_id}/export/png
+  - Query params: scale, background, quality
+  - Returns: PNG binary with correct headers
+  
+- POST /diagrams/{id}/versions/{version_id}/export/svg
+  - Returns: SVG XML with correct headers
+  
+- POST /diagrams/{id}/versions/{version_id}/export/pdf
+  - Returns: PDF binary with correct headers
+
+FILES VERIFIED:
+===============
+- services/diagram-service/src/main.py (version export endpoints)
+- Export service integration working correctly
+- scripts/tests/test_feature_483_version_export.py
+
+QUALITY GATES:
+==============
+✓ Feature working end-to-end
+✓ All export formats supported
+✓ Version numbers in filenames
+✓ Correct Content-Type headers
+✓ No regressions
+
+PROGRESS UPDATE:
+================
+- spec/feature_list.json: Feature #483 marked as passing
+- Progress: 484/658 features (73.6%)
+- 174 features remaining
+
+NEXT:
+=====
+Feature #484: Next failing feature
+
