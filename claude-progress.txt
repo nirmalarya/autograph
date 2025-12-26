@@ -16373,3 +16373,80 @@ NEXT STEPS:
 1. Check diagram service logs for specific error
 2. Fix user query or data serialization issue
 3. Complete test validation
+
+================================================================================
+SESSION: Feature #447 - Comment History (View Edit History)
+DATE: 2025-12-26
+STATUS: ✅ COMPLETE
+================================================================================
+
+FEATURE #447: Comment history - view edit history
+- Allow users to view complete edit history of comments
+- Track all changes with version numbers and timestamps
+
+IMPLEMENTATION COMPLETED:
+✅ Database schema created (comment_history table)
+✅ PostgreSQL trigger to automatically record edits
+✅ SQLAlchemy model (CommentHistory)
+✅ API endpoint: GET /api/diagrams/{id}/comments/{id}/history
+✅ Fixed User model attribute references (username -> email/full_name)
+✅ Complete test suite created and passing
+
+KEY CHANGES:
+1. Created comment_history table with:
+   - version_number (incremental)
+   - old_content (previous comment content)
+   - old_text_start/end/content (for inline comments)
+   - edited_by (user ID who made the edit)
+   - edited_at (timestamp)
+
+2. PostgreSQL trigger: record_comment_history()
+   - Automatically captures old values on UPDATE
+   - Increments version number
+   - Records editor and timestamp
+
+3. API endpoint implementation:
+   - Verifies user has access to diagram
+   - Returns current version + edit history
+   - Ordered chronologically (newest first)
+   - Includes editor information (email, full_name)
+
+4. Bug fixes:
+   - Fixed User model attribute access (no 'username' field)
+   - Changed to use 'email' and 'full_name' instead
+
+TESTING:
+✅ Created comprehensive E2E test
+✅ Tests initial state (no history)
+✅ Tests multiple edits (3 versions)
+✅ Verifies chronological ordering
+✅ Validates version count and content
+✅ All assertions passing
+
+REGRESSION CHECK:
+✅ Baseline: 446 features passing
+✅ Current: 447 features passing
+✅ No regressions detected
+✅ All existing features still working
+
+PROGRESS:
+- Total features: 658
+- Passing: 447 (67.9%)
+- Remaining: 211 features
+
+FILES CREATED:
+- create_comment_history_table.sql (database schema)
+- create_test_user_447.sql (test user setup)
+- test_feature_447_comment_history.py (test suite)
+
+FILES MODIFIED:
+- services/diagram-service/src/models.py (added CommentHistory model)
+- services/diagram-service/src/main.py (added history endpoint, fixed User attrs)
+- spec/feature_list.json (marked #447 as passing)
+
+NEXT STEPS:
+- Continue with next failing feature
+- Maintain regression testing
+- Ensure all new features don't break existing ones
+
+SESSION COMPLETE: Feature #447 ✅ PASSING
