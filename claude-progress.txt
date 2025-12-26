@@ -14037,3 +14037,101 @@ FEATURE FLOW:
 Feature #411: passes = true ✅
 Total features passing: 412/658
 =============================================================================
+
+=============================================================================
+SESSION: Feature #413 - Per-User Undo/Redo History
+TIME: 2025-12-25 21:00-21:08 EST
+=============================================================================
+
+FEATURE IMPLEMENTED: #413 - Real-time collaboration: Per-user undo/redo history
+
+IMPLEMENTATION SUMMARY:
+✓ Added independent undo/redo stacks for each user
+✓ Implemented WebSocket events: action_performed, undo_action, redo_action
+✓ Added HTTP endpoint for checking stack state
+✓ Each user maintains separate undo (max 50) and redo (max 50) stacks
+✓ Undo/redo operations only affect the specific user's stack
+✓ Events broadcast to all users in room for real-time sync
+
+TECHNICAL DETAILS:
+- Storage: Dict[room_id -> Dict[user_id -> List[actions]]]
+- Undo: Moves action from undo stack to redo stack
+- Redo: Moves action from redo stack to undo stack
+- New actions clear the redo stack (standard undo/redo behavior)
+- Stack limit: 50 actions per user (prevents memory issues)
+- Events: action_undone, action_redone broadcast to room
+
+WEBSOCKET EVENTS:
+1. action_performed(room, user_id, action)
+   - Records action in user's undo stack
+   - Clears redo stack
+   - Returns current stack sizes
+
+2. undo_action(room, user_id)
+   - Undos last action for specific user
+   - Moves action to redo stack
+   - Broadcasts action_undone event
+
+3. redo_action(room, user_id)
+   - Redos last undone action
+   - Moves action back to undo stack
+   - Broadcasts action_redone event
+
+HTTP ENDPOINT:
+GET /undo-redo/stacks/{room_id}/{user_id}
+Returns: {undo_stack_size, redo_stack_size, can_undo, can_redo}
+
+TESTING:
+✓ HTTP endpoint tests: PASSED
+✓ WebSocket event tests: PASSED
+✓ User A draws shape -> undo stack has 1 action
+✓ User B draws shape -> undo stack has 1 action
+✓ User A presses Ctrl+Z -> User A undo stack: 0, redo stack: 1
+✓ User B unaffected -> User B undo stack: 1, redo stack: 0
+✓ Independent stacks verified successfully
+✓ Redo functionality working correctly
+
+FILES MODIFIED:
+- services/collaboration-service/src/main.py (+234 lines)
+  * Added undo_stacks and redo_stacks global storage
+  * action_performed() event handler (58 lines)
+  * undo_action() event handler (68 lines)
+  * redo_action() event handler (67 lines)
+  * get_undo_redo_stacks() HTTP endpoint (26 lines)
+
+- spec/feature_list.json (Feature #413: passes = true)
+
+- validate_feature_413_simple.py (new, 160 lines)
+  * HTTP endpoint validation
+
+- validate_feature_413_websocket.py (new, 226 lines)
+  * Full E2E WebSocket testing
+  * Verifies independent per-user stacks
+
+FEATURE FLOW:
+1. User A draws rectangle
+   -> action_performed event sent
+   -> Server adds to User A's undo stack
+   -> User A undo stack: [action_a]
+
+2. User B draws circle
+   -> action_performed event sent
+   -> Server adds to User B's undo stack
+   -> User B undo stack: [action_b]
+
+3. User A presses Ctrl+Z
+   -> undo_action event sent
+   -> Server moves action from User A undo to redo
+   -> Server broadcasts action_undone to room
+   -> User A undo: [], redo: [action_a]
+   -> User B undo: [action_b], redo: [] (UNCHANGED)
+
+4. User A presses Ctrl+Shift+Z
+   -> redo_action event sent
+   -> Server moves action from User A redo to undo
+   -> Server broadcasts action_redone to room
+   -> User A undo: [action_a], redo: []
+
+Feature #413: passes = true ✅
+Total features passing: 413/658 (62.8%)
+=============================================================================
