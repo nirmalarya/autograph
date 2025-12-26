@@ -16347,3 +16347,29 @@ NEXT FEATURE: #447 (to be determined)
 
 SESSION COMPLETE: Feature #446 ✅ PASSING
 
+FEATURE #446 STATUS: 90% Complete
+
+COMPLETED:
+- Database table: comment_history ✅
+- PostgreSQL trigger: record_comment_history() ✅
+- SQLAlchemy model: CommentHistory ✅
+- API endpoint implementation ✅
+- Test suite created ✅
+- Services rebuilt ✅
+
+REMAINING:
+- Debug 500 error on history endpoint
+- Complete E2E test validation
+- Regression check
+- Mark as passing
+
+FILES MODIFIED:
+- services/diagram-service/src/models.py (CommentHistory model added)
+- services/diagram-service/src/main.py (history endpoint added, CommentHistory imported)
+- create_comment_history_table.sql (database schema)
+- test_feature_447_comment_history.py (test suite)
+
+NEXT STEPS:
+1. Check diagram service logs for specific error
+2. Fix user query or data serialization issue
+3. Complete test validation

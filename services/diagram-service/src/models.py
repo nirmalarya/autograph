@@ -387,6 +387,30 @@ class CommentRead(Base):
     )
 
 
+class CommentHistory(Base):
+    """Comment history table (tracking all edits made to comments)."""
+    __tablename__ = "comment_history"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    comment_id = Column(String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False)
+    old_content = Column(Text, nullable=False)
+    old_text_start = Column(Integer)
+    old_text_end = Column(Integer)
+    old_text_content = Column(Text)
+    edited_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
+    edited_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    version_number = Column(Integer, nullable=False)
+
+    # Relationships
+    comment = relationship("Comment", backref="history")
+    editor = relationship("User", foreign_keys=[edited_by])
+
+    __table_args__ = (
+        Index('idx_comment_history_comment', 'comment_id', 'version_number', postgresql_using='btree'),
+        Index('idx_comment_history_edited_at', 'comment_id', 'edited_at', postgresql_using='btree'),
+    )
+
+
 class Share(Base):
     """Share links table."""
     __tablename__ = "shares"

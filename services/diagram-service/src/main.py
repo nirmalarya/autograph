@@ -26,7 +26,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, CommentHistory, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
 from .email_service import get_email_service
 
 load_dotenv()
@@ -4733,6 +4733,109 @@ async def update_comment(
         "updated_at": comment.updated_at.isoformat(),
         "message": "Comment updated successfully"
     }
+
+
+@app.get("/{diagram_id}/comments/{comment_id}/history")
+async def get_comment_history(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get edit history of a comment."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(
+        "Retrieving comment edit history",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        user_id=user_id
+    )
+
+    # Get comment to verify access
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    # Get diagram to verify user has access
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+
+    # Check access (owner or collaborator)
+    has_access = diagram.owner_id == user_id
+    if not has_access:
+        # Check if user is a collaborator via shares
+        share = db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first()
+        has_access = share is not None
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get history ordered by version (newest first)
+    history = db.query(CommentHistory).filter(
+        CommentHistory.comment_id == comment_id
+    ).order_by(CommentHistory.version_number.desc()).all()
+
+    # Format response
+    history_items = []
+    for item in history:
+        editor = db.query(User).filter(User.id == item.edited_by).first()
+        history_items.append({
+            "id": item.id,
+            "version_number": item.version_number,
+            "old_content": item.old_content,
+            "old_text_start": item.old_text_start,
+            "old_text_end": item.old_text_end,
+            "old_text_content": item.old_text_content,
+            "edited_by": {
+                "id": item.edited_by,
+                "email": editor.email if editor else "unknown@example.com",
+                "full_name": editor.full_name if editor else "Unknown"
+            },
+            "edited_at": item.edited_at.isoformat()
+        })
+
+    # Add current version as version 0
+    current_user = db.query(User).filter(User.id == comment.user_id).first()
+    result = {
+        "comment_id": comment.id,
+        "current_version": {
+            "content": comment.content,
+            "text_start": comment.text_start,
+            "text_end": comment.text_end,
+            "text_content": comment.text_content,
+            "created_at": comment.created_at.isoformat(),
+            "updated_at": comment.updated_at.isoformat(),
+            "created_by": {
+                "id": comment.user_id,
+                "email": current_user.email if current_user else "unknown@example.com",
+                "full_name": current_user.full_name if current_user else "Unknown"
+            }
+        },
+        "history": history_items,
+        "total_versions": len(history_items) + 1  # +1 for current version
+    }
+
+    logger.info(
+        "Comment history retrieved successfully",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        total_versions=result["total_versions"]
+    )
+
+    return result
 
 
 @app.delete("/{diagram_id}/comments/{comment_id}/delete")
