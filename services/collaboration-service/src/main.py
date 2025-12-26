@@ -1326,6 +1326,7 @@ offline_queues: Dict[str, List[dict]] = {}  # user_id -> list of queued operatio
 # Track the last known state of each element for OT conflict resolution
 element_states: Dict[str, Dict[str, any]] = {}  # room_id -> {element_id: state}
 operation_history: Dict[str, List[dict]] = {}  # room_id -> list of operations
+conflict_log: Dict[str, List[dict]] = {}  # room_id -> list of conflicts (Feature #408)
 
 
 @dataclass
@@ -1347,7 +1348,7 @@ class Operation:
         }
 
 
-def transform_operations(op1: Operation, op2: Operation) -> tuple:
+def transform_operations(op1: Operation, op2: Operation, room_id: str = None) -> tuple:
     """
     Operational Transform: Transform two concurrent operations.
 
@@ -1356,6 +1357,7 @@ def transform_operations(op1: Operation, op2: Operation) -> tuple:
     - op2' is op2 transformed against op1
 
     This implements a simple OT algorithm for concurrent edits.
+    Feature #408: Last-write-wins with conflict logging
     """
     # If operations are on different elements, no transformation needed
     if op1.element_id != op2.element_id:
@@ -1369,30 +1371,72 @@ def transform_operations(op1: Operation, op2: Operation) -> tuple:
     # Strategy: Last-write-wins based on timestamp (with tie-breaker by user_id)
     # In production, more sophisticated OT algorithms could be used
 
+    winner = None
+    loser = None
+
     if op1.timestamp < op2.timestamp:
         # op2 wins - op1 is superseded
         logger.info(f"OT: Op2 wins (later timestamp)")
         op1.transformed = True
         op2.transformed = True
-        return op2, op2  # Use op2's value
+        winner = op2
+        loser = op1
+        result = (op2, op2)  # Use op2's value
     elif op2.timestamp < op1.timestamp:
         # op1 wins - op2 is superseded
         logger.info(f"OT: Op1 wins (later timestamp)")
         op1.transformed = True
         op2.transformed = True
-        return op1, op1  # Use op1's value
+        winner = op1
+        loser = op2
+        result = (op1, op1)  # Use op1's value
     else:
         # Same timestamp - use lexicographic ordering of user_id as tie-breaker
         if op1.user_id < op2.user_id:
             logger.info(f"OT: Op1 wins (tie-breaker)")
             op1.transformed = True
             op2.transformed = True
-            return op1, op1
+            winner = op1
+            loser = op2
+            result = (op1, op1)
         else:
             logger.info(f"OT: Op2 wins (tie-breaker)")
             op1.transformed = True
             op2.transformed = True
-            return op2, op2
+            winner = op2
+            loser = op1
+            result = (op2, op2)
+
+    # Feature #408: Log the conflict
+    if room_id and room_id not in conflict_log:
+        conflict_log[room_id] = []
+
+    if room_id:
+        conflict_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "element_id": op1.element_id,
+            "operation_type": op1.operation_type,
+            "winner": {
+                "user_id": winner.user_id,
+                "value": winner.new_value,
+                "timestamp": winner.timestamp.isoformat()
+            },
+            "loser": {
+                "user_id": loser.user_id,
+                "value": loser.new_value,
+                "timestamp": loser.timestamp.isoformat()
+            },
+            "resolution": "last-write-wins"
+        }
+        conflict_log[room_id].append(conflict_entry)
+
+        # Keep only last 100 conflicts per room
+        if len(conflict_log[room_id]) > 100:
+            conflict_log[room_id] = conflict_log[room_id][-100:]
+
+        logger.info(f"CONFLICT LOGGED: {winner.user_id} won over {loser.user_id} on element {op1.element_id}")
+
+    return result
 
 
 def apply_operational_transform(room_id: str, operation: Operation) -> Operation:
@@ -1428,8 +1472,8 @@ def apply_operational_transform(room_id: str, operation: Operation) -> Operation
             transformed=concurrent_op_dict.get('transformed', False)
         )
 
-        # Transform
-        transformed_op, _ = transform_operations(transformed_op, concurrent_op)
+        # Transform (pass room_id for conflict logging - Feature #408)
+        transformed_op, _ = transform_operations(transformed_op, concurrent_op, room_id)
 
     # Record operation in history
     operation_history[room_id].append(operation.to_dict())
@@ -1586,6 +1630,24 @@ async def get_operation_history(room_id: str, limit: int = 100):
         }
     except Exception as e:
         logger.error(f"Failed to get operation history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/ot/conflicts/{room_id}")
+async def get_conflict_log(room_id: str, limit: int = 100):
+    """
+    Get conflict log for a room.
+    Feature #408: Last-write-wins conflict logging
+    """
+    try:
+        conflicts = conflict_log.get(room_id, [])
+        return {
+            "room": room_id,
+            "conflicts": conflicts[-limit:],
+            "count": len(conflicts)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get conflict log: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
