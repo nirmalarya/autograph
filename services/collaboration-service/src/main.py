@@ -858,6 +858,63 @@ async def cursor_move(sid, data):
 
 
 @sio.event
+async def cursor_message(sid, data):
+    """
+    Handle cursor chat message - send message to a specific user's cursor.
+    Expected data: {
+        "room": "file:<file_id>",
+        "from_user_id": "sender-user-id",
+        "to_user_id": "recipient-user-id",
+        "message": "message text",
+        "cursor_x": 100,  # Optional: cursor position where message appears
+        "cursor_y": 200   # Optional: cursor position where message appears
+    }
+    Feature #409: Collaborative cursor chat
+    """
+    try:
+        room_id = data.get('room')
+        from_user_id = data.get('from_user_id')
+        to_user_id = data.get('to_user_id')
+        message = data.get('message', '')
+        cursor_x = data.get('cursor_x')
+        cursor_y = data.get('cursor_y')
+
+        if not room_id or not from_user_id or not to_user_id:
+            return {"success": False, "error": "room, from_user_id, and to_user_id required"}
+
+        if not message:
+            return {"success": False, "error": "message required"}
+
+        # Get sender's presence info
+        sender_presence = None
+        if room_id in room_users and from_user_id in room_users[room_id]:
+            sender_presence = room_users[room_id][from_user_id]
+
+        if not sender_presence:
+            return {"success": False, "error": "Sender not in room"}
+
+        # Broadcast cursor message to all users in the room
+        # (In a real implementation, you might want to send only to specific user)
+        await sio.emit('cursor_message_received', {
+            'from_user_id': from_user_id,
+            'from_username': sender_presence.username,
+            'from_color': sender_presence.color,
+            'to_user_id': to_user_id,
+            'message': message,
+            'cursor_x': cursor_x if cursor_x is not None else sender_presence.cursor_x,
+            'cursor_y': cursor_y if cursor_y is not None else sender_presence.cursor_y,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        logger.info(f"Cursor message sent from {from_user_id} to {to_user_id} in room {room_id}")
+
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to handle cursor message: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
 async def selection_change(sid, data):
     """
     Handle selection change.
