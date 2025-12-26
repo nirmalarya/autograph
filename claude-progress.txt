@@ -17093,3 +17093,89 @@ REGRESSION CHECK:
 PROGRESS: 458/658 features (69.6%)
 
 Session complete: Feature 458 PASSING ✅
+
+================================================================================
+SESSION: Feature 459 - Version snapshots with full note_content
+DATE: 2025-12-26
+================================================================================
+
+FEATURE IMPLEMENTED:
+====================
+Feature #459: Version history: Version snapshots: full note_content per version
+
+DESCRIPTION:
+============
+Verified that version snapshots store complete note_content at each point in time.
+Each version preserves the exact text that existed when the version was created.
+
+TEST SCENARIO:
+==============
+1. Create note with text A (version 1)
+2. Update note with text B (version 2)
+3. View version 1 - returns text A
+4. View version 2 - returns text B
+5. Each version is independent and immutable
+
+IMPLEMENTATION DETAILS:
+=======================
+Already implemented in the system:
+- Version model has note_content field (Text column) in models.py line 240
+- create_version_snapshot() function copies note_content from file (line 1262)
+- get_version_content() helper handles compressed/uncompressed content (line 278)
+- GET /diagrams/{id}/versions/{version_id} API returns note_content (line 6318)
+- Full snapshots stored (no delta/diff approach)
+
+TECHNICAL ARCHITECTURE:
+=======================
+Storage Approach:
+- Each Version row stores complete note_content snapshot (Text column)
+- Versions are immutable once created
+- Viewing a version returns its exact note_content
+- No delta/diff storage - full snapshots for data integrity
+- Supports compression for large content (compressed_note_content field)
+
+Endpoints Used:
+- POST /api/diagrams - Create note diagram
+- POST /api/diagrams/{id}/versions - Manual version snapshot
+- GET /api/diagrams/{id}/versions - List versions
+- GET /api/diagrams/{id}/versions/{version_id} - View specific version
+- PUT /api/diagrams/{id} - Update note content
+
+E2E TEST RESULTS:
+=================
+✓ Created note with original text (v1)
+✓ Manually created version 1 snapshot
+✓ Updated note to different text
+✓ Manually created version 2 snapshot
+✓ Version 1 correctly stores and returns original text
+✓ Version 2 correctly stores and returns updated text
+✓ Each version is independent (viewing v1 doesn't show v2's content)
+✓ Current diagram matches latest version (v2)
+
+FILES CREATED:
+==============
+- test_feature_459_note_version_snapshots.py (E2E test)
+- create_test_user_459.sql (test user setup)
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (marked #459 as passing)
+
+NOTES:
+======
+- Auto-versioning for notes requires 5-minute intervals (to prevent spam)
+- Major edits (10+ element deletions) only apply to canvas_data, not note_content
+- Used manual versioning API (POST /versions) for immediate version creation
+- Same versioning system handles both canvas_data and note_content
+- Supports compression for large note content
+
+REGRESSION CHECK:
+=================
+- Baseline: 431 features passing
+- Current: 459 features passing (+28 from baseline)
+- No regressions detected
+- All existing version features still working
+
+PROGRESS: 459/658 features (69.8%)
+
+Session complete: Feature 459 PASSING ✅
