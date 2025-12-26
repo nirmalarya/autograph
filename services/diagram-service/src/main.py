@@ -25,6 +25,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 # Import database and models
 from .database import get_db
 from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon
+from .email_service import get_email_service
 
 load_dotenv()
 
@@ -4292,7 +4293,9 @@ async def create_comment(
     import re
     mention_pattern = r'@(\w+)'
     mentioned_usernames = re.findall(mention_pattern, comment_data.content)
-    
+
+    mentioned_users_list = []  # Track mentioned users for email notifications
+
     for username in mentioned_usernames:
         # Find user by email (exact match before @ sign or full email match)
         # Try exact email prefix match first (username@...)
@@ -4313,12 +4316,39 @@ async def create_comment(
                 user_id=mentioned_user.id
             )
             db.add(mention)
-    
+            mentioned_users_list.append(mentioned_user)
+
     db.commit()
     db.refresh(new_comment)
-    
+
     # Get user info for response
     user = db.query(User).filter(User.id == user_id).first()
+
+    # Send email notifications for mentions (async, non-blocking)
+    if mentioned_users_list:
+        email_service = get_email_service()
+        commenter_name = user.full_name if user and user.full_name else user.email if user else "Someone"
+        diagram_name = diagram.title if diagram and diagram.title else "Untitled Diagram"
+
+        for mentioned_user in mentioned_users_list:
+            try:
+                await email_service.send_mention_notification(
+                    to_email=mentioned_user.email,
+                    to_name=mentioned_user.full_name if mentioned_user.full_name else mentioned_user.email.split('@')[0],
+                    commenter_name=commenter_name,
+                    comment_content=comment_data.content,
+                    diagram_id=diagram_id,
+                    diagram_name=diagram_name,
+                    comment_id=new_comment.id
+                )
+            except Exception as e:
+                # Log error but don't fail the comment creation
+                logger.error(
+                    "Failed to send mention email notification",
+                    correlation_id=correlation_id,
+                    mentioned_user=mentioned_user.email,
+                    error=str(e)
+                )
     
     logger.info(
         "Comment created successfully",
