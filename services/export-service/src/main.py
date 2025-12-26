@@ -1433,6 +1433,255 @@ async def export_pdf(request: ExportRequest):
         raise HTTPException(status_code=500, detail=f"Failed to export PDF: {str(e)}")
 
 
+@app.post("/diagrams/{diagram_id}/comments/export/pdf")
+async def export_comments_pdf(diagram_id: str):
+    """
+    Export all comments for a diagram as a PDF document.
+
+    Feature #443: Comments: Comment export: PDF
+
+    Creates a nicely formatted PDF with:
+    - Diagram context (name, ID, creation date)
+    - All comments with author, timestamp, and content
+    - Comment threads (parent-child relationships)
+    - Comment position/element context (what was commented on)
+    - Resolved status, reactions, and mentions
+    - Text selection context for note comments
+    """
+    try:
+        logger.info(f"Exporting comments for diagram {diagram_id} as PDF")
+
+        # Connect to database to fetch diagram and comments
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            cursor_factory=RealDictCursor
+        )
+        cursor = conn.cursor()
+
+        # Fetch diagram information
+        cursor.execute(
+            """
+            SELECT f.id, f.title, f.created_at, f.updated_at, f.file_type, u.email as owner_email
+            FROM files f
+            JOIN users u ON f.owner_id = u.id
+            WHERE f.id = %s
+            """,
+            (diagram_id,)
+        )
+        diagram = cursor.fetchone()
+
+        if not diagram:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Diagram not found")
+
+        # Fetch all comments with user information
+        cursor.execute(
+            """
+            SELECT
+                c.id, c.content, c.created_at, c.updated_at, c.parent_id,
+                c.position_x, c.position_y, c.element_id,
+                c.text_start, c.text_end, c.text_content,
+                c.is_resolved, c.resolved_at, c.is_private,
+                u.email as author_email,
+                resolver.email as resolved_by_email,
+                (SELECT COUNT(*) FROM comment_reactions WHERE comment_id = c.id) as reaction_count,
+                (SELECT COUNT(*) FROM comments WHERE parent_id = c.id) as reply_count
+            FROM comments c
+            JOIN users u ON c.user_id = u.id
+            LEFT JOIN users resolver ON c.resolved_by = resolver.id
+            WHERE c.file_id = %s
+            ORDER BY c.created_at ASC
+            """,
+            (diagram_id,)
+        )
+        comments = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        # Create PDF
+        buffer = io.BytesIO()
+        pdf = pdf_canvas.Canvas(buffer, pagesize=letter)
+        page_width, page_height = letter
+
+        # Set up fonts
+        pdf.setFont("Helvetica-Bold", 16)
+
+        # Title
+        y_position = page_height - 50
+        pdf.drawString(50, y_position, f"Comments Export: {diagram['title']}")
+
+        # Diagram metadata
+        pdf.setFont("Helvetica", 10)
+        y_position -= 25
+        pdf.drawString(50, y_position, f"Diagram ID: {diagram['id']}")
+        y_position -= 15
+        pdf.drawString(50, y_position, f"Owner: {diagram['owner_email']}")
+        y_position -= 15
+        pdf.drawString(50, y_position, f"Type: {diagram['file_type']}")
+        y_position -= 15
+        pdf.drawString(50, y_position, f"Created: {diagram['created_at'].strftime('%Y-%m-%d %H:%M UTC') if diagram['created_at'] else 'N/A'}")
+        y_position -= 15
+        pdf.drawString(50, y_position, f"Exported: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+        y_position -= 15
+        pdf.drawString(50, y_position, f"Total Comments: {len(comments)}")
+
+        # Draw separator line
+        y_position -= 20
+        pdf.line(50, y_position, page_width - 50, y_position)
+        y_position -= 30
+
+        # Group comments by threads (parent comments and their replies)
+        comment_dict = {c['id']: c for c in comments}
+        top_level_comments = [c for c in comments if c['parent_id'] is None]
+
+        # Function to draw a comment
+        def draw_comment(comment, indent=0, is_reply=False):
+            nonlocal y_position, pdf
+
+            # Check if we need a new page
+            if y_position < 100:
+                pdf.showPage()
+                y_position = page_height - 50
+                pdf.setFont("Helvetica", 10)
+
+            # Comment header
+            pdf.setFont("Helvetica-Bold", 11)
+            header = f"{'Reply by' if is_reply else 'Comment by'} {comment['author_email']}"
+            pdf.drawString(50 + indent, y_position, header)
+
+            y_position -= 15
+            pdf.setFont("Helvetica", 9)
+            pdf.drawString(50 + indent, y_position, f"Posted: {comment['created_at'].strftime('%Y-%m-%d %H:%M UTC') if comment['created_at'] else 'N/A'}")
+
+            # Status indicators
+            status_parts = []
+            if comment['is_resolved']:
+                status_parts.append(f"✓ Resolved")
+                if comment['resolved_by_email']:
+                    status_parts.append(f"by {comment['resolved_by_email']}")
+            if comment['reaction_count'] and comment['reaction_count'] > 0:
+                status_parts.append(f"❤ {comment['reaction_count']} reactions")
+            if comment['reply_count'] and comment['reply_count'] > 0:
+                status_parts.append(f"💬 {comment['reply_count']} replies")
+
+            if status_parts:
+                y_position -= 15
+                pdf.setFont("Helvetica-Oblique", 8)
+                pdf.drawString(50 + indent, y_position, " | ".join(status_parts))
+
+            # Context information
+            context_parts = []
+            if comment['element_id']:
+                context_parts.append(f"Element: {comment['element_id']}")
+            if comment['position_x'] is not None and comment['position_y'] is not None:
+                context_parts.append(f"Position: ({comment['position_x']:.1f}, {comment['position_y']:.1f})")
+            if comment['text_start'] is not None and comment['text_end'] is not None:
+                context_parts.append(f"Text selection: chars {comment['text_start']}-{comment['text_end']}")
+
+            if context_parts:
+                y_position -= 15
+                pdf.setFont("Helvetica-Oblique", 8)
+                pdf.drawString(50 + indent, y_position, "Context: " + " | ".join(context_parts))
+
+            # Selected text context (for note comments)
+            if comment['text_content']:
+                y_position -= 15
+                pdf.setFont("Helvetica-Oblique", 8)
+                pdf.drawString(50 + indent, y_position, f"Selected text: \"{comment['text_content'][:80]}...\"" if len(comment['text_content']) > 80 else f"Selected text: \"{comment['text_content']}\"")
+
+            # Comment content
+            y_position -= 20
+            pdf.setFont("Helvetica", 10)
+
+            # Word wrap the content
+            max_width = page_width - 100 - indent
+            words = comment['content'].split()
+            lines = []
+            current_line = []
+
+            for word in words:
+                test_line = ' '.join(current_line + [word])
+                if pdf.stringWidth(test_line, "Helvetica", 10) < max_width:
+                    current_line.append(word)
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                    current_line = [word]
+
+            if current_line:
+                lines.append(' '.join(current_line))
+
+            # Draw content lines
+            for line in lines:
+                if y_position < 50:
+                    pdf.showPage()
+                    y_position = page_height - 50
+                    pdf.setFont("Helvetica", 10)
+
+                pdf.drawString(50 + indent, y_position, line)
+                y_position -= 15
+
+            y_position -= 10
+
+            # Draw replies
+            replies = [c for c in comments if c['parent_id'] == comment['id']]
+            for reply in replies:
+                draw_comment(reply, indent=indent + 20, is_reply=True)
+
+            # Separator after each top-level thread
+            if not is_reply:
+                y_position -= 5
+                pdf.setFont("Helvetica", 8)
+                pdf.setStrokeColorRGB(0.7, 0.7, 0.7)
+                pdf.line(50, y_position, page_width - 50, y_position)
+                pdf.setStrokeColorRGB(0, 0, 0)
+                y_position -= 15
+
+        # Draw all top-level comments and their threads
+        if top_level_comments:
+            for comment in top_level_comments:
+                draw_comment(comment)
+        else:
+            pdf.setFont("Helvetica-Oblique", 12)
+            pdf.drawString(50, y_position, "No comments found for this diagram.")
+
+        # Footer on last page
+        pdf.setFont("Helvetica", 8)
+        pdf.drawString(50, 30, f"Generated by AutoGraph v3 Export Service - {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
+
+        # Save PDF
+        pdf.save()
+
+        # Get PDF content
+        buffer.seek(0)
+        pdf_content = buffer.read()
+
+        logger.info(f"Comments PDF export generated successfully for diagram {diagram_id} (size: {len(pdf_content)} bytes, comments: {len(comments)})")
+
+        # Return PDF file
+        return Response(
+            content=pdf_content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=comments_{diagram_id}.pdf"
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting comments PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to export comments PDF: {str(e)}")
+
+
 @app.post("/export/markdown")
 async def export_markdown(request: ExportRequest):
     """

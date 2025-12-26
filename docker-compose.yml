@@ -306,6 +306,11 @@ services:
       dockerfile: Dockerfile
     container_name: autograph-export-service
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-autograph}
+      POSTGRES_USER: ${POSTGRES_USER:-autograph}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       MINIO_HOST: minio
       MINIO_PORT: 9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -320,6 +325,8 @@ services:
     volumes:
     - ./certs:/app/certs:ro
     depends_on:
+      postgres:
+        condition: service_healthy
       minio:
         condition: service_healthy
       redis:
