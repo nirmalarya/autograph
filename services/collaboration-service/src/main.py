@@ -1348,6 +1348,88 @@ class Operation:
         }
 
 
+def can_merge_operations(op1: Operation, op2: Operation) -> bool:
+    """
+    Check if two operations can be intelligently merged (non-conflicting).
+
+    Operations are non-conflicting if they modify different properties of the same element.
+    Examples:
+    - move (x, y) + resize (width, height) -> Can merge
+    - move (x, y) + rotate (angle) -> Can merge
+    - move (x1, y1) + move (x2, y2) -> Cannot merge (conflicting)
+    - color (red) + color (blue) -> Cannot merge (conflicting)
+
+    Feature #409: Intelligent merge for complex conflicts
+    """
+    # Different operation types on same element may be non-conflicting
+    if op1.operation_type != op2.operation_type:
+        # Check if operations affect different properties
+        non_conflicting_pairs = {
+            ('move', 'resize'),
+            ('resize', 'move'),
+            ('move', 'rotate'),
+            ('rotate', 'move'),
+            ('resize', 'rotate'),
+            ('rotate', 'resize'),
+            ('move', 'style'),
+            ('style', 'move'),
+            ('resize', 'style'),
+            ('style', 'resize')
+        }
+
+        return (op1.operation_type, op2.operation_type) in non_conflicting_pairs
+
+    # Same operation type - check if they modify different properties
+    if isinstance(op1.new_value, dict) and isinstance(op2.new_value, dict):
+        op1_keys = set(op1.new_value.keys())
+        op2_keys = set(op2.new_value.keys())
+
+        # If there's no overlap in keys, operations are non-conflicting
+        return len(op1_keys & op2_keys) == 0
+
+    return False
+
+
+def merge_operations(op1: Operation, op2: Operation) -> Operation:
+    """
+    Intelligently merge two non-conflicting operations.
+
+    Returns a new operation that combines both changes.
+
+    Feature #409: Intelligent merge for complex conflicts
+    """
+    import uuid
+
+    # Create merged value
+    merged_value = {}
+
+    # Add all properties from op1
+    if isinstance(op1.new_value, dict):
+        merged_value.update(op1.new_value)
+
+    # Add all properties from op2
+    if isinstance(op2.new_value, dict):
+        merged_value.update(op2.new_value)
+
+    # Create merged operation (use later timestamp)
+    later_op = op1 if op1.timestamp >= op2.timestamp else op2
+
+    merged_op = Operation(
+        operation_id=str(uuid.uuid4()),
+        user_id=f"merged:{op1.user_id},{op2.user_id}",
+        element_id=op1.element_id,
+        operation_type="merged",
+        old_value=op1.old_value if isinstance(op1.old_value, dict) else {},
+        new_value=merged_value,
+        timestamp=later_op.timestamp,
+        transformed=True
+    )
+
+    logger.info(f"OT: Merged operations - {op1.operation_type} + {op2.operation_type} = {merged_value}")
+
+    return merged_op
+
+
 def transform_operations(op1: Operation, op2: Operation, room_id: str = None) -> tuple:
     """
     Operational Transform: Transform two concurrent operations.
@@ -1356,20 +1438,62 @@ def transform_operations(op1: Operation, op2: Operation, room_id: str = None) ->
     - op1' is op1 transformed against op2
     - op2' is op2 transformed against op1
 
-    This implements a simple OT algorithm for concurrent edits.
     Feature #408: Last-write-wins with conflict logging
+    Feature #409: Intelligent merge for non-conflicting operations
     """
     # If operations are on different elements, no transformation needed
     if op1.element_id != op2.element_id:
         return op1, op2
 
-    # Same element - need to resolve conflict
+    # Same element - check if operations can be merged
     logger.info(f"OT: Transforming concurrent operations on element {op1.element_id}")
     logger.info(f"  Op1: {op1.operation_type} by {op1.user_id} at {op1.timestamp}")
     logger.info(f"  Op2: {op2.operation_type} by {op2.user_id} at {op2.timestamp}")
 
-    # Strategy: Last-write-wins based on timestamp (with tie-breaker by user_id)
-    # In production, more sophisticated OT algorithms could be used
+    # Feature #409: Check if operations are non-conflicting and can be merged
+    if can_merge_operations(op1, op2):
+        logger.info(f"OT: Operations are non-conflicting - performing intelligent merge")
+
+        merged_op = merge_operations(op1, op2)
+
+        # Log the merge
+        if room_id and room_id not in conflict_log:
+            conflict_log[room_id] = []
+
+        if room_id:
+            merge_entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "element_id": op1.element_id,
+                "operations": [
+                    {
+                        "user_id": op1.user_id,
+                        "type": op1.operation_type,
+                        "value": op1.new_value,
+                        "timestamp": op1.timestamp.isoformat()
+                    },
+                    {
+                        "user_id": op2.user_id,
+                        "type": op2.operation_type,
+                        "value": op2.new_value,
+                        "timestamp": op2.timestamp.isoformat()
+                    }
+                ],
+                "merged_value": merged_op.new_value,
+                "resolution": "merge"
+            }
+            conflict_log[room_id].append(merge_entry)
+
+            # Keep only last 100 conflicts per room
+            if len(conflict_log[room_id]) > 100:
+                conflict_log[room_id] = conflict_log[room_id][-100:]
+
+            logger.info(f"MERGE LOGGED: {op1.operation_type} + {op2.operation_type} = merged value")
+
+        # Return the merged operation for both
+        return (merged_op, merged_op)
+
+    # Feature #408: Conflicting operations - use last-write-wins
+    logger.info(f"OT: Operations are conflicting - using last-write-wins")
 
     winner = None
     loser = None
@@ -1407,7 +1531,7 @@ def transform_operations(op1: Operation, op2: Operation, room_id: str = None) ->
             loser = op1
             result = (op2, op2)
 
-    # Feature #408: Log the conflict
+    # Log the conflict
     if room_id and room_id not in conflict_log:
         conflict_log[room_id] = []
 
@@ -1550,6 +1674,97 @@ async def element_update_ot(sid, data):
         }
     except Exception as e:
         logger.error(f"Failed to handle OT element update: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def operation(sid, data):
+    """
+    Handle operation event with operational transform.
+    This is an alias for element_update_ot for better API ergonomics.
+
+    Expected data: {
+        "room": "room-id",
+        "user_id": "user-id",  # Optional, can be extracted from session
+        "element_id": "element-id",
+        "operation_type": "move | resize | rotate | style | etc",
+        "old_value": {...},
+        "new_value": {...}
+    }
+
+    Feature #409: Intelligent merge for complex conflicts
+    """
+    try:
+        room_id = data.get('room')
+        element_id = data.get('element_id')
+        operation_type = data.get('operation_type', 'update')
+        old_value = data.get('old_value')
+        new_value = data.get('new_value')
+
+        # Get user_id from data - required field
+        user_id = data.get('user_id')
+
+        if not room_id or not user_id or not element_id:
+            logger.error(f"Missing required fields: room={room_id}, user_id={user_id}, element_id={element_id}")
+            return {"success": False, "error": "room, user_id, and element_id required"}
+
+        # Create operation
+        import uuid
+        op = Operation(
+            operation_id=str(uuid.uuid4()),
+            user_id=user_id,
+            element_id=element_id,
+            operation_type=operation_type,
+            old_value=old_value,
+            new_value=new_value,
+            timestamp=datetime.utcnow()
+        )
+
+        logger.info(f"Received operation: {operation_type} on {element_id} by {user_id}")
+
+        # Apply operational transform
+        transformed_op = apply_operational_transform(room_id, op)
+
+        logger.info(f"OT: Applied transform for {operation_type} on {element_id}")
+        logger.info(f"  Original: {new_value}")
+        logger.info(f"  Transformed: {transformed_op.new_value}")
+
+        # Broadcast the transformed operation to all clients in the room
+        await sio.emit('operation_applied', {
+            'type': 'operation_applied',
+            'data': {
+                'element_id': transformed_op.element_id,
+                'operation_type': transformed_op.operation_type,
+                'new_value': transformed_op.new_value,
+                'old_value': transformed_op.old_value,
+                'user_id': transformed_op.user_id,
+                'resolved_by_ot': transformed_op.transformed,
+                'timestamp': transformed_op.timestamp.isoformat()
+            }
+        }, room=room_id)
+
+        # Update element state
+        if room_id not in element_states:
+            element_states[room_id] = {}
+
+        # Merge state intelligently
+        if element_id not in element_states[room_id]:
+            element_states[room_id][element_id] = {}
+
+        if isinstance(transformed_op.new_value, dict):
+            element_states[room_id][element_id].update(transformed_op.new_value)
+        else:
+            element_states[room_id][element_id] = transformed_op.new_value
+
+        logger.info(f"Updated element state: {element_states[room_id][element_id]}")
+
+        return {
+            "success": True,
+            "transformed": transformed_op.transformed,
+            "final_value": element_states[room_id][element_id]
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle operation: {e}", exc=e)
         return {"success": False, "error": str(e)}
 
 

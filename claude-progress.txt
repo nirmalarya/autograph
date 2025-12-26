@@ -13603,3 +13603,150 @@ consistency through proper operational transform implementation. All clients
 converge to identical state regardless of concurrent edit patterns.
 
 Feature #407: passes = true
+
+=============================================================================
+SESSION: Feature #408 - Last-Write-Wins Conflict Resolution
+=============================================================================
+Date: 2025-12-25
+Feature: #408 - Real-time collaboration: Conflict resolution with last-write-wins
+Status: ✅ COMPLETED
+
+IMPLEMENTATION SUMMARY:
+Enhanced the collaboration service's operational transform (OT) implementation
+to add comprehensive conflict logging for last-write-wins resolution strategy.
+
+CHANGES MADE:
+1. Added conflict_log data structure (Dict[str, List[dict]])
+   - Tracks conflicts per room with winner/loser details
+   - Maintains last 100 conflicts per room
+   - Includes timestamp, element_id, operation_type, resolution strategy
+
+2. Enhanced transform_operations() function
+   - Added room_id parameter for conflict logging
+   - Logs conflicts with complete winner/loser information
+   - Captures both values that conflicted
+   - Records resolution strategy ("last-write-wins")
+
+3. Added HTTP endpoint: GET /ot/conflicts/{room_id}
+   - Returns conflict history for a room
+   - Supports pagination with limit parameter
+   - Returns conflict count and details
+
+4. Updated apply_operational_transform()
+   - Passes room_id to transform_operations for logging
+   - Preserves all existing OT functionality
+
+TEST RESULTS:
+✅ Test 1: Basic last-write-wins conflict
+   - User A sets color to red
+   - User B sets color to blue (later timestamp)
+   - Blue wins (last write)
+   - Both clients converge to blue
+   - Conflict logged correctly
+
+✅ Test 2: Tie-breaker scenario
+   - Two operations with identical timestamp
+   - Lexicographic ordering by user_id
+   - Correct winner determined
+   - Conflict logged
+
+✅ All 6 test assertions passed
+✅ WebSocket real-time updates working
+✅ HTTP conflict log endpoint functioning
+
+REGRESSION CHECK:
+✅ Baseline features: 407/407 passing (no regressions)
+✅ Total features: 408/658 passing (+1)
+✅ All existing collaboration features intact
+✅ OT functionality preserved
+
+QUALITY GATES:
+✅ Service health: All 11 services healthy
+✅ E2E testing: 2 scenarios, 6 assertions passed
+✅ Regression testing: No baseline regressions
+✅ Conflict logging: Verified working
+✅ No breaking changes introduced
+✅ Zero TODOs in code
+
+FILES MODIFIED:
+- services/collaboration-service/src/main.py (+76 -8 lines)
+- spec/feature_list.json (Feature #408: passes = true)
+- validate_feature_408_last_write_wins.py (new, 327 lines)
+
+TECHNICAL DETAILS:
+- Last-write-wins based on operation timestamp
+- Tie-breaker uses lexicographic ordering of user_id
+- Conflict log includes: timestamp, element_id, winner, loser, resolution
+- Integrated seamlessly with existing OT infrastructure
+- No changes to WebSocket event handlers required
+- HTTP endpoint follows existing API patterns
+
+Feature #408: passes = true ✅
+=============================================================================
+
+=============================================================================
+SESSION: Feature #409 - Intelligent Merge for Complex Conflicts
+Date: 2025-12-25
+Time: 20:13 - 21:30
+=============================================================================
+
+FEATURE IMPLEMENTED:
+Feature #409: Real-time collaboration - intelligent merge for complex conflicts
+
+IMPLEMENTATION:
+1. Added can_merge_operations() - detects non-conflicting operation pairs
+2. Added merge_operations() - combines non-conflicting operations
+3. Enhanced transform_operations() - checks merge capability before last-write-wins
+4. Added 'operation' Socket.IO event handler
+5. Intelligent element state merging
+
+KEY FEATURES:
+- Merges move + resize operations
+- Merges move + rotate operations
+- Merges resize + style operations
+- Falls back to last-write-wins for true conflicts
+- Logs merge events separately
+
+TEST RESULTS:
+✅ User A moves shape to (100, 100)
+✅ User B resizes shape to 200x150
+✅ System detects non-conflicting operations
+✅ System merges both changes
+✅ Both clients receive merged value: {x: 100, y: 100, width: 200, height: 150}
+✅ operation_type: "merged", resolved_by_ot: true
+✅ State convergence verified
+
+REGRESSION CHECK:
+✅ Baseline features: 408/408 passing (no regressions)
+✅ Feature #408 (last-write-wins) still working
+✅ All existing OT functionality preserved
+
+QUALITY GATES:
+✅ Service health: All 11 services healthy
+✅ E2E testing: Intelligent merge verified
+✅ WebSocket communication: Real-time broadcasts working
+✅ Conflict logging: Merge events logged correctly
+✅ State convergence: Both clients identical
+✅ No TODOs in code
+✅ No breaking changes introduced
+
+FILES MODIFIED:
+- services/collaboration-service/src/main.py (+220 lines)
+  * can_merge_operations() function
+  * merge_operations() function
+  * Enhanced transform_operations()
+  * New 'operation' event handler
+- spec/feature_list.json (Feature #409: passes = true)
+- validate_feature_409_intelligent_merge.py (new, 255 lines)
+- SESSION_SUMMARY_FEATURE409_INTELLIGENT_MERGE.md (new)
+
+TECHNICAL HIGHLIGHTS:
+- Non-conflicting operation pairs: (move,resize), (move,rotate), (resize,style)
+- Merge algorithm combines all properties from both operations
+- Conflict log includes separate "merge" resolution type
+- Backward compatible with existing conflict resolution
+
+Feature #409: passes = true ✅
+Total features passing: 409/658
+=============================================================================
+
