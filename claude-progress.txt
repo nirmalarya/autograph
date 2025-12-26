@@ -16544,3 +16544,166 @@ NEXT STEPS:
 
 SESSION COMPLETE: Feature #447 ✅ PASSING
 ================================================================================
+
+================================================================================
+SESSION: Feature #448 - PDF Comment Attachments
+DATE: 2025-12-26
+AGENT: Enhancement Coding Agent
+================================================================================
+
+FEATURE IMPLEMENTED: #448 - Comment Attachments: PDF File Support
+
+DESCRIPTION:
+Extended the comment attachment feature to support PDF files in addition to 
+images. Users can now attach PDF documents to comments, with automatic 
+thumbnail generation from the first page.
+
+IMPLEMENTATION DETAILS:
+
+1. BACKEND CHANGES (diagram-service):
+   - Updated allowed file types to include "application/pdf"
+   - Added PyMuPDF (fitz) library for PDF processing
+   - Implemented PDF thumbnail generation from first page
+   - Made width/height optional for non-image attachments
+   - Conditional thumbnail generation based on file type:
+     * Images: PIL-based thumbnail generation
+     * PDFs: PyMuPDF-based first page rendering to PNG thumbnail
+
+2. FILE TYPE HANDLING:
+   Allowed types:
+   - Images: image/jpeg, image/jpg, image/png, image/gif, image/webp
+   - Documents: application/pdf
+
+3. PDF THUMBNAIL GENERATION:
+   - Extracts first page of PDF
+   - Renders to PNG at 200px max dimension
+   - Stores original PDF dimensions (width x height)
+   - Gracefully handles thumbnail generation failures
+
+4. DEPENDENCIES:
+   - Added PyMuPDF==1.24.0 to diagram-service requirements
+   - PyMuPDF installed via pip (pre-compiled wheel, no system dependencies needed)
+
+TESTING:
+✅ Created comprehensive E2E test (test_feature_448_pdf_attachments.py)
+✅ Tests PDF upload with metadata validation
+✅ Verifies PDF thumbnail generation (first page)
+✅ Tests PDF retrieval via API
+✅ Validates PDF-specific attributes (content-type, size)
+✅ Tests multiple PDF attachments per comment
+✅ Confirms invalid file type rejection (text files)
+✅ All assertions passing
+
+REGRESSION CHECK:
+✅ Baseline: 448 features passing
+✅ Current: 449 features passing  
+✅ No regressions detected
+✅ All existing features still working
+
+PROGRESS UPDATE:
+- Total features: 658
+- Passing: 449 (68.2%)
+- Remaining: 209 features
+- Baseline preserved: 448 (no regressions)
+
+FILES CREATED:
+- create_test_user_448_pdf.sql (test user setup)
+- test_feature_448_pdf_attachments.py (E2E test suite)
+
+FILES MODIFIED:
+- services/diagram-service/src/main.py (added PDF support to attachment upload)
+- services/diagram-service/requirements.txt (added PyMuPDF dependency)
+- spec/feature_list.json (marked #448 as passing)
+
+TECHNICAL NOTES:
+- PyMuPDF provides pre-compiled wheels for most platforms
+- No system dependencies (libmupdf) needed due to PyMuPDFb package
+- PDF thumbnails rendered as PNG for universal compatibility
+- Existing image attachment feature (#447) remains fully functional
+
+NEXT STEPS:
+- Continue with next failing feature
+- Maintain regression testing every session
+- Consider adding presigned URL support for direct MinIO access
+
+SESSION COMPLETE: Feature #448 ✅ PASSING
+================================================================================
+
+================================================================================
+SESSION: Feature #450 - Comment Sorting (Newest First)
+DATE: 2025-12-26
+TIME: 04:51 EST
+================================================================================
+
+FEATURE #450: Comments: Comment Sorting - Newest First
+STATUS: ✅ PASSING
+
+IMPLEMENTATION SUMMARY:
+Feature #450 was already implemented! The comment retrieval endpoint at 
+line 4303 in services/diagram-service/src/main.py already had full sorting
+support including:
+- sort_by parameter with "oldest" (default), "newest", and "most_reactions"
+- Proper ORDER BY clauses for database sorting
+- Enriched comment data with user info, reactions, and metadata
+
+WORK COMPLETED:
+1. ✅ Analyzed existing comment endpoint (GET /{diagram_id}/comments)
+2. ✅ Confirmed sorting functionality already present
+3. ✅ Created SQL setup for test user (create_test_user_450.sql)
+4. ✅ Created comprehensive E2E test (test_feature_450_comment_sorting.py)
+5. ✅ Verified all sorting modes work correctly
+6. ✅ Ran regression check - no regressions detected
+
+TESTING:
+✅ Created E2E test: test_feature_450_comment_sorting.py
+✅ Test verifies:
+   - Multiple comments can be created with different timestamps
+   - Default sorting is "oldest first" (ascending created_at)
+   - "newest" sorting returns comments in descending created_at order
+   - Most recent comment appears first when sort_by=newest
+   - Oldest comment appears last when sort_by=newest
+   - Timestamp ordering is correct (descending)
+   - Default behavior (no sort_by param) is oldest first
+
+TEST RESULTS:
+- Created 3 test comments with time delays
+- Verified oldest first sorting (default)
+- Verified newest first sorting
+- Confirmed most recent comment appears first
+- Confirmed timestamps in descending order
+- All assertions passing
+
+REGRESSION CHECK:
+✅ Baseline: 449 features passing
+✅ Current: 450 features passing (increased by 1)
+✅ No regressions detected
+✅ All existing features still working
+
+PROGRESS UPDATE:
+- Total features: 658
+- Passing: 450 (68.4%)
+- Remaining: 208 features
+- Baseline preserved: 449 (no regressions)
+
+FILES CREATED:
+- create_test_user_450.sql (test user setup)
+- test_feature_450_comment_sorting.py (E2E test suite)
+
+FILES MODIFIED:
+- spec/feature_list.json (marked #450 as passing)
+
+TECHNICAL NOTES:
+- Sorting is implemented at database level using ORDER BY
+- Three sorting modes supported: oldest, newest, most_reactions
+- Default sorting is "oldest" to maintain backward compatibility
+- most_reactions sorting done in-memory after fetching from DB
+- Comments enriched with user info, reactions, replies count, read status
+
+NEXT STEPS:
+- Continue with next failing feature (#451)
+- Maintain regression testing every session
+- All quality gates passing
+
+SESSION COMPLETE: Feature #450 ✅ PASSING
+================================================================================
+

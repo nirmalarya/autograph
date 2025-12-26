@@ -5506,8 +5506,8 @@ async def upload_comment_attachment(
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
 
-    # Validate file type (images only)
-    allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]
+    # Validate file type (images and PDFs)
+    allowed_types = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "application/pdf"]
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400,
@@ -5556,26 +5556,64 @@ async def upload_comment_attachment(
             content_type=file.content_type
         )
 
-        # Create and upload thumbnail
-        img = Image.open(io.BytesIO(file_content))
-        width, height = img.size
+        # Handle thumbnail generation based on file type
+        width = None
+        height = None
+        thumbnail_generated = False
 
-        # Generate thumbnail (max 200x200)
-        thumbnail_size = (200, 200)
-        img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+        if file.content_type.startswith("image/"):
+            # Create and upload image thumbnail
+            img = Image.open(io.BytesIO(file_content))
+            width, height = img.size
 
-        thumbnail_buffer = io.BytesIO()
-        img.save(thumbnail_buffer, format=img.format or 'PNG')
-        thumbnail_content = thumbnail_buffer.getvalue()
-        thumbnail_buffer.seek(0)
+            # Generate thumbnail (max 200x200)
+            thumbnail_size = (200, 200)
+            img.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
 
-        minio_client.put_object(
-            bucket_name,
-            thumbnail_path,
-            io.BytesIO(thumbnail_content),
-            len(thumbnail_content),
-            content_type=file.content_type
-        )
+            thumbnail_buffer = io.BytesIO()
+            img.save(thumbnail_buffer, format=img.format or 'PNG')
+            thumbnail_content = thumbnail_buffer.getvalue()
+            thumbnail_buffer.seek(0)
+
+            minio_client.put_object(
+                bucket_name,
+                thumbnail_path,
+                io.BytesIO(thumbnail_content),
+                len(thumbnail_content),
+                content_type=file.content_type
+            )
+            thumbnail_generated = True
+
+        elif file.content_type == "application/pdf":
+            # Generate PDF thumbnail from first page
+            try:
+                import fitz  # PyMuPDF
+                pdf_document = fitz.open(stream=file_content, filetype="pdf")
+                if pdf_document.page_count > 0:
+                    # Get first page
+                    page = pdf_document[0]
+                    width = int(page.rect.width)
+                    height = int(page.rect.height)
+
+                    # Render page to image (thumbnail size)
+                    zoom = 200 / max(width, height)  # Scale to 200px max dimension
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat)
+
+                    # Convert to PNG and upload
+                    thumbnail_content = pix.tobytes("png")
+                    minio_client.put_object(
+                        bucket_name,
+                        thumbnail_path,
+                        io.BytesIO(thumbnail_content),
+                        len(thumbnail_content),
+                        content_type="image/png"
+                    )
+                    thumbnail_generated = True
+                pdf_document.close()
+            except Exception as pdf_err:
+                logger.warning(f"Could not generate PDF thumbnail: {pdf_err}")
+                # Continue without thumbnail for PDFs
 
         # Save attachment record to database
         attachment = CommentAttachment(
@@ -5585,7 +5623,7 @@ async def upload_comment_attachment(
             content_type=file.content_type,
             file_size=file_size,
             storage_path=storage_path,
-            thumbnail_path=thumbnail_path,
+            thumbnail_path=thumbnail_path if thumbnail_generated else None,
             width=width,
             height=height
         )
