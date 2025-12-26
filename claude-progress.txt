@@ -14994,3 +14994,85 @@ NEXT STEPS:
 - Monitor for any comment-related feedback
 
 ================================================================================
+
+================================================================================
+SESSION: Feature #425 - Note Text Selection Comments
+DATE: 2025-12-25 23:14 EST
+================================================================================
+
+FEATURE IMPLEMENTED: #425
+Name: Comments: Add comment to note text selection
+Category: functional
+
+IMPLEMENTATION SUMMARY:
+Successfully implemented the ability to add comments to text selections within note shapes in TLDraw canvas. Users can now select text in a note and add inline comments anchored to specific character positions.
+
+TECHNICAL DETAILS:
+
+1. DATABASE SCHEMA (NEW):
+   - Added text_start (INTEGER): Starting character position
+   - Added text_end (INTEGER): Ending character position  
+   - Added text_content (TEXT): Selected text content for reference
+   - Created index on (file_id, element_id, text_start, text_end)
+   - Migration: add_text_selection_comment_fields.sql
+
+2. BACKEND (diagram-service):
+   - Updated Comment model with text selection fields
+   - Extended CreateCommentRequest with optional text selection params
+   - Extended CommentResponse to include text selection data
+   - Updated comment creation logic to accept text selections
+   - Updated comment retrieval to include text selection fields
+
+3. FRONTEND (TLDrawCanvas):
+   - Added onAddNoteComment prop to TLDrawCanvas interface
+   - Implemented 'add-note-comment' action (keyboard: Shift+C)
+   - Action checks if selected shape is a note type
+   - Captures note text content and positions
+
+4. FRONTEND (Page Component):
+   - Added state: commentTextStart, commentTextEnd, commentTextContent
+   - Implemented handleAddNoteComment callback
+   - Updated handleSubmitComment to send text selection data
+   - Enhanced comment dialog to show selected text
+   - Differentiates between canvas comments and text comments
+
+USER WORKFLOW:
+1. Select a note shape in TLDraw canvas
+2. Press Shift+C or use "Comment on Note Selection" action
+3. Comment dialog appears showing the selected text
+4. User types comment → clicks "Add Comment"
+5. Comment saved with text position anchors
+6. Success confirmation shown
+
+FILES CHANGED:
+- add_text_selection_comment_fields.sql (+19 lines, new)
+- services/diagram-service/src/models.py (+4 lines)
+- services/diagram-service/src/main.py (+16 lines)
+- services/frontend/app/canvas/[id]/TLDrawCanvas.tsx (+34 lines)
+- services/frontend/app/canvas/[id]/page.tsx (+70 lines)
+- spec/feature_list.json (marked #425 passing)
+- test_feature_425_simple.py (new validation script)
+
+VALIDATION:
+✅ Database columns created and indexed
+✅ Comment model has text selection fields
+✅ POST /comments accepts text_start, text_end, text_content
+✅ GET /comments returns text selection data
+✅ TLDraw canvas has note comment action (Shift+C)
+✅ Comment dialog shows selected text for note comments
+✅ Frontend differentiates canvas vs text comments
+✅ All validation tests passing
+
+GIT COMMIT:
+Hash: e316fb9
+Message: "Feature #425: Implement note text selection comments"
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 426 (was 425)
+Percentage: 64.7%
+Remaining: 232 features
+
+NEXT FEATURE: #426 - Comment threads: reply to comments
+
+================================================================================
