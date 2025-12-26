@@ -4527,6 +4527,214 @@ async def get_usage_stats(request: Request, flag_name: str, days: int = 7):
 # Scheduled Backup Tasks
 # ==========================================
 
+@app.post("/api/admin/encryption/rotate-keys")
+async def rotate_encryption_keys(request: Request, rotation_request: dict):
+    """
+    Rotate encryption keys for database and application secrets.
+
+    This endpoint rotates:
+    1. Database encryption keys (pgcrypto)
+    2. SecretsManager master encryption key
+
+    Required permissions: admin only
+
+    Request body:
+    {
+        "old_db_key": "current database encryption key",
+        "new_db_key": "new database encryption key",
+        "old_master_key": "current SecretsManager master key",
+        "new_master_key": "new SecretsManager master key"
+    }
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from key_rotation import rotate_all_keys
+
+        logger.info(
+            "Starting encryption key rotation",
+            correlation_id=correlation_id
+        )
+
+        # Extract keys from request
+        old_db_key = rotation_request.get("old_db_key")
+        new_db_key = rotation_request.get("new_db_key")
+        old_master_key = rotation_request.get("old_master_key")
+        new_master_key = rotation_request.get("new_master_key")
+
+        # Validate all keys are provided
+        if not all([old_db_key, new_db_key, old_master_key, new_master_key]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="All keys must be provided: old_db_key, new_db_key, old_master_key, new_master_key"
+            )
+
+        # Perform key rotation
+        result = rotate_all_keys(
+            old_db_key=old_db_key,
+            new_db_key=new_db_key,
+            old_master_key=old_master_key,
+            new_master_key=new_master_key,
+            database_url=os.getenv("DATABASE_URL")
+        )
+
+        # Check if rotation was successful
+        if not result["overall_success"]:
+            errors = []
+            if result["database"].get("errors"):
+                errors.extend(result["database"]["errors"])
+            if result["secrets_manager"].get("errors"):
+                errors.extend(result["secrets_manager"]["errors"])
+
+            logger.error(
+                "Key rotation failed",
+                correlation_id=correlation_id,
+                errors=errors
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Key rotation failed: {', '.join(errors)}"
+            )
+
+        logger.info(
+            "Encryption key rotation completed successfully",
+            correlation_id=correlation_id,
+            database_tables_rotated=result["database"]["tables_rotated"],
+            database_rows_rotated=result["database"]["rows_rotated"],
+            secrets_rotated=result["secrets_manager"]["secrets_rotated"]
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": "Encryption keys rotated successfully",
+            "result": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Key rotation failed", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Key rotation failed: {str(e)}"
+        )
+
+
+@app.post("/api/admin/encryption/generate-key")
+async def generate_encryption_key(request: Request):
+    """
+    Generate a new Fernet encryption key for SecretsManager.
+
+    This endpoint generates a cryptographically secure random key
+    that can be used as a new master key for SecretsManager.
+
+    Returns the new key in base64-encoded format.
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from key_rotation import KeyRotationManager
+
+        logger.info(
+            "Generating new encryption key",
+            correlation_id=correlation_id
+        )
+
+        # Generate new key
+        krm = KeyRotationManager(database_url=os.getenv("DATABASE_URL"))
+        new_key = krm.generate_new_key()
+
+        logger.info(
+            "New encryption key generated successfully",
+            correlation_id=correlation_id
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "new_key": new_key,
+            "message": "New encryption key generated. Store this securely!"
+        }
+
+    except Exception as e:
+        logger.error("Failed to generate encryption key", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate encryption key: {str(e)}"
+        )
+
+
+@app.post("/api/admin/encryption/verify")
+async def verify_encryption(request: Request, verification_request: dict):
+    """
+    Verify that encryption/decryption works with a given key.
+
+    Request body:
+    {
+        "encryption_key": "key to test",
+        "test_data": "optional test data (default: 'test-encryption-data')"
+    }
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from key_rotation import KeyRotationManager
+
+        encryption_key = verification_request.get("encryption_key")
+        test_data = verification_request.get("test_data", "test-encryption-data")
+
+        if not encryption_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="encryption_key is required"
+            )
+
+        logger.info(
+            "Verifying encryption key",
+            correlation_id=correlation_id
+        )
+
+        # Verify encryption
+        with KeyRotationManager(database_url=os.getenv("DATABASE_URL")) as krm:
+            is_valid = krm.verify_rotation(encryption_key, test_data)
+
+        if is_valid:
+            logger.info(
+                "Encryption verification successful",
+                correlation_id=correlation_id
+            )
+            return {
+                "correlation_id": correlation_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "success": True,
+                "valid": True,
+                "message": "Encryption key is valid"
+            }
+        else:
+            logger.warning(
+                "Encryption verification failed",
+                correlation_id=correlation_id
+            )
+            return {
+                "correlation_id": correlation_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "success": True,
+                "valid": False,
+                "message": "Encryption key is invalid or encryption failed"
+            }
+
+    except Exception as e:
+        logger.error("Encryption verification failed", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Encryption verification failed: {str(e)}"
+        )
+
+
 # Scheduled backup task
 SCHEDULED_BACKUP_TASK = None
 SCHEDULED_MINIO_BACKUP_TASK = None
