@@ -65,6 +65,8 @@ export const API_ENDPOINTS = {
         `${API_BASE_URL}/api/diagrams/${diagramId}/versions/${versionId}/description`,
       share: (diagramId: string, versionId: string) =>
         `${API_BASE_URL}/api/diagrams/${diagramId}/versions/${versionId}/share`,
+      restore: (diagramId: string, versionId: string) =>
+        `${API_BASE_URL}/api/diagrams/${diagramId}/versions/${versionId}/restore`,
     },
     versionShared: (token: string) => `${API_BASE_URL}/api/diagrams/version-shared/${token}`,
     comments: {

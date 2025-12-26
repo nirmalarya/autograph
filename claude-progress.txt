@@ -17707,3 +17707,41 @@ PROGRESS: 465/658 features (70.7%)
 
 Session complete: Feature 465 VERIFIED and PASSING ✅
 
+================================================================================
+SESSION: Feature #470 - Version Restore
+Date: 2025-12-26
+================================================================================
+
+FEATURE #470: Version history: Restore version: revert to previous
+Status: PASSING ✅
+
+WHAT WAS DONE:
+==============
+
+1. Backend Analysis:
+   - Verified existing restore endpoint at POST /{diagram_id}/versions/{version_id}/restore
+   - Endpoint creates automatic backup before restoring
+
+2. Frontend Implementation:
+   - Added restore endpoint to API config
+   - Implemented restore functionality in version history page
+   - Added Restore button to timeline view (purple theme)
+   - Created confirmation modal with warnings
+   - Automatic refresh after restore
+
+3. Testing:
+   - Created comprehensive test script
+   - All test steps passing ✅
+
+FILES MODIFIED:
+===============
+- services/frontend/src/lib/api-config.ts (added restore endpoint)
+- services/frontend/app/versions/[id]/page.tsx (restore UI and logic)
+
+FEATURE STATUS:
+===============
+Feature #470: PASSING ✅
+
+PROGRESS: 471/658 features (71.6%)
+
+Session complete: Feature 470 PASSING ✅

@@ -83,6 +83,11 @@ export default function VersionComparePage({
   const [shareUrl, setShareUrl] = useState<string>("");
   const [showShareModal, setShowShareModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // Restore state
+  const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [versionToRestore, setVersionToRestore] = useState<Version | null>(null);
   
   // Search/filter state
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -404,6 +409,83 @@ export default function VersionComparePage({
       params.set("mode", viewMode);
     }
     router.push(`/versions/${diagramId}?${params.toString()}`);
+  };
+
+  const handleRestoreClick = (version: Version) => {
+    setVersionToRestore(version);
+    setShowRestoreModal(true);
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (!versionToRestore) return;
+
+    setRestoringVersion(versionToRestore.id);
+    setShowRestoreModal(false);
+
+    try {
+      const token = localStorage.getItem("access_token");
+      const userId = localStorage.getItem("user_id");
+
+      if (!token || !userId) {
+        alert("Not authenticated");
+        return;
+      }
+
+      const response = await fetch(
+        API_ENDPOINTS.diagrams.versions.restore(diagramId, versionToRestore.id),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": userId,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Failed to restore version");
+      }
+
+      const result = await response.json();
+
+      // Show success message
+      alert(
+        `Successfully restored to version ${versionToRestore.version_number}!\n\n` +
+        `A backup of the current state was saved as version ${result.backup_version}.`
+      );
+
+      // Refresh the versions list
+      const versionsResponse = await fetch(
+        API_ENDPOINTS.diagrams.versions.list(diagramId),
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": userId,
+          },
+        }
+      );
+
+      if (versionsResponse.ok) {
+        const data = await versionsResponse.json();
+        const sortedVersions = (data.versions || []).sort((a: Version, b: Version) =>
+          b.version_number - a.version_number
+        );
+        setVersions(sortedVersions);
+      }
+    } catch (err: any) {
+      console.error("Error restoring version:", err);
+      alert(`Failed to restore version: ${err.message}`);
+    } finally {
+      setRestoringVersion(null);
+      setVersionToRestore(null);
+    }
+  };
+
+  const handleRestoreCancel = () => {
+    setShowRestoreModal(false);
+    setVersionToRestore(null);
   };
 
   if (loading && !comparison) {
@@ -742,6 +824,15 @@ export default function VersionComparePage({
                           >
                             Compare
                           </button>
+                          {index !== 0 && (
+                            <button
+                              onClick={() => handleRestoreClick(version)}
+                              disabled={restoringVersion === version.id}
+                              className="px-3 py-1 text-sm text-purple-600 hover:bg-purple-50 rounded border border-purple-200 disabled:opacity-50 font-medium"
+                            >
+                              {restoringVersion === version.id ? "Restoring..." : "🔄 Restore"}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1224,6 +1315,69 @@ export default function VersionComparePage({
                 className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Confirmation Modal */}
+      {showRestoreModal && versionToRestore && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
+                <span className="text-2xl">🔄</span>
+              </div>
+              <h3 className="text-lg font-semibold">Restore Version</h3>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-gray-700 mb-4">
+                Are you sure you want to restore to <strong>Version {versionToRestore.version_number}</strong>?
+              </p>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                <div className="flex items-start gap-2">
+                  <span className="text-yellow-600 mt-0.5">⚠️</span>
+                  <div className="text-sm text-yellow-800">
+                    <p className="font-medium mb-1">Important:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>This will revert the diagram to the selected version</li>
+                      <li>A backup of the current state will be created automatically</li>
+                      <li>The backup will appear as a new version in the timeline</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {versionToRestore.label && (
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Label:</span> {versionToRestore.label}
+                </p>
+              )}
+              {versionToRestore.description && (
+                <p className="text-sm text-gray-600 mt-1">
+                  <span className="font-medium">Description:</span> {versionToRestore.description}
+                </p>
+              )}
+              <p className="text-sm text-gray-500 mt-2">
+                Created: {new Date(versionToRestore.created_at).toLocaleString()} by {versionToRestore.user.full_name}
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleRestoreCancel}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRestoreConfirm}
+                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium"
+              >
+                Restore Version
               </button>
             </div>
           </div>
