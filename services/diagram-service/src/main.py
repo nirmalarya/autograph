@@ -4376,15 +4376,32 @@ async def get_comments(
     else:  # oldest (default)
         comments = query.order_by(Comment.created_at.asc()).all()
     
+    # Determine if user is a team member (owner or has been shared the diagram)
+    is_team_member = False
+    if diagram.user_id == user_id:
+        # User is the owner
+        is_team_member = True
+    else:
+        # Check if diagram is shared with this user
+        share = db.query(Share).filter(
+            Share.file_id == diagram_id,
+            Share.shared_with_user_id == user_id
+        ).first()
+        is_team_member = share is not None
+
     # Enrich comments with user info and reactions
     enriched_comments = []
     for comment in comments:
+        # Privacy filter: Skip private comments if user is not a team member
+        if comment.is_private and not is_team_member:
+            continue
+
         # Get user info
         user = db.query(User).filter(User.id == comment.user_id).first()
-        
+
         # Count replies
         replies_count = db.query(Comment).filter(Comment.parent_id == comment.id).count()
-        
+
         # Get reactions grouped by emoji
         reactions_query = db.query(
             CommentReaction.emoji,
@@ -4392,10 +4409,10 @@ async def get_comments(
         ).filter(
             CommentReaction.comment_id == comment.id
         ).group_by(CommentReaction.emoji).all()
-        
+
         reactions = {emoji: count for emoji, count in reactions_query}
         total_reactions = sum(reactions.values())
-        
+
         # Get mentions
         mentions = db.query(Mention).filter(Mention.comment_id == comment.id).all()
         mentioned_user_ids = [m.user_id for m in mentions]
@@ -4445,7 +4462,7 @@ async def get_comments(
             "mentions": mentioned_user_ids,
             "permalink": permalink
         }
-        
+
         enriched_comments.append(comment_dict)
     
     # Sort by most_reactions if requested
