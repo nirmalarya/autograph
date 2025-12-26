@@ -18567,3 +18567,75 @@ NEXT:
 =====
 Feature #484: Next failing feature
 
+
+================================================================================
+SESSION: 2025-12-26 11:30:57
+FEATURE #484: PNG Export - 1x Resolution - VERIFIED PASSING
+================================================================================
+
+OVERVIEW:
+=========
+Feature #484 tests that PNG exports can be generated at 1x resolution (lower
+resolution) in addition to 2x, 4x, etc.
+
+FEATURE DESCRIPTION:
+====================
+Export: PNG export: 1x resolution
+
+TEST RESULTS:
+=============
+✅ All 6 tests passed:
+1. 1x PNG export successful - PASS
+2. 1x returns image/png - PASS
+3. 1x PNG has content - PASS
+4. 2x PNG export successful - PASS
+5. 1x is smaller than 2x - PASS
+6. Size difference reasonable (2x > 1.5x larger) - PASS
+
+IMPLEMENTATION STATUS:
+======================
+✅ Feature already implemented - no code changes needed
+✅ Endpoint exists: POST /diagrams/{id}/export/png?scale=1
+✅ Scale parameter supports 1x, 2x, 4x resolutions
+
+KEY METRICS:
+============
+✅ 1x export: 12,059 bytes
+✅ 2x export: 33,054 bytes
+✅ Size ratio: 2.74x (2x is 2.74x larger than 1x)
+✅ Both return correct Content-Type: image/png
+
+WHY THIS MATTERS:
+=================
+- 1x resolution provides smaller file sizes for quick sharing
+- 2x/4x resolution provides higher quality for printing
+- Users can choose resolution based on use case
+- Bandwidth optimization for low-bandwidth scenarios
+
+FILES CREATED:
+==============
+- scripts/tests/test_feature_484_png_1x.py (test implementation)
+
+FILES VERIFIED:
+===============
+- services/diagram-service/src/main.py (PNG export endpoint)
+- services/export-service/src/main.py (PNG generation)
+
+QUALITY GATES:
+==============
+✓ Feature working end-to-end
+✓ 1x resolution produces smaller files
+✓ Correct content type returned
+✓ Resolution scaling works correctly
+✓ No regressions
+
+PROGRESS UPDATE:
+================
+- spec/feature_list.json: Feature #484 marked as passing
+- Progress: 485/658 features (73.7%)
+- 173 features remaining
+
+NEXT:
+=====
+Feature #485: Next failing feature
+
