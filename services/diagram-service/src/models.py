@@ -411,6 +411,37 @@ class CommentHistory(Base):
     )
 
 
+class CommentAttachment(Base):
+    """Comment attachments table (images attached to comments)."""
+    __tablename__ = "comment_attachments"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    comment_id = Column(String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False)
+
+    # File info
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=False)  # e.g., image/png, image/jpeg
+    file_size = Column(Integer, nullable=False)  # Size in bytes
+
+    # Storage paths (MinIO)
+    storage_path = Column(String(512), nullable=False)  # Full-size image path in MinIO
+    thumbnail_path = Column(String(512))  # Thumbnail path in MinIO
+
+    # Image dimensions
+    width = Column(Integer)
+    height = Column(Integer)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    comment = relationship("Comment", backref="attachments")
+
+    __table_args__ = (
+        Index('idx_comment_attachments_comment', 'comment_id'),
+    )
+
+
 class Share(Base):
     """Share links table."""
     __tablename__ = "shares"

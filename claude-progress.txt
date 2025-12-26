@@ -16450,3 +16450,97 @@ NEXT STEPS:
 - Ensure all new features don't break existing ones
 
 SESSION COMPLETE: Feature #447 ✅ PASSING
+
+================================================================================
+SESSION: Feature #447 - Comment Attachments (Attach Images)
+Date: 2025-12-26
+================================================================================
+
+OBJECTIVE:
+Implement feature #447: Allow users to attach images to comments with thumbnail generation.
+
+STATUS: ✅ COMPLETED
+
+IMPLEMENTATION SUMMARY:
+
+1. DATABASE SCHEMA:
+   - Table: comment_attachments
+   - Fields: id, comment_id, filename, content_type, file_size, storage_path, thumbnail_path, width, height, created_at
+   - Foreign key to comments table with CASCADE delete
+   - Index on comment_id for fast lookups
+
+2. BACKEND API ENDPOINTS:
+   - POST /{diagram_id}/comments/{comment_id}/attachments
+     * Accepts multipart/form-data file upload
+     * Validates file is an image (PNG, JPEG, GIF, WEBP)
+     * Generates UUID for attachment
+     * Stores full-size image in MinIO
+     * Creates thumbnail (max 200x200) and stores in MinIO
+     * Records metadata in database
+     * Returns attachment details with storage URLs
+   
+   - GET /{diagram_id}/comments/{comment_id}/attachments
+     * Retrieves all attachments for a comment
+     * Returns array of attachment metadata
+     * Includes storage URLs for both full-size and thumbnail
+
+3. IMAGE PROCESSING:
+   - Uses PIL (Pillow) for image manipulation
+   - Thumbnail generation maintains aspect ratio
+   - Maximum thumbnail size: 200x200 pixels
+   - Preserves original image format
+   - Captures and stores image dimensions
+
+4. STORAGE:
+   - MinIO bucket: uploads
+   - Path structure: comment-attachments/{diagram_id}/{comment_id}/{attachment_id}.{ext}
+   - Thumbnail path: comment-attachments/{diagram_id}/{comment_id}/{attachment_id}_thumb.{ext}
+
+5. VALIDATION:
+   - Content-type must be image/*
+   - Rejects non-image files with 400 error
+   - Validates comment exists before accepting upload
+   - Verifies user has access to diagram
+
+TESTING:
+✅ Created comprehensive E2E test (test_feature_448_comment_attachments.py)
+✅ Tests initial upload with thumbnail generation
+✅ Verifies attachment metadata (size, dimensions, URLs)
+✅ Tests multiple attachments per comment
+✅ Validates retrieval of all attachments
+✅ Confirms invalid file type rejection
+✅ All assertions passing
+
+BUG FIXES:
+- Fixed stale Docker container issue
+  * Rebuilt diagram-service container with --no-cache
+  * Ensured latest code deployed to container
+
+REGRESSION CHECK:
+✅ Baseline: 431 features passing
+✅ Current: 448 features passing  
+✅ No regressions detected
+✅ All existing features still working
+
+PROGRESS UPDATE:
+- Total features: 658
+- Passing: 448 (68.1%)
+- Remaining: 210 features
+
+FILES CREATED:
+- create_comment_attachments_table.sql (database schema)
+- create_test_user_448.sql (test user setup)
+- test_feature_448_comment_attachments.py (E2E test suite)
+
+FILES MODIFIED:
+- services/diagram-service/src/models.py (added CommentAttachment model)
+- services/diagram-service/src/main.py (added attachment upload/retrieval endpoints)
+- spec/feature_list.json (marked #447 as passing)
+
+NEXT STEPS:
+- Continue with next failing feature
+- Maintain regression testing every session
+- Ensure no breaking changes to existing functionality
+
+SESSION COMPLETE: Feature #447 ✅ PASSING
+================================================================================

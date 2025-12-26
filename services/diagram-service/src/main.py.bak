@@ -640,7 +640,7 @@ async def list_diagrams(
     if file_type:
         if file_type not in ['canvas', 'note', 'mixed']:
             raise HTTPException(status_code=400, detail="Invalid file_type. Must be: canvas, note, or mixed")
-        query = query.filter(FileModel.file_type == file_type)
+        query = query.filter(File.file_type == file_type)
     
     # Apply full-text search with fuzzy matching and advanced filters
     if search:
@@ -659,7 +659,7 @@ async def list_diagrams(
             if filter_key.lower() == 'type':
                 # Filter by file type
                 if filter_value.lower() in ['canvas', 'note', 'mixed']:
-                    query = query.filter(FileModel.file_type == filter_value.lower())
+                    query = query.filter(File.file_type == filter_value.lower())
             elif filter_key.lower() == 'author':
                 # Filter by author (owner email)
                 # Join with users table to search by email/name
@@ -670,7 +670,7 @@ async def list_diagrams(
                         User.full_name.ilike(f'%{filter_value}%')
                     )
                 ).subquery()
-                query = query.filter(FileModel.owner_id.in_(user_subquery))
+                query = query.filter(File.owner_id.in_(user_subquery))
             elif filter_key.lower() == 'tag':
                 # Filter by tag using JSON contains operator
                 # PostgreSQL: tags @> '["value"]' checks if JSON array contains the value
@@ -683,7 +683,7 @@ async def list_diagrams(
                 try:
                     from datetime import datetime
                     date_obj = datetime.fromisoformat(filter_value)
-                    query = query.filter(FileModel.created_at >= date_obj)
+                    query = query.filter(File.created_at >= date_obj)
                 except ValueError:
                     pass  # Invalid date format, skip filter
             elif filter_key.lower() == 'before':
@@ -691,7 +691,7 @@ async def list_diagrams(
                 try:
                     from datetime import datetime
                     date_obj = datetime.fromisoformat(filter_value)
-                    query = query.filter(FileModel.created_at <= date_obj)
+                    query = query.filter(File.created_at <= date_obj)
                 except ValueError:
                     pass  # Invalid date format, skip filter
         
@@ -2435,7 +2435,7 @@ async def get_user_mentions(
             # Get comment author
             comment_author = db.query(User).filter(User.id == comment.user_id).first()
             # Get diagram
-            diagram = db.query(FileModel).filter(FileModel.id == comment.file_id).first()
+            diagram = db.query(FileModel).filter(File.id == comment.file_id).first()
 
             result.append({
                 "id": mention.id,
@@ -2607,7 +2607,7 @@ async def get_notifications(
             continue
 
         # Get the diagram/file
-        diagram = db.query(FileModel).filter(FileModel.id == comment.file_id).first()
+        diagram = db.query(FileModel).filter(File.id == comment.file_id).first()
         if not diagram:
             continue
 
@@ -3796,7 +3796,7 @@ async def get_versions(
     )
     
     # Verify diagram exists
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         logger.warning(
             "Diagram not found",
@@ -4327,7 +4327,7 @@ async def get_comments(
     )
     
     # Verify diagram exists and user has access
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -4487,7 +4487,7 @@ async def create_comment(
     )
     
     # Verify diagram exists
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -4766,7 +4766,7 @@ async def get_comment_history(
         raise HTTPException(status_code=404, detail="Comment not found")
 
     # Get diagram to verify user has access
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
 
@@ -4869,7 +4869,7 @@ async def delete_comment_permanently(
         raise HTTPException(status_code=404, detail="Comment not found")
     
     # Check ownership or admin
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     user = db.query(User).filter(User.id == user_id).first()
     
     is_owner = comment.user_id == user_id
@@ -5129,7 +5129,7 @@ async def review_comment_flag(
             db.delete(comment)
 
             # Update diagram comment count
-            diagram = db.query(FileModel).filter(FileModel.id == comment.file_id).first()
+            diagram = db.query(FileModel).filter(File.id == comment.file_id).first()
             if diagram:
                 diagram.comment_count = max(0, (diagram.comment_count or 1) - 1)
                 diagram.updated_at = datetime.utcnow()
@@ -5412,7 +5412,7 @@ async def export_comments_csv(
     )
 
     # Verify diagram exists and user has access
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
 
@@ -5752,7 +5752,7 @@ async def create_version(
     )
     
     # Verify diagram exists
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -5860,7 +5860,7 @@ async def get_versions(
     )
     
     # Verify diagram exists
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -6215,7 +6215,7 @@ async def get_version(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram to check if this is the current version
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -6676,7 +6676,7 @@ async def get_shared_version(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram info
-    diagram = db.query(FileModel).filter(FileModel.id == share.file_id).first()
+    diagram = db.query(FileModel).filter(File.id == share.file_id).first()
     
     if not diagram:
         logger.warning("Shared version access failed - diagram not found", diagram_id=share.file_id)
@@ -6743,7 +6743,7 @@ async def restore_version(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -6849,7 +6849,7 @@ async def fork_version(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get original diagram for metadata
-    original_diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    original_diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not original_diagram:
         raise HTTPException(status_code=404, detail="Original diagram not found")
     
@@ -6929,7 +6929,7 @@ async def export_diagram_png(
     )
     
     # Get diagram
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7006,7 +7006,7 @@ async def export_diagram_svg(
     )
     
     # Get diagram
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7080,7 +7080,7 @@ async def export_diagram_pdf(
     )
     
     # Get diagram
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7174,7 +7174,7 @@ async def export_version_png(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram to check permissions and increment export count
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7269,7 +7269,7 @@ async def export_version_svg(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram to increment export count
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7361,7 +7361,7 @@ async def export_version_pdf(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Get diagram to increment export count
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7546,7 +7546,7 @@ async def compress_diagram_versions(
     )
     
     # Verify user owns the diagram
-    diagram = db.query(FileModel).filter(FileModel.id == diagram_id, File.owner_id == user_id).first()
+    diagram = db.query(FileModel).filter(File.id == diagram_id, File.owner_id == user_id).first()
     if not diagram:
         raise HTTPException(status_code=404, detail="Diagram not found or not authorized")
     
@@ -7629,7 +7629,7 @@ async def compress_specific_version(
         raise HTTPException(status_code=404, detail="Version not found")
     
     # Verify user owns the diagram
-    diagram = db.query(FileModel).filter(FileModel.id == version.file_id).first()
+    diagram = db.query(FileModel).filter(File.id == version.file_id).first()
     if not diagram or diagram.owner_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
     
@@ -7736,7 +7736,7 @@ async def get_retention_policy(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     # Get diagram
-    file = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    file = db.query(FileModel).filter(File.id == diagram_id).first()
     if not file:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7809,7 +7809,7 @@ async def set_retention_policy(
             )
     
     # Get diagram
-    file = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    file = db.query(FileModel).filter(File.id == diagram_id).first()
     if not file:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7866,7 +7866,7 @@ async def apply_retention_policy(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     # Get diagram
-    file = db.query(FileModel).filter(FileModel.id == diagram_id).first()
+    file = db.query(FileModel).filter(File.id == diagram_id).first()
     if not file:
         raise HTTPException(status_code=404, detail="Diagram not found")
     
@@ -7968,7 +7968,7 @@ async def apply_all_retention_policies(
     errors = []
     
     # Get all diagrams that are not deleted
-    files = db.query(FileModel).filter(FileModel.is_deleted == False).all()
+    files = db.query(FileModel).filter(File.is_deleted == False).all()
     
     for file in files:
         try:
@@ -8284,7 +8284,7 @@ async def get_analytics_overview(
         # Total diagrams created
         total_diagrams_query = db.query(func.count(File.id))
         if team_id:
-            total_diagrams_query = total_diagrams_query.filter(FileModel.team_id == team_id)
+            total_diagrams_query = total_diagrams_query.filter(File.team_id == team_id)
         total_diagrams = total_diagrams_query.scalar() or 0
         
         # Diagrams created in last 30 days
@@ -8293,7 +8293,7 @@ async def get_analytics_overview(
             File.created_at >= thirty_days_ago
         )
         if team_id:
-            recent_diagrams_query = recent_diagrams_query.filter(FileModel.team_id == team_id)
+            recent_diagrams_query = recent_diagrams_query.filter(File.team_id == team_id)
         recent_diagrams = recent_diagrams_query.scalar() or 0
         
         # Active users (users who created or updated diagrams in last 30 days)
@@ -8304,13 +8304,13 @@ async def get_analytics_overview(
             )
         )
         if team_id:
-            active_users_query = active_users_query.filter(FileModel.team_id == team_id)
+            active_users_query = active_users_query.filter(File.team_id == team_id)
         active_users = active_users_query.scalar() or 0
         
         # Total users
         total_users_query = db.query(func.count(func.distinct(File.owner_id)))
         if team_id:
-            total_users_query = total_users_query.filter(FileModel.team_id == team_id)
+            total_users_query = total_users_query.filter(File.team_id == team_id)
         total_users = total_users_query.scalar() or 0
         
         # Storage used (estimate based on canvas_data and note_content size)
@@ -8321,7 +8321,7 @@ async def get_analytics_overview(
             )
         )
         if team_id:
-            storage_query = storage_query.filter(FileModel.team_id == team_id)
+            storage_query = storage_query.filter(File.team_id == team_id)
         storage_bytes = storage_query.scalar() or 0
         
         # Convert to MB
@@ -8334,7 +8334,7 @@ async def get_analytics_overview(
             func.count(File.id)
         ).group_by(File.file_type)
         if team_id:
-            types_query = types_query.filter(FileModel.team_id == team_id)
+            types_query = types_query.filter(File.team_id == team_id)
         
         for diagram_type, count in types_query.all():
             diagram_types[diagram_type or 'unknown'] = count
@@ -8429,7 +8429,7 @@ async def get_diagrams_created_analytics(
         ).order_by('date')
         
         if team_id:
-            query = query.filter(FileModel.team_id == team_id)
+            query = query.filter(File.team_id == team_id)
         
         results = query.all()
         
@@ -8490,7 +8490,7 @@ async def get_users_active_analytics(
         ).order_by('date')
         
         if team_id:
-            query = query.filter(FileModel.team_id == team_id)
+            query = query.filter(File.team_id == team_id)
         
         results = query.all()
         
@@ -8509,7 +8509,7 @@ async def get_users_active_analytics(
             func.coalesce(File.updated_at, File.created_at) >= start_date
         )
         if team_id:
-            total_active_unique = total_active_unique.filter(FileModel.team_id == team_id)
+            total_active_unique = total_active_unique.filter(File.team_id == team_id)
         
         unique_active_users = total_active_unique.scalar() or 0
         avg_daily_active = sum(item['active_users'] for item in daily_active) / days if days > 0 else 0
@@ -8551,7 +8551,7 @@ async def get_storage_used_analytics(
             )
         )
         if team_id:
-            storage_query = storage_query.filter(FileModel.team_id == team_id)
+            storage_query = storage_query.filter(File.team_id == team_id)
         
         total_storage_bytes = storage_query.scalar() or 0
         
@@ -8565,7 +8565,7 @@ async def get_storage_used_analytics(
         ).group_by(File.file_type)
         
         if team_id:
-            type_storage_query = type_storage_query.filter(FileModel.team_id == team_id)
+            type_storage_query = type_storage_query.filter(File.team_id == team_id)
         
         by_type = []
         for diagram_type, count, storage_bytes in type_storage_query.all():
@@ -8591,7 +8591,7 @@ async def get_storage_used_analytics(
         ).limit(10)
         
         if team_id:
-            user_storage_query = user_storage_query.filter(FileModel.team_id == team_id)
+            user_storage_query = user_storage_query.filter(File.team_id == team_id)
         
         top_users = []
         for owner_id, email, count, storage_bytes in user_storage_query.all():
