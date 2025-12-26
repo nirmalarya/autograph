@@ -88,7 +88,12 @@ export default function VersionComparePage({
   const [restoringVersion, setRestoringVersion] = useState<string | null>(null);
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [versionToRestore, setVersionToRestore] = useState<Version | null>(null);
-  
+
+  // Fork state
+  const [forkingVersion, setForkingVersion] = useState<string | null>(null);
+  const [showForkModal, setShowForkModal] = useState(false);
+  const [versionToFork, setVersionToFork] = useState<Version | null>(null);
+
   // Search/filter state
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [authorFilter, setAuthorFilter] = useState<string>("");
@@ -488,6 +493,66 @@ export default function VersionComparePage({
     setVersionToRestore(null);
   };
 
+  const handleForkClick = (version: Version) => {
+    setVersionToFork(version);
+    setShowForkModal(true);
+  };
+
+  const handleForkConfirm = async () => {
+    if (!versionToFork) return;
+
+    setForkingVersion(versionToFork.id);
+    setShowForkModal(false);
+
+    try {
+      const token = localStorage.getItem("access_token");
+      const userId = localStorage.getItem("user_id");
+
+      if (!token || !userId) {
+        alert("Not authenticated");
+        return;
+      }
+
+      const response = await fetch(
+        API_ENDPOINTS.diagrams.versions.fork(diagramId, versionToFork.id),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-User-ID": userId,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Failed to fork version");
+      }
+
+      const result = await response.json();
+
+      // Show success message and redirect to new diagram
+      if (confirm(
+        `Successfully created new diagram: "${result.new_diagram_title}"!\n\n` +
+        `Would you like to open the new diagram now?`
+      )) {
+        router.push(`/diagrams/${result.new_diagram_id}`);
+      }
+    } catch (err: any) {
+      console.error("Error forking version:", err);
+      alert(`Failed to fork version: ${err.message}`);
+    } finally {
+      setForkingVersion(null);
+      setVersionToFork(null);
+    }
+  };
+
+  const handleForkCancel = () => {
+    setShowForkModal(false);
+    setVersionToFork(null);
+  };
+
   if (loading && !comparison) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -833,6 +898,13 @@ export default function VersionComparePage({
                               {restoringVersion === version.id ? "Restoring..." : "🔄 Restore"}
                             </button>
                           )}
+                          <button
+                            onClick={() => handleForkClick(version)}
+                            disabled={forkingVersion === version.id}
+                            className="px-3 py-1 text-sm text-orange-600 hover:bg-orange-50 rounded border border-orange-200 disabled:opacity-50 font-medium"
+                          >
+                            {forkingVersion === version.id ? "Forking..." : "🍴 Fork"}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1378,6 +1450,70 @@ export default function VersionComparePage({
                 className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium"
               >
                 Restore Version
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fork Confirmation Modal */}
+      {showForkModal && versionToFork && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                <span className="text-2xl">🍴</span>
+              </div>
+              <h3 className="text-lg font-semibold">Fork Version</h3>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-gray-700 mb-4">
+                Create a new diagram from <strong>Version {versionToFork.version_number}</strong>?
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-start gap-2">
+                  <span className="text-blue-600 mt-0.5">ℹ️</span>
+                  <div className="text-sm text-blue-800">
+                    <p className="font-medium mb-1">What happens:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>A new diagram will be created with this version's content</li>
+                      <li>The new diagram will be independent (its own version history)</li>
+                      <li>The original diagram will remain unchanged</li>
+                      <li>You'll be prompted to open the new diagram</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {versionToFork.label && (
+                <p className="text-sm text-gray-600">
+                  <span className="font-medium">Label:</span> {versionToFork.label}
+                </p>
+              )}
+              {versionToFork.description && (
+                <p className="text-sm text-gray-600 mt-1">
+                  <span className="font-medium">Description:</span> {versionToFork.description}
+                </p>
+              )}
+              <p className="text-sm text-gray-500 mt-2">
+                Created: {new Date(versionToFork.created_at).toLocaleString()} by {versionToFork.user.full_name}
+              </p>
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleForkCancel}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleForkConfirm}
+                className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 font-medium"
+              >
+                Fork Version
               </button>
             </div>
           </div>
