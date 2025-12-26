@@ -537,11 +537,15 @@ async def connect(sid, environ, auth):
         if token:
             payload = verify_jwt_token(token)
             if payload:
-                logger.info(f"Client {sid} authenticated as user {payload.get('user_id')}")
+                # JWT standard uses 'sub' for user_id (auth service uses this)
+                user_id = payload.get('user_id') or payload.get('sub')
+                username = payload.get('username') or payload.get('email', '').split('@')[0] or 'Anonymous'
+
+                logger.info(f"Client {sid} authenticated as user {user_id}")
                 # Store user info in session
                 await sio.save_session(sid, {
-                    'user_id': payload.get('user_id'),
-                    'username': payload.get('username', 'Anonymous'),
+                    'user_id': user_id,
+                    'username': username,
                     'email': payload.get('email', '')
                 })
                 return True
