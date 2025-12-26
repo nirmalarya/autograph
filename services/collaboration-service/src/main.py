@@ -689,7 +689,8 @@ async def join_room(sid, data):
                 "selected_elements": pres.selected_elements,
                 "active_element": pres.active_element,
                 "is_typing": pres.is_typing,
-                "connection_quality": pres.connection_quality.value
+                "connection_quality": pres.connection_quality.value,
+                "last_active": pres.last_active.isoformat() if pres.last_active else None
             })
         
         # Notify other users in the room

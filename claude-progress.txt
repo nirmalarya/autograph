@@ -12971,3 +12971,84 @@ FILES CHANGED:
 Git Commit: 4f6437f
 
 STATUS: ✅ COMPLETE
+
+================================================================================
+SESSION: Feature #398 - Presence Tracking (Online, Away, Offline)
+DATE: 2025-12-25
+START: 397/658 features (60.3%)
+END: 398/658 features (60.5%)
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #398: Real-time collaboration: Presence tracking: online, away, offline status
+
+IMPLEMENTATION APPROACH:
+Discovered that presence tracking infrastructure was ALREADY FULLY IMPLEMENTED!
+- PresenceStatus enum with ONLINE, AWAY, OFFLINE states (lines 89-92)
+- UserPresence dataclass tracking status, last_active, heartbeat (lines 108-133)
+- check_away_users() background task auto-marking users AWAY after 5min (lines 258-277)
+- presence_update WebSocket handler for manual status updates (lines 928-960)
+- disconnect handler setting status to OFFLINE (lines 565-610)
+- join_room handler setting status to ONLINE (lines 614-717)
+
+CRITICAL BUG FIXED:
+❌ WebSocket authentication was failing with "Signature verification failed"
+🔍 Root cause: JWT_SECRET mismatch between services
+   - auth-service: "your-secret-key-change-in-production"
+   - collaboration-service: "autograph-secret-key-change-in-production"
+✅ Fixed JWT_SECRET in collaboration-service to match auth-service
+✅ Added JWT_SECRET environment variable to docker-compose.yml
+
+TESTING:
+✅ Created validate_feature_398_presence_tracking.py
+✅ Comprehensive test covering all three presence states:
+   1. User joins room → status = ONLINE
+   2. User idle/manual update → status = AWAY
+   3. User disconnects → status = OFFLINE
+✅ Background task verified (runs every 60s, marks inactive users as AWAY)
+✅ Presence updates broadcast to all room participants
+✅ E2E test passes all scenarios
+
+QUALITY GATES:
+✅ Service health: All services healthy
+✅ WebSocket auth: JWT signature verification fixed
+✅ Presence states: All three states (online/away/offline) working
+✅ Broadcasting: Presence updates sent to room participants
+✅ Background task: check_away_users() task running correctly
+✅ Regression check: 398 >= 397 (no regressions)
+✅ E2E tested: Full presence flow validated
+
+REGRESSION CHECK:
+Baseline features: 397/397 passing
+After implementation: 398 total passing
+✅ No regressions detected!
+
+FILES CHANGED:
+1. services/collaboration-service/src/main.py:
+   - Fixed JWT_SECRET default to match auth-service
+   - Added clarifying comment about JWT_SECRET requirement
+
+2. docker-compose.yml:
+   - Added JWT_SECRET: ${JWT_SECRET} to collaboration-service environment
+   - Fixes WebSocket authentication by sharing secret with auth-service
+
+3. validate_feature_398_presence_tracking.py (new):
+   - Comprehensive E2E test for all three presence states
+   - Tests online → away → offline transitions
+   - Validates background away detection task
+   - Handles user authentication and email verification
+
+4. spec/feature_list.json:
+   - Feature #398: passes = true
+
+Git Commit: 65d71df
+
+STATUS: ✅ COMPLETE
+
+NOTES:
+- Feature was already implemented, just needed testing and bug fixing
+- JWT authentication fix is critical for all WebSocket features
+- Background task auto-detects idle users (5min threshold)
+- Presence state persists in memory with last_active timestamps
+- All three presence states fully functional and tested
+
