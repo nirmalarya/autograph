@@ -327,25 +327,25 @@ export default function DashboardPage() {
 
     setLoadingDiagrams(true);
     try {
-      let url = API_ENDPOINTS.diagrams.list;
+      let url: string = API_ENDPOINTS.diagrams.list;
       let params = new URLSearchParams();
 
       // If Recent tab is active, use the /recent endpoint
       if (activeTab === 'recent') {
-        url = API_ENDPOINTS.diagrams.recent;
+        url = API_ENDPOINTS.diagrams.recent as string;
         params.append('limit', '10');
       } else if (activeTab === 'starred') {
         // For "Starred" tab, use the /starred endpoint
-        url = API_ENDPOINTS.diagrams.starred;
+        url = API_ENDPOINTS.diagrams.starred as string;
       } else if (activeTab === 'shared') {
         // For "Shared with me" tab, use the /shared-with-me endpoint
-        url = API_ENDPOINTS.diagrams.sharedWithMe;
+        url = API_ENDPOINTS.diagrams.sharedWithMe as string;
       } else if (activeTab === 'team') {
         // For "Team Files" tab, use the /team endpoint
-        url = API_ENDPOINTS.diagrams.team;
+        url = API_ENDPOINTS.diagrams.team as string;
       } else if (activeTab === 'trash') {
         // For "Trash" tab, use the /trash endpoint
-        url = API_ENDPOINTS.diagrams.trash;
+        url = API_ENDPOINTS.diagrams.trash as string;
       } else {
         // For "All" tab, use regular list endpoint with pagination
         params.append('page', page.toString());

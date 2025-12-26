@@ -1,16 +1,18 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Tldraw, Editor, TLUiOverrides } from '@tldraw/tldraw';
+import { Tldraw, Editor, TLUiOverrides, TLUiActionsContextType } from '@tldraw/tldraw';
 import '@tldraw/tldraw/tldraw.css';
 
 interface TLDrawCanvasProps {
   initialData?: any;
   onSave?: (editor: any) => void;
   theme?: 'light' | 'dark';
+  diagramId?: string;
+  onAddComment?: (elementId: string, position: { x: number; y: number }) => void;
 }
 
-export default function TLDrawCanvas({ initialData, onSave, theme = 'light' }: TLDrawCanvasProps) {
+export default function TLDrawCanvas({ initialData, onSave, theme = 'light', diagramId, onAddComment }: TLDrawCanvasProps) {
   const [mounted, setMounted] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const performanceMonitorRef = useRef<number | null>(null);
@@ -138,10 +140,31 @@ export default function TLDrawCanvas({ initialData, onSave, theme = 'light' }: T
     };
   }, [editor, mounted]);
 
-  // Custom UI overrides for touch-friendly interface
+  // Custom UI overrides for touch-friendly interface and comment feature
   const uiOverrides: TLUiOverrides = {
-    // TLDraw handles touch gestures natively
-    // Context menu styling is handled via CSS
+    actions(editor, actions): TLUiActionsContextType {
+      // Add custom "Add Comment" action
+      const customActions = {
+        ...actions,
+        'add-comment': {
+          id: 'add-comment',
+          label: 'Add Comment',
+          readonlyOk: false,
+          kbd: 'c',
+          onSelect(source: any) {
+            const selectedShapes = editor.getSelectedShapes();
+            if (selectedShapes.length > 0) {
+              const shape = selectedShapes[0];
+              const bounds = editor.getShapePageBounds(shape.id);
+              if (bounds && onAddComment) {
+                onAddComment(shape.id, { x: bounds.x, y: bounds.y });
+              }
+            }
+          },
+        },
+      };
+      return customActions;
+    },
   };
 
   if (!mounted) {

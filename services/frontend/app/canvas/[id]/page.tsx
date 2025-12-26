@@ -35,6 +35,10 @@ export default function CanvasEditorPage() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectedShapes, setSelectedShapes] = useState<string[]>([]);
   const [frames, setFrames] = useState<Array<{ id: string; name: string; x: number; y: number; w: number; h: number }>>([]);
+  const [showCommentDialog, setShowCommentDialog] = useState(false);
+  const [commentElementId, setCommentElementId] = useState<string>('');
+  const [commentPosition, setCommentPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [commentText, setCommentText] = useState('');
   
   // Offline storage hook
   const {
@@ -270,6 +274,61 @@ export default function CanvasEditorPage() {
     localStorage.setItem(`canvas_theme_${diagramId}`, newTheme);
   };
 
+  const handleAddComment = useCallback((elementId: string, position: { x: number; y: number }) => {
+    setCommentElementId(elementId);
+    setCommentPosition(position);
+    setShowCommentDialog(true);
+    setCommentText('');
+  }, []);
+
+  const handleSubmitComment = useCallback(async () => {
+    if (!commentText.trim()) {
+      alert('Please enter a comment');
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        router.push('/login');
+        return;
+      }
+
+      const payload = JSON.parse(atob(token.split('.')[1]));
+
+      const response = await fetch(API_ENDPOINTS.diagrams.comments.create(diagramId), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-ID': payload.sub,
+        },
+        body: JSON.stringify({
+          content: commentText,
+          element_id: commentElementId,
+          position_x: commentPosition.x,
+          position_y: commentPosition.y,
+          is_private: false,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create comment');
+      }
+
+      // Success - close dialog and refresh
+      setShowCommentDialog(false);
+      setCommentText('');
+      alert('Comment added successfully!');
+
+      // Optionally, add a visual indicator to the shape
+      // This would require storing comment metadata and rendering icons
+
+    } catch (err) {
+      console.error('Failed to create comment:', err);
+      alert('Failed to add comment. Please try again.');
+    }
+  }, [commentText, commentElementId, commentPosition, diagramId, router]);
+
   // Add Ctrl+S / Cmd+S keyboard shortcut for manual save
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -437,10 +496,12 @@ export default function CanvasEditorPage() {
 
       {/* Canvas Area - Full height with TLDraw */}
       <div className="flex-1 relative bg-white overflow-hidden">
-        <TLDrawCanvas 
+        <TLDrawCanvas
           initialData={diagram?.canvas_data}
           onSave={handleSave}
           theme={canvasTheme}
+          diagramId={diagramId}
+          onAddComment={handleAddComment}
         />
       </div>
 
@@ -453,6 +514,39 @@ export default function CanvasEditorPage() {
         selectedShapes={selectedShapes}
         frames={frames}
       />
+
+      {/* Comment Dialog */}
+      {showCommentDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Add Comment</h3>
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder="Type your comment here..."
+              className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCommentDialog(false);
+                  setCommentText('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitComment}
+                className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+              >
+                Add Comment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

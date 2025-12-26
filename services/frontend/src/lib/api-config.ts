@@ -67,6 +67,13 @@ export const API_ENDPOINTS = {
         `${API_BASE_URL}/api/diagrams/${diagramId}/versions/${versionId}/share`,
     },
     versionShared: (token: string) => `${API_BASE_URL}/api/diagrams/version-shared/${token}`,
+    comments: {
+      list: (diagramId: string) => `${API_BASE_URL}/api/diagrams/${diagramId}/comments`,
+      create: (diagramId: string) => `${API_BASE_URL}/api/diagrams/${diagramId}/comments`,
+      update: (diagramId: string, commentId: string) => `${API_BASE_URL}/api/diagrams/${diagramId}/comments/${commentId}`,
+      delete: (diagramId: string, commentId: string) => `${API_BASE_URL}/api/diagrams/${diagramId}/comments/${commentId}/delete`,
+      resolve: (diagramId: string, commentId: string) => `${API_BASE_URL}/api/diagrams/${diagramId}/comments/${commentId}/resolve`,
+    },
   },
 
   // AI Service (via /api/ai)
