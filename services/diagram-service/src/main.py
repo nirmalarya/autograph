@@ -26,7 +26,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File as FileModel, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, CommentHistory, CommentAttachment, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
+from .models import File as FileModel, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, CommentHistory, CommentAttachment, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag, AuditLog
 from .email_service import get_email_service
 
 load_dotenv()
@@ -598,6 +598,46 @@ def enrich_diagram_response(diagram: File) -> Dict[str, Any]:
     diagram_dict['size_bytes'] = size_bytes
     diagram_dict['size_display'] = format_size_display(size_bytes)
     return diagram_dict
+
+
+def create_audit_log(
+    db: Session,
+    action: str,
+    user_id: str = None,
+    resource_type: str = None,
+    resource_id: str = None,
+    ip_address: str = None,
+    user_agent: str = None,
+    extra_data: dict = None
+) -> AuditLog:
+    """Create an audit log entry.
+
+    Args:
+        db: Database session
+        action: Action performed (e.g., 'create_diagram', 'update_diagram', 'delete_diagram')
+        user_id: User ID (optional for actions like failed login)
+        resource_type: Type of resource affected (optional)
+        resource_id: ID of resource affected (optional)
+        ip_address: IP address of request
+        user_agent: User agent string
+        extra_data: Additional metadata (optional)
+
+    Returns:
+        Created AuditLog instance
+    """
+    audit_log = AuditLog(
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        extra_data=extra_data
+    )
+    db.add(audit_log)
+    db.commit()
+    db.refresh(audit_log)
+    return audit_log
 
 
 @app.get("/")
@@ -1411,10 +1451,33 @@ async def create_diagram(
     
     db.commit()
     db.refresh(new_diagram)
-    
+
+    # Create audit log
+    try:
+        create_audit_log(
+            db=db,
+            action="create_diagram",
+            user_id=user_id,
+            resource_type="diagram",
+            resource_id=new_diagram.id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            extra_data={
+                "title": new_diagram.title,
+                "file_type": new_diagram.file_type,
+                "folder_id": new_diagram.folder_id
+            }
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to create audit log",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+
     # Update metrics
     diagrams_created.inc()
-    
+
     logger.info(
         "Diagram created successfully",
         correlation_id=correlation_id,
@@ -1423,7 +1486,7 @@ async def create_diagram(
         version=new_diagram.current_version,
         has_thumbnail=new_diagram.thumbnail_url is not None
     )
-    
+
     return enrich_diagram_response(new_diagram)
 
 
@@ -3107,10 +3170,34 @@ async def update_diagram(
         db.commit()
     
     db.refresh(diagram)
-    
+
+    # Create audit log
+    try:
+        create_audit_log(
+            db=db,
+            action="update_diagram",
+            user_id=user_id,
+            resource_type="diagram",
+            resource_id=diagram_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            extra_data={
+                "title_updated": update_data.title is not None,
+                "canvas_updated": update_data.canvas_data is not None,
+                "note_updated": update_data.note_content is not None,
+                "new_version": diagram.current_version
+            }
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to create audit log",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+
     # Update metrics
     diagrams_updated.inc()
-    
+
     print(f"DEBUG: About to send WebSocket notification for diagram {diagram_id}")
     
     # Send WebSocket notification to collaborators
@@ -3308,8 +3395,33 @@ async def delete_diagram(
         versions_deleted = db.query(Version).filter(Version.file_id == diagram_id).delete()
 
         # Then delete the diagram itself
+        diagram_title = diagram.title  # Save for audit log
         db.delete(diagram)
         db.commit()
+
+        # Create audit log for hard delete
+        try:
+            create_audit_log(
+                db=db,
+                action="delete_diagram_permanent",
+                user_id=user_id,
+                resource_type="diagram",
+                resource_id=diagram_id,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                extra_data={
+                    "title": diagram_title,
+                    "permanent": True,
+                    "versions_deleted": versions_deleted,
+                    "minio_files_deleted": minio_files_deleted
+                }
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to create audit log",
+                correlation_id=correlation_id,
+                error=str(e)
+            )
 
         logger.info(
             "Diagram permanently deleted",
@@ -3333,9 +3445,32 @@ async def delete_diagram(
         # Soft delete: set is_deleted=True and deleted_at timestamp
         diagram.is_deleted = True
         diagram.deleted_at = datetime.utcnow()
-        
+
         db.commit()
-        
+
+        # Create audit log for soft delete
+        try:
+            create_audit_log(
+                db=db,
+                action="delete_diagram_soft",
+                user_id=user_id,
+                resource_type="diagram",
+                resource_id=diagram_id,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                extra_data={
+                    "title": diagram.title,
+                    "permanent": False,
+                    "deleted_at": diagram.deleted_at.isoformat()
+                }
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to create audit log",
+                correlation_id=correlation_id,
+                error=str(e)
+            )
+
         logger.info(
             "Diagram soft deleted successfully",
             correlation_id=correlation_id,
@@ -3343,10 +3478,10 @@ async def delete_diagram(
             user_id=user_id,
             deleted_at=diagram.deleted_at.isoformat()
         )
-        
+
         # Update metrics
         diagrams_updated.inc()
-        
+
         return {
             "message": "Diagram moved to trash",
             "id": diagram_id,

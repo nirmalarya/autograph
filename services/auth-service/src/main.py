@@ -22,7 +22,7 @@ import time
 # Prometheus metrics
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
-from .database import get_db
+from .database import get_db, SessionLocal
 from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, CustomRole, RoleTemplate, generate_uuid
 from .saml_handler import SAMLHandler
 from .gdpr_routes import router as gdpr_router
@@ -492,6 +492,39 @@ async def check_ip_allowlist(request: Request, call_next):
                             client_ip=client_ip,
                             path=request.url.path
                         )
+                        print(f"DEBUG: IP {client_ip} blocked, about to write audit log")
+
+                        # Log to audit trail
+                        try:
+                            print("DEBUG: Creating audit log entry")
+                            logger.info("Writing audit log for IP block attempt")
+                            db = SessionLocal()
+                            print(f"DEBUG: SessionLocal created, db={db}")
+                            audit = AuditLog(
+                                user_id=None,
+                                action="access_denied",
+                                resource_type="ip_allowlist",
+                                resource_id="blocked_access",
+                                ip_address=client_ip,
+                                user_agent=request.headers.get("user-agent"),
+                                extra_data={
+                                    "reason": "IP not in allowlist",
+                                    "path": request.url.path,
+                                    "method": request.method
+                                }
+                            )
+                            print(f"DEBUG: Audit object created: {audit}")
+                            db.add(audit)
+                            print("DEBUG: Added to session")
+                            db.commit()
+                            print("DEBUG: Committed")
+                            db.close()
+                            print("DEBUG: Closed")
+                            logger.info("Audit log written successfully for IP block")
+                        except Exception as audit_error:
+                            print(f"DEBUG: Exception in audit logging: {audit_error}")
+                            logger.error("Failed to write audit log for IP block", exc=audit_error)
+
                         return JSONResponse(
                             status_code=status.HTTP_403_FORBIDDEN,
                             content={
