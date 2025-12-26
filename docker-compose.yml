@@ -361,6 +361,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TLS_ENABLED: ${TLS_ENABLED:-false}
       SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY}
+      JWT_SECRET: ${JWT_SECRET:-autograph_jwt_secret_key_change_in_production}
     ports:
     - ${INTEGRATION_HUB_PORT}:8099
     volumes:

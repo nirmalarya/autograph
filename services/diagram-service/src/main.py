@@ -649,15 +649,16 @@ async def list_diagrams(
     search: Optional[str] = None,
     sort_by: Optional[str] = None,
     sort_order: Optional[str] = None,
+    folder_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """List diagrams endpoint with pagination, filtering, search, and sorting."""
+    """List diagrams endpoint with pagination, filtering, search, sorting, and folder filtering."""
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
-    
+
     if not user_id:
         raise HTTPException(status_code=401, detail="User ID required")
-    
+
     logger.info(
         "Listing diagrams",
         correlation_id=correlation_id,
@@ -667,15 +668,25 @@ async def list_diagrams(
         file_type=file_type,
         search=search,
         sort_by=sort_by,
-        sort_order=sort_order
+        sort_order=sort_order,
+        folder_id=folder_id
     )
-    
+
     # Build query
     query = db.query(FileModel).filter(
         File.owner_id == user_id,
         File.is_deleted == False
     )
-    
+
+    # Apply folder filter
+    if folder_id is not None:
+        if folder_id == '':
+            # Empty string means root folder (no folder)
+            query = query.filter(FileModel.folder_id == None)
+        else:
+            # Filter by specific folder
+            query = query.filter(FileModel.folder_id == folder_id)
+
     # Apply filters
     if file_type:
         if file_type not in ['canvas', 'note', 'mixed']:

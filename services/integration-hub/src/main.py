@@ -85,6 +85,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+from .routers import webhooks
+app.include_router(webhooks.router)
 
 
 @app.get("/health")
