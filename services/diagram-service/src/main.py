@@ -2757,8 +2757,8 @@ async def get_diagram(
     
     # Query diagram (exclude deleted)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
@@ -2849,8 +2849,8 @@ async def update_diagram(
     
     # Query diagram (exclude deleted)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
