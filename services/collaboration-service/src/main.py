@@ -76,7 +76,9 @@ class StructuredLogger:
 logger = StructuredLogger("collaboration-service")
 
 # JWT Configuration
-JWT_SECRET = os.getenv("JWT_SECRET", "autograph-secret-key-change-in-production")
+# IMPORTANT: Must match auth-service JWT_SECRET for token verification
+# Updated: 2025-12-25 to fix signature verification issue
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 
 # User colors for cursor presence (8 distinct colors)

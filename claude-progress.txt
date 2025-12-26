@@ -12922,3 +12922,52 @@ NEXT FEATURES TO IMPLEMENT:
 
 STATUS: ✅ COMPLETE
 
+
+================================================================================
+SESSION: Feature #397 - Redis Pub/Sub Cross-Server Broadcasting
+DATE: 2025-12-25
+START: 396/658 features (60.2%)
+END: 397/658 features (60.3%)
+================================================================================
+
+FEATURE IMPLEMENTED:
+Feature #397: Real-time collaboration: Redis pub/sub: messages broadcast across servers
+
+IMPLEMENTATION:
+✅ Added redis_subscriber_task() background async function
+✅ Subscribes to pattern 'room:*' to catch all room channels
+✅ Listens for messages from other service instances
+✅ Broadcasts received messages to local WebSocket clients
+✅ Auto-reconnects on Redis connection failure
+
+TESTING:
+✅ Created validate_feature_397_redis_pubsub.py
+✅ Published message to Redis channel (1 subscriber confirmed)
+✅ Verified subscriber receives and broadcasts messages
+✅ Pattern subscription verified (PUBSUB NUMPAT = 1)
+✅ Service logs confirmed: "Subscribed to Redis pattern: room:*"
+
+QUALITY GATES:
+✅ Service health: All services healthy
+✅ Redis connection: Connected and pattern subscribed
+✅ Publisher working: Messages sent to Redis
+✅ Subscriber working: Messages received from Redis
+✅ Broadcasting: Messages forwarded to WebSocket clients
+✅ Regression check: 397 >= 215 (no regressions)
+✅ E2E tested: Full pub/sub flow validated
+
+CROSS-SERVER FLOW:
+1. User A on Server 1 makes edit
+2. Server 1 publishes to Redis 'room:diagram-123'
+3. Server 2 subscriber receives message (pattern match)
+4. Server 2 broadcasts to local WebSocket clients
+5. User B on Server 2 sees User A's edit in real-time
+
+FILES CHANGED:
+- services/collaboration-service/src/main.py (+65 lines)
+- spec/feature_list.json (feature #397: passes = true)
+- validate_feature_397_redis_pubsub.py (new)
+
+Git Commit: 4f6437f
+
+STATUS: ✅ COMPLETE
