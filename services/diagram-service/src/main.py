@@ -2550,6 +2550,182 @@ async def mark_all_mentions_read(
 
 
 # ==========================================
+# NOTIFICATION API ENDPOINTS (Must be before catch-all routes)
+# ==========================================
+
+@app.get("/notifications")
+async def get_notifications(
+    request: Request,
+    unread_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """Get user's notifications (mentions in comments)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(
+        "Getting notifications",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        unread_only=unread_only
+    )
+
+    # Build query for mentions where this user was mentioned
+    query = db.query(Mention).filter(Mention.user_id == user_id)
+
+    # Filter for unread only if requested
+    if unread_only:
+        query = query.filter(Mention.is_read == False)
+
+    # Order by most recent first
+    query = query.order_by(Mention.created_at.desc())
+
+    # Get total count before pagination
+    total_count = query.count()
+
+    # Apply pagination
+    mentions = query.limit(limit).offset(offset).all()
+
+    # Enrich mentions with comment and user info
+    notifications = []
+    for mention in mentions:
+        # Get the comment
+        comment = db.query(Comment).filter(Comment.id == mention.comment_id).first()
+        if not comment:
+            continue
+
+        # Get the commenter (who mentioned the user)
+        commenter = db.query(User).filter(User.id == comment.user_id).first()
+        if not commenter:
+            continue
+
+        # Get the diagram/file
+        diagram = db.query(File).filter(File.id == comment.file_id).first()
+        if not diagram:
+            continue
+
+        notifications.append({
+            "id": mention.id,
+            "type": "mention",
+            "is_read": mention.is_read,
+            "read_at": mention.read_at.isoformat() if mention.read_at else None,
+            "created_at": mention.created_at.isoformat(),
+            "comment": {
+                "id": comment.id,
+                "content": comment.content,
+                "position_x": comment.position_x,
+                "position_y": comment.position_y,
+                "element_id": comment.element_id,
+                "created_at": comment.created_at.isoformat()
+            },
+            "commenter": {
+                "id": commenter.id,
+                "email": commenter.email,
+                "full_name": commenter.full_name,
+                "avatar_url": commenter.avatar_url
+            },
+            "diagram": {
+                "id": diagram.id,
+                "title": diagram.title,
+                "file_type": diagram.file_type
+            }
+        })
+
+    return {
+        "notifications": notifications,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+        "has_more": (offset + len(notifications)) < total_count
+    }
+
+
+@app.get("/notifications/unread/count")
+async def get_unread_count(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get count of unread notifications."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Count unread mentions
+    unread_count = db.query(Mention).filter(
+        Mention.user_id == user_id,
+        Mention.is_read == False
+    ).count()
+
+    logger.info(
+        "Retrieved unread notification count",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        unread_count=unread_count
+    )
+
+    return {
+        "unread_count": unread_count
+    }
+
+
+@app.put("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Mark a notification as read."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(
+        "Marking notification as read",
+        correlation_id=correlation_id,
+        notification_id=notification_id,
+        user_id=user_id
+    )
+
+    # Get mention (notification)
+    mention = db.query(Mention).filter(
+        Mention.id == notification_id,
+        Mention.user_id == user_id  # Ensure user owns this notification
+    ).first()
+
+    if not mention:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+    # Mark as read
+    mention.is_read = True
+    mention.read_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(mention)
+
+    logger.info(
+        "Notification marked as read",
+        correlation_id=correlation_id,
+        notification_id=notification_id
+    )
+
+    return {
+        "message": "Notification marked as read",
+        "notification_id": notification_id,
+        "is_read": True,
+        "read_at": mention.read_at.isoformat()
+    }
+
+
+# ==========================================
 # DIAGRAM DETAIL ENDPOINTS
 # ==========================================
 
@@ -2560,12 +2736,16 @@ async def get_diagram(
     db: Session = Depends(get_db)
 ):
     """Get a diagram by ID."""
+    # Reject reserved paths that should be handled by specific endpoints
+    if diagram_id in ['notifications', 'health', 'metrics', 'recent', 'starred', 'trash', 'shared-with-me', 'team', 'templates', 'folders', 'mentions', 'icons']:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
-    
+
     if not user_id:
         raise HTTPException(status_code=401, detail="User ID required")
-    
+
     logger.info(
         "Fetching diagram",
         correlation_id=correlation_id,

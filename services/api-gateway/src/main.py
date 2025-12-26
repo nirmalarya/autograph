@@ -2615,6 +2615,20 @@ async def proxy_auth(path: str, request: Request):
     return await proxy_request("auth", path, request)
 
 
+@app.api_route("/api/notifications", methods=["GET"])
+@limiter.limit("100/minute")  # User-based rate limit
+async def proxy_notifications_list(request: Request):
+    """Route notification list requests to diagram service."""
+    return await proxy_request("diagram", "notifications", request)
+
+
+@app.api_route("/api/notifications/{path:path}", methods=["GET", "PUT", "DELETE"])
+@limiter.limit("100/minute")  # User-based rate limit
+async def proxy_notifications(path: str, request: Request):
+    """Route notification requests to diagram service."""
+    return await proxy_request("diagram", f"notifications/{path}", request)
+
+
 @app.api_route("/api/diagrams/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 @limiter.limit("100/minute")  # User-based rate limit
 async def proxy_diagrams(path: str, request: Request):
