@@ -345,13 +345,13 @@ class CommentReaction(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     comment_id = Column(String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    
+
     # Reaction emoji (Unicode emoji or shortcode)
     emoji = Column(String(10), nullable=False)  # e.g., "👍", "❤️", "😄"
-    
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    
+
     # Relationships
     comment = relationship("Comment", backref="reactions")
 
@@ -361,6 +361,29 @@ class CommentReaction(Base):
         Index('idx_comment_reactions_emoji', 'comment_id', 'emoji'),
         # Ensure one user can only have one reaction of each type per comment
         Index('idx_comment_reactions_unique', 'comment_id', 'user_id', 'emoji', unique=True),
+    )
+
+
+class CommentRead(Base):
+    """Comment reads table (tracking which users have read which comments)."""
+    __tablename__ = "comment_reads"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    comment_id = Column(String(36), ForeignKey("comments.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Read timestamp
+    read_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    comment = relationship("Comment", backref="reads")
+
+    __table_args__ = (
+        Index('idx_comment_reads_comment', 'comment_id'),
+        Index('idx_comment_reads_user', 'user_id'),
+        Index('idx_comment_reads_lookup', 'comment_id', 'user_id'),
+        # Ensure one read record per user per comment
+        Index('idx_comment_reads_unique', 'comment_id', 'user_id', unique=True),
     )
 
 

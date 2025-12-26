@@ -15926,3 +15926,60 @@ NEXT FEATURE: #439 (to be determined)
 
 SESSION COMPLETE: Feature #438 ✅ PASSING
 
+
+================================================================================
+SESSION: Feature #439 - Unread Comment Indicator
+DATE: 2025-12-26
+================================================================================
+
+FEATURE IMPLEMENTED: #439 - Comments: Unread indicator: highlight new comments
+
+IMPLEMENTATION SUMMARY:
+
+1. DATABASE SCHEMA:
+   - Created comment_reads table to track which users have read which comments
+   - Fields: id, comment_id, user_id, read_at
+   - Unique constraint: one read record per user per comment
+   - Indexes for efficient lookups
+
+2. MODEL CHANGES:
+   - Added CommentRead model to services/diagram-service/src/models.py
+   - Imported CommentRead in main.py
+
+3. API ENHANCEMENTS:
+   - Modified GET /{diagram_id}/comments endpoint:
+     * Added is_unread field to each comment response
+     * Logic: is_unread = true if comment is not by current user AND no read record exists
+   - Added POST /{diagram_id}/comments/{comment_id}/mark-read endpoint:
+     * Marks comment as read for current user
+     * Creates comment_read record
+     * Returns read_at timestamp
+
+4. FILES MODIFIED:
+   - services/diagram-service/src/models.py (added CommentRead model)
+   - services/diagram-service/src/main.py (added is_unread logic + mark-read endpoint)
+   - create_comment_reads_table.sql (migration file)
+
+5. TESTING:
+   - Created test_feature_439_unread.py
+   - Tests verified:
+     ✅ User A creates comment
+     ✅ User B sees comment with is_unread=true
+     ✅ User B marks comment as read
+     ✅ User B sees comment with is_unread=false
+     ✅ User A never sees their own comment as unread (always false)
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 439 features
+✅ No regressions (baseline +8)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 439 (was 438)
+Percentage: 66.7%
+Remaining: 219 features
+
+NEXT FEATURE: #440 (to be determined)
+
+SESSION COMPLETE: Feature #439 ✅ PASSING

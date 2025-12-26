@@ -24,7 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
 from .email_service import get_email_service
 
 load_dotenv()
@@ -4365,11 +4365,21 @@ async def get_comments(
         # Get mentions
         mentions = db.query(Mention).filter(Mention.comment_id == comment.id).all()
         mentioned_user_ids = [m.user_id for m in mentions]
-        
+
+        # Check if comment is unread by current user
+        # A comment is unread if: it's not authored by current user AND no read record exists
+        is_unread = False
+        if comment.user_id != user_id:
+            comment_read = db.query(CommentRead).filter(
+                CommentRead.comment_id == comment.id,
+                CommentRead.user_id == user_id
+            ).first()
+            is_unread = comment_read is None
+
         # Generate permalink
         base_url = request.base_url
         permalink = f"{base_url}diagram/{diagram_id}#comment-{comment.id}"
-        
+
         comment_dict = {
             "id": comment.id,
             "file_id": comment.file_id,
@@ -4388,6 +4398,7 @@ async def get_comments(
             "is_private": comment.is_private,
             "created_at": comment.created_at,
             "updated_at": comment.updated_at,
+            "is_unread": is_unread,
             "user": {
                 "id": user.id if user else None,
                 "full_name": user.full_name if user else "Unknown",
@@ -5163,6 +5174,72 @@ async def add_reaction(
             "emoji": emoji,
             "action": "added"
         }
+
+
+@app.post("/{diagram_id}/comments/{comment_id}/mark-read")
+async def mark_comment_as_read(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Mark a comment as read by the current user."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Verify comment exists
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    # Check if already marked as read
+    existing_read = db.query(CommentRead).filter(
+        CommentRead.comment_id == comment_id,
+        CommentRead.user_id == user_id
+    ).first()
+
+    if existing_read:
+        logger.info(
+            "Comment already marked as read",
+            correlation_id=correlation_id,
+            comment_id=comment_id,
+            user_id=user_id
+        )
+        return {
+            "message": "Comment already marked as read",
+            "comment_id": comment_id,
+            "read_at": existing_read.read_at
+        }
+
+    # Create read record
+    comment_read = CommentRead(
+        id=str(uuid.uuid4()),
+        comment_id=comment_id,
+        user_id=user_id
+    )
+
+    db.add(comment_read)
+    db.commit()
+
+    logger.info(
+        "Comment marked as read",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        user_id=user_id
+    )
+
+    return {
+        "message": "Comment marked as read",
+        "comment_id": comment_id,
+        "read_at": comment_read.read_at
+    }
 
 
 # ==========================================
