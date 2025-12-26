@@ -449,6 +449,125 @@ async def extract_user_context(request: Request, call_next):
 
     return await call_next(request)
 
+# Middleware to enforce API rate limiting per plan
+@app.middleware("http")
+async def api_rate_limiting_middleware(request: Request, call_next):
+    """Middleware to enforce API rate limiting based on user's plan.
+
+    Feature #557: API rate limiting configurable per plan
+    - Free plan: 100 req/hour
+    - Pro plan: 1000 req/hour
+    - Enterprise: unlimited
+    """
+    try:
+        # Skip health checks, metrics, and admin endpoints
+        skip_paths = ["/health", "/metrics", "/admin/rate-limit/config"]
+        if request.url.path in skip_paths or request.url.path.startswith("/admin/"):
+            return await call_next(request)
+
+        # Try to get user from token
+        user_id = None
+        user_plan = "free"  # default to free plan
+
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.replace("Bearer ", "")
+            try:
+                # Decode JWT to get user_id
+                payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+                user_id = payload.get("sub")
+
+                if user_id:
+                    # Get user's plan from database
+                    db = SessionLocal()
+                    try:
+                        user = db.query(User).filter(User.id == user_id).first()
+                        if user:
+                            user_plan = user.plan or "free"
+                    finally:
+                        db.close()
+            except JWTError:
+                # Invalid token, use default free plan
+                pass
+
+        # Get rate limit config for user's plan
+        rate_limits = {
+            "free": {"requests_per_hour": 100},
+            "pro": {"requests_per_hour": 1000},
+            "enterprise": {"requests_per_hour": -1}  # unlimited
+        }
+
+        # Check Redis for custom configuration
+        redis_key = f"rate_limit:config:{user_plan}"
+        config_json = redis_client.get(redis_key)
+        if config_json:
+            plan_config = json.loads(config_json)
+            rate_limits[user_plan] = {"requests_per_hour": plan_config.get("requests_per_hour", rate_limits[user_plan]["requests_per_hour"])}
+
+        requests_per_hour = rate_limits.get(user_plan, {}).get("requests_per_hour", 100)
+
+        # Enterprise plan has unlimited rate limit
+        if requests_per_hour == -1:
+            return await call_next(request)
+
+        # Track API rate limit in Redis
+        rate_limit_key = f"api_rate_limit:{user_plan}:{user_id or 'anonymous'}"
+        current_hour = int(time.time() // 3600)  # Current hour timestamp
+        rate_limit_key_hourly = f"{rate_limit_key}:{current_hour}"
+
+        # Increment request count
+        current_count = redis_client.incr(rate_limit_key_hourly)
+
+        # Set expiry to 1 hour if this is the first request
+        if current_count == 1:
+            redis_client.expire(rate_limit_key_hourly, 3600)
+
+        # Check if rate limit exceeded
+        if current_count > requests_per_hour:
+            # Log rate limit violation
+            logger.warning(
+                "API rate limit exceeded",
+                user_id=user_id,
+                plan=user_plan,
+                limit=requests_per_hour,
+                current=current_count,
+                path=request.url.path
+            )
+
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": f"API rate limit exceeded for {user_plan} plan. Limit: {requests_per_hour} requests per hour.",
+                    "plan": user_plan,
+                    "limit": requests_per_hour,
+                    "retry_after": 3600 - (int(time.time()) % 3600)  # seconds until next hour
+                },
+                headers={
+                    "X-RateLimit-Limit": str(requests_per_hour),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str((current_hour + 1) * 3600),
+                    "Retry-After": str(3600 - (int(time.time()) % 3600))
+                }
+            )
+
+        # Add rate limit headers to response
+        remaining = requests_per_hour - current_count
+        response = await call_next(request)
+
+        # Add custom headers to response
+        response.headers["X-RateLimit-Limit"] = str(requests_per_hour)
+        response.headers["X-RateLimit-Remaining"] = str(max(0, remaining))
+        response.headers["X-RateLimit-Reset"] = str((current_hour + 1) * 3600)
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error in rate limiting middleware: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        # Don't block requests if rate limiting fails
+        return await call_next(request)
+
 # Middleware to check IP allowlist
 @app.middleware("http")
 async def check_ip_allowlist(request: Request, call_next):

@@ -29,7 +29,8 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     role = Column(String(50), default="user", nullable=False)  # user, admin, enterprise
-    
+    plan = Column(String(50), default="free", nullable=False)  # free, pro, enterprise
+
     # SSO fields
     sso_provider = Column(String(50))  # microsoft, okta, onelogin
     sso_id = Column(String(255))
@@ -70,6 +71,7 @@ class User(Base):
         Index('idx_users_email', 'email'),
         Index('idx_users_sso', 'sso_provider', 'sso_id'),
         Index('idx_users_scim_external_id', 'scim_external_id'),
+        Index('idx_users_plan', 'plan'),
     )
 
 
