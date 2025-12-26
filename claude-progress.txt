@@ -15076,3 +15076,97 @@ Remaining: 232 features
 NEXT FEATURE: #426 - Comment threads: reply to comments
 
 ================================================================================
+
+================================================================================
+SESSION: Feature #429 - Email Notifications for Comment Mentions
+DATE: 2025-12-25
+FEATURE: #429 - Comments: Comment notifications: email
+STATUS: ✅ COMPLETED
+================================================================================
+
+IMPLEMENTATION SUMMARY:
+
+Feature #429 implements email notification system that sends emails when users
+are mentioned in comments via @username syntax.
+
+KEY COMPONENTS:
+
+1. EMAIL SERVICE MODULE (email_service.py):
+   - EmailService class for sending emails via SMTP
+   - send_mention_notification() method
+   - Beautiful HTML email templates with styling
+   - Plain text fallback for compatibility
+   - Configurable via environment variables
+   - Non-blocking error handling
+
+2. INTEGRATION (main.py):
+   - Modified create_comment endpoint
+   - Extract mentioned users from comment
+   - Send email notification for each mention
+   - Non-blocking (comment created even if email fails)
+   - Proper error logging
+
+3. CONFIGURATION:
+   - SMTP_HOST: localhost (default)
+   - SMTP_PORT: 1025 (default)
+   - EMAIL_ENABLED: true (default)
+   - FROM_EMAIL: noreply@autograph.com
+   - APP_URL: http://localhost:3000
+
+4. EMAIL TEMPLATE:
+   - Professional HTML design
+   - Shows commenter name
+   - Displays comment content
+   - Links to diagram
+   - Responsive layout
+   - Color-coded UI elements
+
+WORKFLOW:
+1. User creates comment with @username
+2. System extracts mentioned usernames
+3. Looks up users by email prefix
+4. Creates mention records in database
+5. Sends email notification asynchronously
+6. Logs success/failure (non-blocking)
+7. Returns comment response
+
+VALIDATION:
+✅ Comment with @mention created
+✅ Email service called
+✅ Non-blocking (comment succeeds even if email fails)
+✅ Regression: Feature #427 (mentions) still passing
+✅ Error handling works correctly
+
+FILES CHANGED:
+- services/diagram-service/requirements.txt
+- services/diagram-service/src/email_service.py (NEW)
+- services/diagram-service/src/main.py
+- .env
+- docker-compose.yml
+- spec/feature_list.json
+- validate_feature_429.py (NEW)
+
+DEPENDENCIES ADDED:
+- aiosmtplib==3.0.2 (async SMTP client)
+- email-validator==2.2.0 (email validation)
+
+TESTING:
+Created validate_feature_429.py to verify:
+- Comment creation with mentions
+- Email notification triggering
+- Non-blocking behavior
+- Integration with existing mention system
+
+REGRESSION TESTING:
+- Feature #427 (mentions) - ✅ PASSING
+- No breaking changes detected
+- All baseline features intact
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 429 (was 428)
+Percentage: 65.2%
+Remaining: 229 features
+
+NEXT FEATURE: #430 - Comments: Comment notifications: in-app
+
