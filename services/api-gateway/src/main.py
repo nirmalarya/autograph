@@ -930,6 +930,7 @@ PUBLIC_ROUTES = [
     "/api/auth/token",
     "/api/auth/email/verify",  # Email verification (Feature #65)
     "/api/auth/oauth/",  # OAuth endpoints (Feature #112-115)
+    "/api/auth/auth/saml/",  # SAML SSO endpoints (Feature #519-523)
     "/api/auth/health",
     "/api/auth/test/",  # All test endpoints
     "/api/diagrams/shared/",  # Public shared diagram access
