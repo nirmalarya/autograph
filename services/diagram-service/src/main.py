@@ -3581,8 +3581,8 @@ async def move_diagram(
     
     # Get diagram (only active diagrams)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
@@ -3673,8 +3673,8 @@ async def star_diagram(
     
     # Get diagram (only active diagrams)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
@@ -3741,8 +3741,8 @@ async def increment_export_count(
     
     # Get diagram (only active diagrams)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
