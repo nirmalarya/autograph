@@ -1375,7 +1375,7 @@ async def delta_update(sid, data):
 
 # Track cursor update timestamps for throttling
 cursor_update_throttle: Dict[str, float] = {}  # sid -> last_update_time
-CURSOR_THROTTLE_MS = 50  # 50ms throttle (20 updates/sec max)
+CURSOR_THROTTLE_MS = 100  # 100ms throttle (10 updates/sec max = 10 Hz)
 
 
 @sio.event
