@@ -202,6 +202,11 @@ next_color_index: int = 0
 follow_relationships: Dict[str, Dict[str, str]] = {}  # room_id -> {follower_user_id: following_user_id}
 viewport_states: Dict[str, Dict[str, dict]] = {}  # room_id -> {user_id: {pan_x, pan_y, zoom}}
 
+# Per-user undo/redo history (Feature #413)
+# Each user maintains their own undo and redo stacks
+undo_stacks: Dict[str, Dict[str, List[dict]]] = {}  # room_id -> {user_id: [actions]}
+redo_stacks: Dict[str, Dict[str, List[dict]]] = {}  # room_id -> {user_id: [actions]}
+
 
 def verify_jwt_token(token: str) -> Optional[dict]:
     """Verify JWT token and return payload."""
@@ -2380,6 +2385,235 @@ async def get_room_annotations(room_id: str):
         }
     except Exception as e:
         logger.error(f"Failed to get annotations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@sio.event
+async def action_performed(sid, data):
+    """
+    Record an action for undo/redo tracking.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id",
+        "action": {
+            "action_id": "unique-id",
+            "action_type": "create|update|delete",
+            "element_id": "element-id",
+            "element_type": "shape|text|etc",
+            "before_state": {...},  # State before action (for undo)
+            "after_state": {...}    # State after action (for redo)
+        }
+    }
+    Feature #413: Per-user undo/redo history
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        action = data.get('action')
+
+        if not room_id or not user_id or not action:
+            return {"success": False, "error": "room, user_id, and action required"}
+
+        # Initialize undo/redo stacks for this room if needed
+        if room_id not in undo_stacks:
+            undo_stacks[room_id] = {}
+        if room_id not in redo_stacks:
+            redo_stacks[room_id] = {}
+
+        # Initialize user's undo stack if needed
+        if user_id not in undo_stacks[room_id]:
+            undo_stacks[room_id][user_id] = []
+
+        # Add action to user's undo stack
+        undo_stacks[room_id][user_id].append(action)
+
+        # When a new action is performed, clear the redo stack
+        # (can't redo after performing a new action)
+        if user_id in redo_stacks[room_id]:
+            redo_stacks[room_id][user_id] = []
+
+        # Keep undo stack limited to 50 actions per user
+        if len(undo_stacks[room_id][user_id]) > 50:
+            undo_stacks[room_id][user_id] = undo_stacks[room_id][user_id][-50:]
+
+        logger.info(f"Action recorded for undo: {action.get('action_type')} by user {user_id} in room {room_id}")
+        logger.info(f"  Undo stack size: {len(undo_stacks[room_id][user_id])}")
+
+        return {
+            "success": True,
+            "undo_stack_size": len(undo_stacks[room_id][user_id]),
+            "redo_stack_size": len(redo_stacks[room_id].get(user_id, []))
+        }
+    except Exception as e:
+        logger.error(f"Failed to record action: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def undo_action(sid, data):
+    """
+    Undo the last action by a specific user.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id"
+    }
+    Feature #413: Per-user undo/redo - undo
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+
+        if not room_id or not user_id:
+            return {"success": False, "error": "room and user_id required"}
+
+        # Check if user has actions to undo
+        if room_id not in undo_stacks or user_id not in undo_stacks[room_id]:
+            return {
+                "success": False,
+                "error": "No actions to undo",
+                "undo_stack_size": 0
+            }
+
+        if not undo_stacks[room_id][user_id]:
+            return {
+                "success": False,
+                "error": "No actions to undo",
+                "undo_stack_size": 0
+            }
+
+        # Pop the last action from undo stack
+        action = undo_stacks[room_id][user_id].pop()
+
+        # Initialize redo stack if needed
+        if user_id not in redo_stacks[room_id]:
+            redo_stacks[room_id][user_id] = []
+
+        # Add action to redo stack
+        redo_stacks[room_id][user_id].append(action)
+
+        # Keep redo stack limited to 50 actions
+        if len(redo_stacks[room_id][user_id]) > 50:
+            redo_stacks[room_id][user_id] = redo_stacks[room_id][user_id][-50:]
+
+        logger.info(f"Undo action: {action.get('action_type')} by user {user_id} in room {room_id}")
+        logger.info(f"  Undo stack size: {len(undo_stacks[room_id][user_id])}")
+        logger.info(f"  Redo stack size: {len(redo_stacks[room_id][user_id])}")
+
+        # Broadcast undo event to all users in room
+        await sio.emit('action_undone', {
+            'user_id': user_id,
+            'action': action,
+            'undo_stack_size': len(undo_stacks[room_id][user_id]),
+            'redo_stack_size': len(redo_stacks[room_id][user_id]),
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "action": action,
+            "undo_stack_size": len(undo_stacks[room_id][user_id]),
+            "redo_stack_size": len(redo_stacks[room_id][user_id])
+        }
+    except Exception as e:
+        logger.error(f"Failed to undo action: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def redo_action(sid, data):
+    """
+    Redo the last undone action by a specific user.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id"
+    }
+    Feature #413: Per-user undo/redo - redo
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+
+        if not room_id or not user_id:
+            return {"success": False, "error": "room and user_id required"}
+
+        # Check if user has actions to redo
+        if room_id not in redo_stacks or user_id not in redo_stacks[room_id]:
+            return {
+                "success": False,
+                "error": "No actions to redo",
+                "redo_stack_size": 0
+            }
+
+        if not redo_stacks[room_id][user_id]:
+            return {
+                "success": False,
+                "error": "No actions to redo",
+                "redo_stack_size": 0
+            }
+
+        # Pop the last action from redo stack
+        action = redo_stacks[room_id][user_id].pop()
+
+        # Add action back to undo stack
+        if user_id not in undo_stacks[room_id]:
+            undo_stacks[room_id][user_id] = []
+
+        undo_stacks[room_id][user_id].append(action)
+
+        # Keep undo stack limited to 50 actions
+        if len(undo_stacks[room_id][user_id]) > 50:
+            undo_stacks[room_id][user_id] = undo_stacks[room_id][user_id][-50:]
+
+        logger.info(f"Redo action: {action.get('action_type')} by user {user_id} in room {room_id}")
+        logger.info(f"  Undo stack size: {len(undo_stacks[room_id][user_id])}")
+        logger.info(f"  Redo stack size: {len(redo_stacks[room_id][user_id])}")
+
+        # Broadcast redo event to all users in room
+        await sio.emit('action_redone', {
+            'user_id': user_id,
+            'action': action,
+            'undo_stack_size': len(undo_stacks[room_id][user_id]),
+            'redo_stack_size': len(redo_stacks[room_id][user_id]),
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "action": action,
+            "undo_stack_size": len(undo_stacks[room_id][user_id]),
+            "redo_stack_size": len(redo_stacks[room_id][user_id])
+        }
+    except Exception as e:
+        logger.error(f"Failed to redo action: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/undo-redo/stacks/{room_id}/{user_id}")
+async def get_undo_redo_stacks(room_id: str, user_id: str):
+    """
+    Get the current undo/redo stack sizes for a user.
+    Feature #413: View undo/redo stack state
+    """
+    try:
+        undo_size = 0
+        redo_size = 0
+
+        if room_id in undo_stacks and user_id in undo_stacks[room_id]:
+            undo_size = len(undo_stacks[room_id][user_id])
+
+        if room_id in redo_stacks and user_id in redo_stacks[room_id]:
+            redo_size = len(redo_stacks[room_id][user_id])
+
+        return {
+            "room": room_id,
+            "user_id": user_id,
+            "undo_stack_size": undo_size,
+            "redo_stack_size": redo_size,
+            "can_undo": undo_size > 0,
+            "can_redo": redo_size > 0
+        }
+    except Exception as e:
+        logger.error(f"Failed to get undo/redo stacks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
