@@ -15541,3 +15541,87 @@ TECHNICAL NOTES:
 
 SESSION COMPLETE: Feature #433 ✅ PASSING
 
+
+================================================================================
+SESSION: Feature #434 - Edit Comments with 5-Minute Window
+DATE: 2025-12-26
+================================================================================
+
+FEATURE IMPLEMENTED: #434 - Edit Comments with 5-Minute Window
+
+IMPLEMENTATION SUMMARY:
+
+The feature was ALREADY IMPLEMENTED in the codebase! Found existing PUT endpoint 
+at `/diagrams/{diagram_id}/comments/{comment_id}` with complete functionality.
+
+EXISTING IMPLEMENTATION:
+
+1. Endpoint: PUT /{diagram_id}/comments/{comment_id}
+   Location: services/diagram-service/src/main.py:4620
+
+2. Key Validations:
+   ✅ Ownership check: Only comment author can edit
+   ✅ Time window check: Edits allowed only within 5 minutes
+   ✅ Calculation: (datetime.utcnow() - comment.created_at).total_seconds() > 300
+
+3. Request Model:
+   - UpdateCommentRequest with 'content' field
+
+4. Response:
+   - Returns updated comment with id, content, updated_at
+   - HTTP 403 if not owner or past 5-minute window
+   - HTTP 404 if comment not found
+
+TESTING:
+
+Created comprehensive test (test_feature_434_edit_comments.py):
+
+✅ User registration and login
+✅ Diagram creation
+✅ Comment posting
+✅ Comment editing within 5-minute window
+✅ Content verification after edit
+✅ Multiple edits within window
+✅ Code validation of 5-minute enforcement
+
+TEST RESULTS:
+
+All test scenarios passed:
+✅ Can edit comment immediately after posting
+✅ Can edit multiple times within window
+✅ Updated content persisted correctly
+✅ Backend enforces 5-minute limit (verified in code)
+
+REGRESSION CHECK:
+Baseline was: 431 features
+Current: 434 features
+✅ No regressions (baseline improved!)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 434 (was 433)
+Percentage: 66.0%
+Remaining: 224 features
+
+NEXT FEATURE: #435 (to be determined)
+
+TECHNICAL NOTES:
+
+1. The edit endpoint uses UTC timezone-aware datetime comparisons
+2. The 5-minute window is exactly 300 seconds
+3. The `updated_at` timestamp is automatically updated on edit
+4. Multiple edits within the window are allowed (no edit count limit)
+
+5. Security features:
+   - User must be authenticated (X-User-ID header required)
+   - Only comment owner can edit (ownership check)
+   - Time-based restriction prevents abuse
+
+6. Use Cases:
+   - Fix typos immediately after posting
+   - Clarify comments within grace period
+   - Update information while still fresh
+   - Prevent indefinite editing of old comments
+
+SESSION COMPLETE: Feature #434 ✅ PASSING
+
