@@ -4267,6 +4267,9 @@ class CreateCommentRequest(BaseModel):
 class UpdateCommentRequest(BaseModel):
     """Request model for updating a comment."""
     content: str
+    text_start: Optional[int] = None  # For note text selection
+    text_end: Optional[int] = None  # For note text selection
+    text_content: Optional[str] = None  # Selected text content
 
 class CommentResponse(BaseModel):
     """Response model for a comment."""
@@ -4642,6 +4645,9 @@ async def create_comment(
         "position_x": new_comment.position_x,
         "position_y": new_comment.position_y,
         "element_id": new_comment.element_id,
+        "text_start": new_comment.text_start,
+        "text_end": new_comment.text_end,
+        "text_content": new_comment.text_content,
         "is_resolved": new_comment.is_resolved,
         "is_private": new_comment.is_private,
         "created_at": new_comment.created_at.isoformat(),
@@ -4701,20 +4707,29 @@ async def update_comment(
     
     # Update comment
     comment.content = comment_data.content
+    if comment_data.text_start is not None:
+        comment.text_start = comment_data.text_start
+    if comment_data.text_end is not None:
+        comment.text_end = comment_data.text_end
+    if comment_data.text_content is not None:
+        comment.text_content = comment_data.text_content
     comment.updated_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(comment)
-    
+
     logger.info(
         "Comment updated successfully",
         correlation_id=correlation_id,
         comment_id=comment_id
     )
-    
+
     return {
         "id": comment.id,
         "content": comment.content,
+        "text_start": comment.text_start,
+        "text_end": comment.text_end,
+        "text_content": comment.text_content,
         "updated_at": comment.updated_at.isoformat(),
         "message": "Comment updated successfully"
     }
