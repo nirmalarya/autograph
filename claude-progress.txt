@@ -21456,3 +21456,125 @@ NOTES:
 - Audit logging records export actions with format and filters
 - Implementation is production-ready and fully tested
 
+
+================================================================================
+SESSION: Feature #540 - Audit Retention: Configurable Period
+Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+================================================================================
+
+FEATURE IMPLEMENTED:
+-------------------
+Feature #540: Enterprise: Audit retention: configurable period
+
+DESCRIPTION:
+-----------
+Enterprise feature allowing admins to configure audit log retention periods.
+System automatically deletes logs older than the configured retention period.
+
+IMPLEMENTATION DETAILS:
+----------------------
+1. **Endpoints** (already existed in auth-service):
+   - GET /admin/config/audit-retention
+     * Returns current retention configuration
+     * Default: 365 days (1 year), enabled: true
+   
+   - POST /admin/config/audit-retention
+     * Sets retention configuration
+     * Validates retention period (1-3650 days)
+     * Immediately deletes old logs if enabled
+     * Logs configuration change to audit log
+
+2. **Configuration Storage**:
+   - Uses Redis for configuration storage
+   - Key: "config:audit_retention"
+   - Format: {"retention_days": N, "enabled": bool}
+
+3. **Automatic Cleanup**:
+   - When retention config is updated with enabled=true
+   - Calculates cutoff date: current_time - retention_days
+   - Deletes all audit_log records with created_at < cutoff_date
+   - Returns count of deleted records
+
+4. **Pydantic Model**:
+   class AuditRetentionConfig(BaseModel):
+       retention_days: int = 365  # Default: 1 year
+       enabled: bool = True
+
+TESTING:
+--------
+Created comprehensive E2E test: test_feature_540_audit_retention.py
+
+Test Steps:
+1. ✅ Set retention to 90 days
+   - Verifies configuration accepted
+   - Confirms old logs (> 90 days) deleted immediately
+   
+2. ✅ Verify logs older than 90 days deleted
+   - Counts logs before and after
+   - Asserts 0 logs older than 90 days remain
+   - Confirms recent logs preserved
+   
+3. ✅ Set retention to 1 year (365 days)
+   - Updates configuration
+   - Verifies persistence in Redis
+   
+4. ✅ Verify 1-year retention works
+   - Creates test logs at 370 days (should delete)
+   - Creates test logs at 350 days (should keep)
+   - Triggers retention cleanup
+   - Asserts correct deletion behavior
+
+Test Results:
+- All assertions passed
+- Retention periods configurable
+- Automatic cleanup working
+- Configuration persistence verified
+- Old logs deleted, recent logs retained
+
+VALIDATION CRITERIA MET:
+-----------------------
+✅ Admin can set retention to 90 days
+✅ Logs older than 90 days automatically deleted
+✅ Admin can update retention to 1 year
+✅ 1-year retention properly enforced
+✅ Configuration persists in Redis
+✅ Validation prevents invalid periods (< 1 day or > 10 years)
+✅ Audit trail of config changes maintained
+
+SECURITY CONSIDERATIONS:
+-----------------------
+- Endpoint requires admin authentication (get_admin_user dependency)
+- Only users with role='admin' can access
+- Configuration changes logged to audit_log
+- No data loss risk (only deletes audit logs older than retention)
+- Retention period has reasonable limits (1 day - 10 years)
+
+COMPLIANCE:
+----------
+- Supports GDPR and data retention policies
+- Configurable retention for different jurisdictions
+- Automatic cleanup reduces storage costs
+- Audit trail of retention policy changes
+- Default 1-year retention is industry standard
+
+PROGRESS UPDATE:
+---------------
+Before: 540/658 features passing (82.1%)
+After:  541/658 features passing (82.2%)
+Remaining: 117 features
+
+REGRESSION CHECK:
+----------------
+✅ No baseline features affected
+✅ Existing audit logging still functional
+✅ All services healthy
+✅ No breaking changes
+
+NOTES:
+------
+- Implementation already existed in codebase
+- Required comprehensive test to validate
+- Endpoint only accessible via auth-service (not through API gateway)
+- Used bcrypt for admin user password hashing in test
+- Fixed SQL LIKE pattern escaping (% -> %%)
+
