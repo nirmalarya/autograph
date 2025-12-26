@@ -790,12 +790,12 @@ async def generate_thumbnail(request: ThumbnailRequest):
             (request.height - text_height) // 2
         )
         draw.text(position, text, fill='#666666')
-        
-        # Convert to PNG bytes
+
+        # Convert to PNG bytes with compression (Feature #516)
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
+        img.save(img_byte_arr, format='PNG', compress_level=6, optimize=True)
         img_byte_arr.seek(0)
-        
+
         # Return as base64 for easy storage
         img_base64 = base64.b64encode(img_byte_arr.read()).decode('utf-8')
         
@@ -846,12 +846,12 @@ async def generate_thumbnail_png(request: ThumbnailRequest):
             (request.height - text_height) // 2
         )
         draw.text(position, text, fill='#666666')
-        
-        # Convert to PNG bytes
+
+        # Convert to PNG bytes with compression (Feature #516)
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
+        img.save(img_byte_arr, format='PNG', compress_level=6, optimize=True)
         img_byte_arr.seek(0)
-        
+
         logger.info(f"PNG thumbnail generated successfully for diagram {request.diagram_id}")
         
         return Response(
@@ -1746,9 +1746,9 @@ async def export_markdown(request: ExportRequest):
             anchor='mm'
         )
         
-        # Convert to base64 for embedding
+        # Convert to base64 for embedding with compression (Feature #516)
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
+        img.save(img_byte_arr, format='PNG', compress_level=6, optimize=True)
         img_byte_arr.seek(0)
         img_base64 = base64.b64encode(img_byte_arr.read()).decode('utf-8')
         
@@ -2019,9 +2019,9 @@ async def export_html(request: ExportRequest):
             fill='#333333'
         )
         
-        # Convert to base64
+        # Convert to base64 with compression (Feature #516)
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
+        img.save(img_byte_arr, format='PNG', compress_level=6, optimize=True)
         img_byte_arr.seek(0)
         img_base64 = base64.b64encode(img_byte_arr.read()).decode('utf-8')
         
@@ -2585,9 +2585,12 @@ async def export_diagram_png(canvas_data, width, height, scale, quality, backgro
         # Placeholder: just draw text
         draw.text((50, 50), f"Diagram Export\n{len(canvas_data.get('shapes', []))} shapes", fill=(0, 0, 0, 255))
     
-    # Convert to bytes
+    # Convert to bytes with compression
+    # Feature #516: Quality optimization - compress PNG
+    # Use compress_level based on quality setting for optimal file size
+    compress_level = 9 if quality in ['high', 'ultra'] else 6
     buffer = io.BytesIO()
-    img.save(buffer, format='PNG', optimize=True)
+    img.save(buffer, format='PNG', compress_level=compress_level, optimize=True)
     return buffer.getvalue()
 
 
