@@ -18289,3 +18289,69 @@ PROGRESS:
 NEXT:
 =====
 Feature #481: Version size tracking
+
+================================================================================
+SESSION: 2025-12-26 11:24:02
+FEATURE #480: Version Retention Policy - VERIFIED PASSING
+================================================================================
+
+OVERVIEW:
+=========
+Feature #480 was already implemented but not marked as passing. Verified all
+retention policy functionality works correctly.
+
+FEATURE DESCRIPTION:
+====================
+Version history: Version retention policy: configurable
+
+TEST RESULTS:
+=============
+✅ All 7 test scenarios passed:
+1. Register and Login - PASS
+2. Create Diagram with Many Versions - PASS  
+3. Test keep_all Policy - PASS
+4. Test keep_last_n Policy - PASS
+5. Test keep_last_n with New Versions - PASS
+6. Test keep_duration Policy - PASS
+7. Test System-wide Policy - PASS
+
+FUNCTIONALITY VERIFIED:
+=======================
+✅ Database schema includes retention policy columns
+✅ API endpoints implemented:
+   - GET /{diagram_id}/retention-policy
+   - PUT /{diagram_id}/retention-policy
+   - POST /{diagram_id}/retention-policy/apply
+   - POST /retention-policy/apply-all
+
+✅ Three retention policies working:
+   1. keep_all: Keep all versions (default)
+   2. keep_last_n: Keep only last N versions
+   3. keep_duration: Keep versions for specified days
+
+✅ System-wide policy application works across all diagrams
+
+FILES VERIFIED:
+===============
+- services/diagram-service/migrations/add_version_retention_policy.sql
+- services/diagram-service/src/main.py (API endpoints)
+- services/diagram-service/src/models.py (schema)
+- scripts/tests/test_feature_480_retention_policy.py
+
+QUALITY GATES:
+==============
+✓ Feature working end-to-end
+✓ All test scenarios passing
+✓ Database migration applied
+✓ API endpoints functional
+✓ No regressions
+
+PROGRESS UPDATE:
+================
+- spec/feature_list.json: Feature #480 marked as passing
+- Progress: 481/658 features (73.1%)
+- 177 features remaining
+
+NEXT:
+=====
+Feature #481: Version history: Version size tracking
