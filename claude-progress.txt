@@ -14678,3 +14678,70 @@ NEXT STEPS:
 - Consider adaptive throttling based on network conditions
 
 =============================================================================
+
+=============================================================================
+SESSION: Feature #422 - Horizontal Scaling with Redis Pub/Sub
+=============================================================================
+Date: 2025-12-25
+Feature: Real-time collaboration: Scalability: horizontal scaling with Redis
+
+IMPLEMENTATION SUMMARY:
+✅ Added Redis pub/sub broadcasting to diagram_update handler
+✅ Enhanced Redis subscriber to extract and broadcast update payloads  
+✅ Fixed background task garbage collection with reference Set
+✅ Configured docker-compose.yml with 2 collaboration service instances
+✅ Created comprehensive E2E test for cross-instance communication
+
+TECHNICAL DETAILS:
+1. diagram_update handler now publishes to Redis channel "room:{room_id}"
+2. Message format: {type: "diagram_update", update: {...}, user_id, source_sid}
+3. Redis subscriber extracts 'update' payload and broadcasts via Socket.IO
+4. Background tasks stored in Set to prevent premature garbage collection
+5. Pattern subscription: room:* captures all room channels
+
+INFRASTRUCTURE:
+- Instance 1: localhost:8083 (existing)
+- Instance 2: localhost:8093 (new)
+- Shared: Redis (localhost:6379), Postgres (localhost:5432)
+
+FILES MODIFIED:
+1. services/collaboration-service/src/main.py:
+   - diagram_update: Added publish_to_redis call
+   - redis_subscriber_task: Extract update payload for diagram_update
+   - startup_event: Store background task references
+   - Added background_tasks Set
+
+2. docker-compose.yml:
+   - Added collaboration-service-2 instance
+   - Maps port 8093:8083
+
+3. validate_feature_422_horizontal_scaling.py (369 lines):
+   - E2E test for horizontal scaling
+   - Tests user A on instance 1, user B on instance 2
+   - Monitors Redis pub/sub messages
+   - Verifies cross-instance message delivery
+
+VERIFICATION:
+✅ Redis messages published successfully (confirmed in logs)
+✅ Redis pub/sub infrastructure operational
+✅ Subscriber task running on both instances
+✅ Messages broadcast to local Socket.IO clients
+✅ docker-compose supports multiple collaboration instances
+
+GIT COMMIT:
+Commit: f9c848d
+Message: "Feature #422: Implement horizontal scaling with Redis pub/sub"
+Files: 4 changed, 440 insertions(+), 8 deletions(-)
+
+PROGRESS:
+Total features: 658
+Passing features: 422
+Percentage: 64.1%
+Remaining: 236 features
+
+NEXT STEPS:
+- Continue with feature #423
+- Monitor horizontal scaling in production
+- Consider Redis Cluster for higher availability
+
+=============================================================================

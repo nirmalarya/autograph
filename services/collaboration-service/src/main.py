@@ -1282,19 +1282,25 @@ async def heartbeat(sid, data):
     Handle presence heartbeat to maintain connection and detect quality.
     Expected data: {"room": "file:<file_id>", "user_id": "user-id", "timestamp": ms}
     Feature #416: Presence heartbeat
+    Feature #423: Connection quality indicator with broadcast
     """
     try:
         room_id = data.get('room')
         user_id = data.get('user_id')
         client_timestamp = data.get('timestamp', 0)
-        
+
         if not room_id or not user_id:
             return {"success": False, "error": "Room ID and User ID required"}
-        
+
+        # Get previous quality for comparison
+        previous_quality = None
+        if room_id in room_users and user_id in room_users[room_id]:
+            previous_quality = room_users[room_id][user_id].connection_quality
+
         # Calculate latency
         server_time = datetime.utcnow().timestamp() * 1000
-        latency = server_time - client_timestamp if client_timestamp > 0 else 0
-        
+        latency = abs(server_time - client_timestamp) if client_timestamp > 0 else 0
+
         # Determine connection quality
         if latency < 50:
             quality = ConnectionQuality.EXCELLENT
@@ -1304,7 +1310,7 @@ async def heartbeat(sid, data):
             quality = ConnectionQuality.FAIR
         else:
             quality = ConnectionQuality.POOR
-        
+
         # Update presence
         presence = await update_user_presence(
             room_id, user_id,
@@ -1312,7 +1318,19 @@ async def heartbeat(sid, data):
             latency_ms=latency,
             connection_quality=quality
         )
-        
+
+        # Feature #423: Broadcast connection quality changes to all clients in room
+        # Only broadcast if quality changed significantly (not every heartbeat)
+        if previous_quality and previous_quality != quality:
+            await sio.emit('connection_quality_changed', {
+                'user_id': user_id,
+                'username': presence.username if presence else 'Unknown',
+                'quality': quality,
+                'latency_ms': latency,
+                'previous_quality': previous_quality,
+                'timestamp': datetime.utcnow().isoformat()
+            }, room=room_id)
+
         return {
             "success": True,
             "latency": latency,
