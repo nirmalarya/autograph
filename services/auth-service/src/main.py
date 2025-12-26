@@ -10832,7 +10832,7 @@ class CustomRoleUpdate(BaseModel):
 async def create_team_custom_role(
     team_id: str,
     role_create: CustomRoleCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -10935,7 +10935,7 @@ async def create_team_custom_role(
 @app.get("/api/v1/teams/{team_id}/custom-roles")
 async def list_team_custom_roles(
     team_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """List all custom roles for a team."""
@@ -11001,7 +11001,7 @@ async def list_team_custom_roles(
 async def get_team_custom_role(
     team_id: str,
     role_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get details of a specific custom role."""
@@ -11072,7 +11072,7 @@ async def update_team_custom_role(
     team_id: str,
     role_id: str,
     role_update: CustomRoleUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Update a custom role (admin only)."""
@@ -11161,7 +11161,7 @@ async def update_team_custom_role(
 async def delete_team_custom_role(
     team_id: str,
     role_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Delete a custom role (admin only)."""
