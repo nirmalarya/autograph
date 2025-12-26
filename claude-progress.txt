@@ -15170,3 +15170,67 @@ Remaining: 229 features
 
 NEXT FEATURE: #430 - Comments: Comment notifications: in-app
 
+
+========================================
+SESSION: Feature #430 - In-App Notifications
+DATE: 2025-12-26
+========================================
+
+FEATURE: #430 - Comments: Comment notifications: in-app
+
+CHALLENGE ENCOUNTERED:
+API Gateway routing conflict - notifications endpoint returning 404
+
+ROOT CAUSE:
+1. Route order issue in API gateway
+2. /api/diagrams/{path:path} route was matching /api/notifications
+3. More general routes were placed before specific routes
+
+SOLUTION:
+1. Moved /api/notifications routes BEFORE /api/diagrams/{path:path}
+2. FastAPI requires specific routes before path parameter routes
+3. Rebuilt both api-gateway and diagram-service containers
+4. Cleared Docker cache (freed 21.88GB) to resolve disk space issues
+
+IMPLEMENTATION DETAILS:
+- Reused existing Mention table for notifications
+- GET /api/notifications - retrieve user notifications with pagination
+- GET /api/notifications/unread/count - get unread count
+- PUT /api/notifications/{notification_id}/read - mark as read
+- Returns comment content, commenter info, diagram context, position data
+
+VALIDATION:
+✅ Notifications panel accessible
+✅ In-app notifications created and retrieved
+✅ Mark as read functionality working
+✅ Unread count tracking accurate
+✅ Comment navigation data included
+✅ Position data for jumping to comments
+
+REGRESSION TESTING:
+✅ Feature #427 (mentions) - still passing
+✅ Feature #428 (@mentions) - still passing
+✅ Feature #429 (email notifications) - still passing
+✅ No breaking changes detected
+
+TECHNICAL LEARNINGS:
+1. FastAPI route order matters - specific before general
+2. Path parameters in routes are greedy matchers
+3. Container rebuilds required when not using volume mounts
+4. Docker system cleanup essential for disk space management
+
+FILES CHANGED:
+- services/api-gateway/src/main.py (route order fix)
+- spec/feature_list.json (feature #430 marked passing)
+- validate_feature_429_inapp_notifications.py (NEW - validation script)
+
+DEPENDENCIES:
+None - reused existing infrastructure
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 430 (was 429)
+Percentage: 65.3%
+Remaining: 228 features
+
+NEXT FEATURE: #431 - Comments: Comment notifications: push (PWA)

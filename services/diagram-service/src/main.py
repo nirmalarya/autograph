@@ -4506,11 +4506,15 @@ async def create_comment(
 
     # Send email notifications for mentions (async, non-blocking)
     if mentioned_users_list:
+        from .push_notification_service import get_push_notification_service
+
         email_service = get_email_service()
+        push_service = get_push_notification_service()
         commenter_name = user.full_name if user and user.full_name else user.email if user else "Someone"
         diagram_name = diagram.title if diagram and diagram.title else "Untitled Diagram"
 
         for mentioned_user in mentioned_users_list:
+            # Send email notification
             try:
                 await email_service.send_mention_notification(
                     to_email=mentioned_user.email,
@@ -4525,6 +4529,27 @@ async def create_comment(
                 # Log error but don't fail the comment creation
                 logger.error(
                     "Failed to send mention email notification",
+                    correlation_id=correlation_id,
+                    mentioned_user=mentioned_user.email,
+                    error=str(e)
+                )
+
+            # Send push notification
+            try:
+                await push_service.send_mention_notification(
+                    db=db,
+                    user_id=mentioned_user.id,
+                    commenter_name=commenter_name,
+                    comment_content=comment_data.content,
+                    diagram_id=diagram_id,
+                    diagram_name=diagram_name,
+                    comment_id=new_comment.id,
+                    position=comment_data.position
+                )
+            except Exception as e:
+                # Log error but don't fail the comment creation
+                logger.error(
+                    "Failed to send push notification",
                     correlation_id=correlation_id,
                     mentioned_user=mentioned_user.email,
                     error=str(e)

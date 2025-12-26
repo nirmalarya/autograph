@@ -728,3 +728,35 @@ class UserFavoriteIcon(Base):
         Index('idx_user_favorite_icons_user', 'user_id', 'sort_order'),
         Index('idx_user_favorite_icons_icon', 'icon_id'),
     )
+
+
+class PushSubscription(Base):
+    """Push notification subscriptions for PWA."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Subscription details (from PushSubscription API)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String(255), nullable=False)  # Public key for encryption
+    auth = Column(String(255), nullable=False)  # Authentication secret
+
+    # Device/browser info
+    user_agent = Column(Text)
+
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_used_at = Column(DateTime(timezone=True))
+
+    # Relationships
+    user = relationship("User")
+
+    __table_args__ = (
+        Index('idx_push_subscriptions_user', 'user_id'),
+        Index('idx_push_subscriptions_active', 'user_id', 'is_active'),
+    )

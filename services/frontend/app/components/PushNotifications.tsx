@@ -58,9 +58,8 @@ export default function PushNotifications() {
     try {
       const registration = await navigator.serviceWorker.ready;
 
-      // In production, you would get this from your backend
-      // For now, we'll use a dummy VAPID key
-      const vapidPublicKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib37J8xQmrpcPBblQV4qvXYBNjnXqPLqhNZlVjmLGqBjJXjYJNmQJXNjXXk';
+      // Get VAPID public key from environment
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BObfDTIVphxXYko9K9pdL9EpYkuUECnyHj7cx98f2k5K3KehZitp7wXcaOGrX8rw65RVXO8oKZ0163OpFdIg0KE';
       
       const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
 
