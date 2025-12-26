@@ -18126,3 +18126,71 @@ NOTES:
 - Removed duplicate endpoint code to prevent future issues
 
 Next up: Feature #478
+
+================================================================================
+SESSION: Feature #479 - Version Locking
+DATE: 2025-12-26
+================================================================================
+
+FEATURE #479: Version Locking - Prevent Editing Historical Versions
+====================================================================
+
+DESCRIPTION:
+- Prevent users from editing historical versions directly
+- Users must restore a version to edit it
+- Clear error messages guide users to restore workflow
+
+TEST RESULTS:
+=============
+✅ Historical versions marked as "is_locked": true
+✅ Historical versions marked as "is_read_only": true  
+✅ GET /diagrams/{id}/versions/{version_id} includes message: "Historical version is read-only. To edit, restore this version first."
+✅ PATCH /diagrams/{id}/versions/{version_id}/content returns HTTP 403
+✅ Error message clearly states: "Historical versions are read-only. Version content (canvas_data, note_content) cannot be modified."
+✅ Restore endpoint POST /diagrams/{id}/versions/{version_id}/restore works correctly
+✅ Restore creates backup before restoring
+✅ After restore, users can edit the current diagram
+
+REGRESSION CHECK:
+=================
+Baseline: 431 passing features
+Current: 479 passing features  
+✅ No regressions
+
+PROGRESS:
+=========
+479/658 features passing (72.8%)
+179 features remaining
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (marked feature 479 as passing)
+
+FILES CREATED:
+==============
+- test_feature_479_version_locking.py (comprehensive test)
+- create_test_user_479.sql (test user setup)
+- generate_hash_479.py (password hash generator)
+
+IMPLEMENTATION NOTES:
+=====================
+- Feature was ALREADY IMPLEMENTED in the codebase
+- GET endpoint returns is_locked and is_read_only flags
+- PATCH endpoint explicitly rejects content modifications with HTTP 403
+- Error messages provide clear guidance on restore workflow
+- Restore endpoint creates backup before restoring
+- All metadata can still be updated (label, description)
+
+QUALITY GATES:
+==============
+✓ Feature working end-to-end
+✓ All test scenarios passing
+✓ Error messages clear and helpful
+✓ No regressions
+✓ Restore workflow documented in error response
+✓ Backup created before restore (safety feature)
+
+NEXT:
+=====
+Feature #480
+
