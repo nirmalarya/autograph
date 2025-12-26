@@ -926,6 +926,7 @@ PUBLIC_ROUTES = [
     "/api/admin/dr/",  # Disaster recovery endpoints (for testing)
     "/api/admin/encryption/",  # Encryption key management (Feature #548)
     "/api/admin/secrets/",  # Secrets management (Feature #549)
+    "/api/admin/analytics/",  # Usage analytics (Features #550-553)
     "/api/feature-flags",  # Feature flags API (all endpoints)
     "/api/auth/register",
     "/api/auth/login",
@@ -5188,6 +5189,554 @@ async def get_secrets_audit_logs(request: Request, limit: int = 100):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve audit logs: {str(e)}"
+        )
+
+
+# ============================================================
+# USAGE ANALYTICS ENDPOINTS (Features #550-553)
+# ============================================================
+
+@app.get("/api/admin/analytics/diagrams-created")
+async def get_diagrams_created_analytics(request: Request, days: int = 30):
+    """
+    Get analytics for diagrams created.
+
+    Returns:
+    - Total diagrams count
+    - Diagrams per day chart (last N days)
+    - Trends (increase/decrease percentage)
+
+    Feature #550: Enterprise: Usage analytics: diagrams created
+
+    Query parameters:
+    - days: Number of days to analyze (default: 30, max: 365)
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        import psycopg2
+        from datetime import timedelta
+
+        # Validate and cap days parameter
+        if days > 365:
+            days = 365
+        if days < 1:
+            days = 1
+
+        logger.info(
+            "Retrieving diagrams created analytics",
+            correlation_id=correlation_id,
+            days=days
+        )
+
+        # Connect to database using explicit parameters
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            database=os.getenv("POSTGRES_DB", "autograph"),
+            user=os.getenv("POSTGRES_USER", "autograph"),
+            password=os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+        )
+        cursor = conn.cursor()
+
+        # Get total diagrams count (active only)
+        cursor.execute("""
+            SELECT COUNT(*) as total_diagrams
+            FROM files
+            WHERE is_deleted = false
+        """)
+        total_diagrams = cursor.fetchone()[0]
+
+        # Get diagrams per day for the specified period
+        cursor.execute("""
+            SELECT
+                DATE(created_at) as day,
+                COUNT(*) as count
+            FROM files
+            WHERE is_deleted = false
+              AND created_at >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(created_at)
+            ORDER BY day DESC
+        """, (days,))
+
+        diagrams_per_day = []
+        for row in cursor.fetchall():
+            diagrams_per_day.append({
+                "date": row[0].isoformat(),
+                "count": row[1]
+            })
+
+        # Calculate trend (compare last 7 days to previous 7 days)
+        cursor.execute("""
+            SELECT
+                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as last_7_days,
+                COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '14 days'
+                           AND created_at < CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as previous_7_days
+            FROM files
+            WHERE is_deleted = false
+        """)
+        trend_data = cursor.fetchone()
+        last_7_days = trend_data[0]
+        previous_7_days = trend_data[1]
+
+        # Calculate percentage change
+        if previous_7_days > 0:
+            trend_percentage = ((last_7_days - previous_7_days) / previous_7_days) * 100
+        else:
+            trend_percentage = 100.0 if last_7_days > 0 else 0.0
+
+        trend_direction = "up" if trend_percentage > 0 else "down" if trend_percentage < 0 else "stable"
+
+        cursor.close()
+        conn.close()
+
+        logger.info(
+            "Diagrams created analytics retrieved successfully",
+            correlation_id=correlation_id,
+            total_diagrams=total_diagrams,
+            days_analyzed=days
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "analytics": {
+                "total_diagrams": total_diagrams,
+                "period_days": days,
+                "diagrams_per_day": diagrams_per_day,
+                "trend": {
+                    "direction": trend_direction,
+                    "percentage": round(trend_percentage, 2),
+                    "last_7_days": last_7_days,
+                    "previous_7_days": previous_7_days
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error("Failed to retrieve diagrams analytics", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve diagrams analytics: {str(e)}"
+        )
+
+
+@app.get("/api/admin/analytics/users-active")
+async def get_users_active_analytics(request: Request, days: int = 30):
+    """
+    Get analytics for active users.
+
+    Returns:
+    - Total users count
+    - Active users (logged in last N days)
+    - Users per day chart
+    - Trends
+
+    Feature #551: Enterprise: Usage analytics: users active
+
+    Query parameters:
+    - days: Number of days to analyze (default: 30, max: 365)
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        import psycopg2
+
+        # Validate and cap days parameter
+        if days > 365:
+            days = 365
+        if days < 1:
+            days = 1
+
+        logger.info(
+            "Retrieving active users analytics",
+            correlation_id=correlation_id,
+            days=days
+        )
+
+        # Connect to database using explicit parameters
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            database=os.getenv("POSTGRES_DB", "autograph"),
+            user=os.getenv("POSTGRES_USER", "autograph"),
+            password=os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+        )
+        cursor = conn.cursor()
+
+        # Get total users count
+        cursor.execute("""
+            SELECT COUNT(*) as total_users
+            FROM users
+            WHERE is_active = true
+        """)
+        total_users = cursor.fetchone()[0]
+
+        # Get active users (logged in within specified days)
+        cursor.execute("""
+            SELECT COUNT(*) as active_users
+            FROM users
+            WHERE is_active = true
+              AND last_login_at >= CURRENT_DATE - INTERVAL '%s days'
+        """, (days,))
+        active_users = cursor.fetchone()[0]
+
+        # Get daily active users for the specified period
+        cursor.execute("""
+            SELECT
+                DATE(last_login_at) as day,
+                COUNT(DISTINCT id) as count
+            FROM users
+            WHERE is_active = true
+              AND last_login_at >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(last_login_at)
+            ORDER BY day DESC
+        """, (days,))
+
+        active_users_per_day = []
+        for row in cursor.fetchall():
+            active_users_per_day.append({
+                "date": row[0].isoformat(),
+                "count": row[1]
+            })
+
+        # Calculate trend (compare last 7 days to previous 7 days)
+        cursor.execute("""
+            SELECT
+                COUNT(DISTINCT CASE WHEN last_login_at >= CURRENT_DATE - INTERVAL '7 days' THEN id END) as last_7_days,
+                COUNT(DISTINCT CASE WHEN last_login_at >= CURRENT_DATE - INTERVAL '14 days'
+                           AND last_login_at < CURRENT_DATE - INTERVAL '7 days' THEN id END) as previous_7_days
+            FROM users
+            WHERE is_active = true
+        """)
+        trend_data = cursor.fetchone()
+        last_7_days = trend_data[0]
+        previous_7_days = trend_data[1]
+
+        # Calculate percentage change
+        if previous_7_days > 0:
+            trend_percentage = ((last_7_days - previous_7_days) / previous_7_days) * 100
+        else:
+            trend_percentage = 100.0 if last_7_days > 0 else 0.0
+
+        trend_direction = "up" if trend_percentage > 0 else "down" if trend_percentage < 0 else "stable"
+
+        cursor.close()
+        conn.close()
+
+        logger.info(
+            "Active users analytics retrieved successfully",
+            correlation_id=correlation_id,
+            total_users=total_users,
+            active_users=active_users,
+            days_analyzed=days
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "analytics": {
+                "total_users": total_users,
+                "active_users": active_users,
+                "period_days": days,
+                "active_users_per_day": active_users_per_day,
+                "trend": {
+                    "direction": trend_direction,
+                    "percentage": round(trend_percentage, 2),
+                    "last_7_days": last_7_days,
+                    "previous_7_days": previous_7_days
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error("Failed to retrieve active users analytics", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve active users analytics: {str(e)}"
+        )
+
+
+@app.get("/api/admin/analytics/storage-used")
+async def get_storage_used_analytics(request: Request):
+    """
+    Get analytics for storage usage.
+
+    Returns:
+    - Total storage used (bytes, MB, GB)
+    - Storage per team
+    - Storage per file type
+    - Trends
+
+    Feature #552: Enterprise: Usage analytics: storage used
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        import psycopg2
+
+        logger.info(
+            "Retrieving storage usage analytics",
+            correlation_id=correlation_id
+        )
+
+        # Connect to database using explicit parameters
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            database=os.getenv("POSTGRES_DB", "autograph"),
+            user=os.getenv("POSTGRES_USER", "autograph"),
+            password=os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+        )
+        cursor = conn.cursor()
+
+        # Get total storage used (from files table)
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(size_bytes), 0) as total_bytes,
+                COUNT(*) as total_files
+            FROM files
+            WHERE is_deleted = false
+        """)
+        storage_data = cursor.fetchone()
+        total_bytes = int(storage_data[0]) if storage_data[0] is not None else 0
+        total_files = int(storage_data[1]) if storage_data[1] is not None else 0
+
+        # Convert to human-readable formats
+        total_mb = total_bytes / (1024 * 1024)
+        total_gb = total_bytes / (1024 * 1024 * 1024)
+
+        # Get storage per team
+        cursor.execute("""
+            SELECT
+                COALESCE(f.team_id, 'no_team') as team_id,
+                COALESCE(t.name, 'No Team') as team_name,
+                COALESCE(SUM(f.size_bytes), 0) as storage_bytes,
+                COUNT(*) as file_count
+            FROM files f
+            LEFT JOIN teams t ON f.team_id = t.id
+            WHERE f.is_deleted = false
+            GROUP BY f.team_id, t.name
+            ORDER BY storage_bytes DESC
+            LIMIT 20
+        """)
+
+        storage_per_team = []
+        for row in cursor.fetchall():
+            storage_bytes = int(row[2]) if row[2] is not None else 0
+            storage_per_team.append({
+                "team_id": row[0],
+                "team_name": row[1],
+                "storage_bytes": storage_bytes,
+                "storage_mb": round(storage_bytes / (1024 * 1024), 2),
+                "file_count": int(row[3]) if row[3] is not None else 0
+            })
+
+        # Get storage per file type
+        cursor.execute("""
+            SELECT
+                COALESCE(file_type, 'unknown') as file_type,
+                COALESCE(SUM(size_bytes), 0) as storage_bytes,
+                COUNT(*) as file_count
+            FROM files
+            WHERE is_deleted = false
+            GROUP BY file_type
+            ORDER BY storage_bytes DESC
+        """)
+
+        storage_per_type = []
+        for row in cursor.fetchall():
+            storage_bytes = int(row[1]) if row[1] is not None else 0
+            storage_per_type.append({
+                "file_type": row[0],
+                "storage_bytes": storage_bytes,
+                "storage_mb": round(storage_bytes / (1024 * 1024), 2),
+                "file_count": int(row[2]) if row[2] is not None else 0
+            })
+
+        # Calculate 7-day trend
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '7 days' THEN size_bytes ELSE 0 END), 0) as last_7_days,
+                COALESCE(SUM(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '14 days'
+                           AND created_at < CURRENT_DATE - INTERVAL '7 days' THEN size_bytes ELSE 0 END), 0) as previous_7_days
+            FROM files
+            WHERE is_deleted = false
+        """)
+        trend_data = cursor.fetchone()
+        last_7_days_bytes = int(trend_data[0]) if trend_data[0] is not None else 0
+        previous_7_days_bytes = int(trend_data[1]) if trend_data[1] is not None else 0
+
+        # Calculate percentage change
+        if previous_7_days_bytes > 0:
+            trend_percentage = ((last_7_days_bytes - previous_7_days_bytes) / previous_7_days_bytes) * 100
+        else:
+            trend_percentage = 100.0 if last_7_days_bytes > 0 else 0.0
+
+        trend_direction = "up" if trend_percentage > 0 else "down" if trend_percentage < 0 else "stable"
+
+        cursor.close()
+        conn.close()
+
+        logger.info(
+            "Storage usage analytics retrieved successfully",
+            correlation_id=correlation_id,
+            total_bytes=total_bytes,
+            total_files=total_files
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "analytics": {
+                "total_storage": {
+                    "bytes": total_bytes,
+                    "mb": round(total_mb, 2),
+                    "gb": round(total_gb, 4),
+                    "total_files": total_files
+                },
+                "storage_per_team": storage_per_team,
+                "storage_per_type": storage_per_type,
+                "trend": {
+                    "direction": trend_direction,
+                    "percentage": round(trend_percentage, 2),
+                    "last_7_days_mb": round(last_7_days_bytes / (1024 * 1024), 2),
+                    "previous_7_days_mb": round(previous_7_days_bytes / (1024 * 1024), 2)
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error("Failed to retrieve storage analytics", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve storage analytics: {str(e)}"
+        )
+
+
+@app.get("/api/admin/analytics/cost-allocation")
+async def get_cost_allocation_analytics(request: Request):
+    """
+    Get cost allocation analytics by team.
+
+    Returns:
+    - Usage metrics by team
+    - Cost allocation based on storage and activity
+    - Resource consumption per team
+
+    Feature #553: Enterprise: Cost allocation: track usage by team
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        import psycopg2
+
+        logger.info(
+            "Retrieving cost allocation analytics",
+            correlation_id=correlation_id
+        )
+
+        # Connect to database using explicit parameters
+        conn = psycopg2.connect(
+            host=os.getenv("POSTGRES_HOST", "postgres"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            database=os.getenv("POSTGRES_DB", "autograph"),
+            user=os.getenv("POSTGRES_USER", "autograph"),
+            password=os.getenv("POSTGRES_PASSWORD", "autograph_dev_password")
+        )
+        cursor = conn.cursor()
+
+        # Get comprehensive team usage metrics
+        cursor.execute("""
+            SELECT
+                COALESCE(f.team_id, 'no_team') as team_id,
+                COALESCE(t.name, 'No Team') as team_name,
+                COUNT(DISTINCT tm.user_id) as member_count,
+                COUNT(DISTINCT f.id) as file_count,
+                COALESCE(SUM(f.size_bytes), 0) as storage_bytes,
+                COALESCE(SUM(f.version_count), 0) as total_versions,
+                COALESCE(SUM(f.comment_count), 0) as total_comments,
+                COALESCE(SUM(f.collaborator_count), 0) as total_collaborators,
+                COALESCE(SUM(f.view_count), 0) as total_views
+            FROM files f
+            LEFT JOIN teams t ON f.team_id = t.id
+            LEFT JOIN team_members tm ON t.id = tm.team_id
+            WHERE f.is_deleted = false
+            GROUP BY f.team_id, t.name
+            ORDER BY storage_bytes DESC
+        """)
+
+        team_usage = []
+        total_storage = 0
+        total_files = 0
+
+        for row in cursor.fetchall():
+            storage_bytes = int(row[4]) if row[4] is not None else 0
+            file_count = int(row[3]) if row[3] is not None else 0
+            total_storage += storage_bytes
+            total_files += file_count
+
+            team_usage.append({
+                "team_id": row[0],
+                "team_name": row[1],
+                "metrics": {
+                    "members": int(row[2]) if row[2] is not None else 0,
+                    "files": file_count,
+                    "storage_bytes": storage_bytes,
+                    "storage_mb": round(storage_bytes / (1024 * 1024), 2),
+                    "versions": int(row[5]) if row[5] is not None else 0,
+                    "comments": int(row[6]) if row[6] is not None else 0,
+                    "collaborators": int(row[7]) if row[7] is not None else 0,
+                    "views": int(row[8]) if row[8] is not None else 0
+                }
+            })
+
+        # Calculate cost allocation percentages
+        for team in team_usage:
+            storage_percentage = (team["metrics"]["storage_bytes"] / total_storage * 100) if total_storage > 0 else 0
+            file_percentage = (team["metrics"]["files"] / total_files * 100) if total_files > 0 else 0
+
+            # Simple cost model: 70% storage, 30% activity (files, versions, etc.)
+            team["cost_allocation"] = {
+                "storage_percentage": round(storage_percentage, 2),
+                "file_percentage": round(file_percentage, 2),
+                "weighted_cost_share": round(0.7 * storage_percentage + 0.3 * file_percentage, 2)
+            }
+
+        cursor.close()
+        conn.close()
+
+        logger.info(
+            "Cost allocation analytics retrieved successfully",
+            correlation_id=correlation_id,
+            teams_analyzed=len(team_usage)
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "analytics": {
+                "total_storage_bytes": total_storage,
+                "total_storage_mb": round(total_storage / (1024 * 1024), 2),
+                "total_files": total_files,
+                "team_usage": team_usage,
+                "cost_model": {
+                    "description": "70% storage weight, 30% activity weight",
+                    "storage_weight": 0.7,
+                    "activity_weight": 0.3
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error("Failed to retrieve cost allocation analytics", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve cost allocation analytics: {str(e)}"
         )
 
 
