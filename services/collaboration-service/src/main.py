@@ -1024,6 +1024,37 @@ async def shape_deleted(sid, data):
 
 
 @sio.event
+async def comment_added(sid, data):
+    """
+    Handle comment added event for activity feed.
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "username": "User Name", "comment_id": "id", "element_id": "id"}
+    Feature #400: Activity feed - comment added
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        username = data.get('username', 'Anonymous')
+        comment_id = data.get('comment_id')
+        element_id = data.get('element_id')
+
+        if not room_id or not user_id:
+            return {"success": False, "error": "Room ID and User ID required"}
+
+        # Add activity event
+        target = f"element:{element_id}" if element_id else None
+        event = add_activity_event(room_id, user_id, username, "added comment", target)
+
+        # Broadcast to room
+        await sio.emit('activity', event.to_dict(), room=room_id)
+
+        logger.info(f"User {username} added comment in room {room_id}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to handle comment added: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
 async def heartbeat(sid, data):
     """
     Handle presence heartbeat to maintain connection and detect quality.
