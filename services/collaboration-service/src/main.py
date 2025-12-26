@@ -856,21 +856,40 @@ async def element_edit(sid, data):
     """
     Handle when a user starts/stops editing an element.
     Expected data: {"room": "file:<file_id>", "user_id": "user-id", "element_id": "id" or null}
+    Feature #402: Collision avoidance - warn if editing same element
     """
     try:
         room_id = data.get('room')
         user_id = data.get('user_id')
         element_id = data.get('element_id')
-        
+
         if not room_id:
             return {"success": False, "error": "Room ID required"}
-        
+
+        # COLLISION DETECTION: Check if someone else is editing this element
+        if element_id:  # Only check when starting to edit (not when stopping)
+            if room_id in room_users:
+                for other_user_id, other_presence in room_users[room_id].items():
+                    if other_user_id != user_id and other_presence.active_element == element_id:
+                        # Someone else is already editing this element!
+                        logger.warning(f"Collision detected: {user_id} tried to edit {element_id}, but {other_user_id} is already editing it")
+                        return {
+                            "success": False,
+                            "error": "collision",
+                            "message": f"{other_presence.username} is currently editing this",
+                            "editing_user": {
+                                "user_id": other_user_id,
+                                "username": other_presence.username,
+                                "color": other_presence.color
+                            }
+                        }
+
         # Update presence
         presence = await update_user_presence(
             room_id, user_id,
             active_element=element_id
         )
-        
+
         if presence:
             # Broadcast active element to all other clients
             await sio.emit('element_active', {
@@ -880,12 +899,12 @@ async def element_edit(sid, data):
                 'element_id': element_id,
                 'timestamp': datetime.utcnow().isoformat()
             }, room=room_id, skip_sid=sid)
-            
+
             # Add activity event if starting edit
             if element_id:
                 event = add_activity_event(room_id, user_id, presence.username, "editing", element_id)
                 await sio.emit('activity', event.to_dict(), room=room_id)
-        
+
         return {"success": True}
     except Exception as e:
         logger.error(f"Failed to handle element edit: {e}")
