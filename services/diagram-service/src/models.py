@@ -760,3 +760,38 @@ class PushSubscription(Base):
         Index('idx_push_subscriptions_user', 'user_id'),
         Index('idx_push_subscriptions_active', 'user_id', 'is_active'),
     )
+
+
+class CommentFlag(Base):
+    """Comment flags/reports for moderation."""
+    __tablename__ = "comment_flags"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    comment_id = Column(String(36), ForeignKey("comments.id", ondelete="SET NULL"), nullable=True)
+    flagger_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Flag details
+    reason = Column(String(50), nullable=False)  # spam, harassment, offensive, inappropriate, other
+    details = Column(Text)  # Optional additional details
+
+    # Moderation status
+    status = Column(String(20), nullable=False, default="pending")  # pending, reviewed, dismissed, actioned
+    reviewed_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_at = Column(DateTime(timezone=True))
+    admin_notes = Column(Text)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    comment = relationship("Comment")
+    flagger = relationship("User", foreign_keys=[flagger_user_id])
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
+
+    __table_args__ = (
+        Index('idx_comment_flags_comment_id', 'comment_id'),
+        Index('idx_comment_flags_flagger', 'flagger_user_id'),
+        Index('idx_comment_flags_status', 'status'),
+        Index('idx_comment_flags_created', 'created_at'),
+    )

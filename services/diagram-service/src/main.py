@@ -24,7 +24,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon
+from .models import File, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag
 from .email_service import get_email_service
 
 load_dotenv()
@@ -4738,6 +4738,255 @@ async def delete_comment_permanently(
     return {
         "message": "Comment deleted successfully",
         "comment_id": comment_id
+    }
+
+
+@app.post("/{diagram_id}/comments/{comment_id}/flag")
+async def flag_comment(
+    diagram_id: str,
+    comment_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Flag a comment as inappropriate for moderation."""
+    from pydantic import BaseModel
+
+    class FlagRequest(BaseModel):
+        reason: str  # spam, harassment, offensive, inappropriate, other
+        details: str = None
+
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Parse request body
+    body = await request.json()
+    flag_data = FlagRequest(**body)
+
+    # Validate reason
+    valid_reasons = ["spam", "harassment", "offensive", "inappropriate", "other"]
+    if flag_data.reason not in valid_reasons:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid reason. Must be one of: {', '.join(valid_reasons)}"
+        )
+
+    logger.info(
+        "Flagging comment",
+        correlation_id=correlation_id,
+        comment_id=comment_id,
+        user_id=user_id,
+        reason=flag_data.reason
+    )
+
+    # Check comment exists
+    comment = db.query(Comment).filter(
+        Comment.id == comment_id,
+        Comment.file_id == diagram_id
+    ).first()
+
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    # Check for duplicate flag from same user
+    existing_flag = db.query(CommentFlag).filter(
+        CommentFlag.comment_id == comment_id,
+        CommentFlag.flagger_user_id == user_id
+    ).first()
+
+    if existing_flag:
+        raise HTTPException(
+            status_code=409,
+            detail="You have already flagged this comment"
+        )
+
+    # Create flag
+    flag = CommentFlag(
+        comment_id=comment_id,
+        flagger_user_id=user_id,
+        reason=flag_data.reason,
+        details=flag_data.details,
+        status="pending"
+    )
+
+    db.add(flag)
+    db.commit()
+    db.refresh(flag)
+
+    logger.info(
+        "Comment flagged successfully",
+        correlation_id=correlation_id,
+        flag_id=flag.id,
+        comment_id=comment_id
+    )
+
+    return {
+        "message": "Comment flagged for review",
+        "flag_id": flag.id,
+        "status": "pending"
+    }
+
+
+@app.get("/admin/comment-flags")
+async def get_comment_flags(
+    request: Request,
+    status: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get all comment flags for admin review (admin only)."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Check admin
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    logger.info(
+        "Getting comment flags",
+        correlation_id=correlation_id,
+        user_id=user_id,
+        status_filter=status
+    )
+
+    # Query flags
+    query = db.query(CommentFlag)
+
+    if status:
+        valid_statuses = ["pending", "reviewed", "dismissed", "actioned"]
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        query = query.filter(CommentFlag.status == status)
+
+    flags = query.order_by(CommentFlag.created_at.desc()).all()
+
+    # Format response
+    result = []
+    for flag in flags:
+        comment = db.query(Comment).filter(Comment.id == flag.comment_id).first()
+        flagger = db.query(User).filter(User.id == flag.flagger_user_id).first()
+
+        # Count total flags for this comment
+        flag_count = 0
+        if comment:
+            flag_count = db.query(CommentFlag).filter(CommentFlag.comment_id == comment.id).count()
+
+        result.append({
+            "flag_id": flag.id,
+            "comment_id": flag.comment_id,
+            "comment_content": comment.content if comment else None,
+            "comment_author_id": comment.user_id if comment else None,
+            "flagger_id": flag.flagger_user_id,
+            "flagger_email": flagger.email if flagger else None,
+            "reason": flag.reason,
+            "details": flag.details,
+            "status": flag.status,
+            "reviewed_by": flag.reviewed_by,
+            "reviewed_at": flag.reviewed_at.isoformat() if flag.reviewed_at else None,
+            "admin_notes": flag.admin_notes,
+            "created_at": flag.created_at.isoformat(),
+            "flag_count": flag_count
+        })
+
+    return {
+        "flags": result,
+        "total": len(result)
+    }
+
+
+@app.post("/admin/comment-flags/{flag_id}/review")
+async def review_comment_flag(
+    flag_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Review a comment flag (admin only)."""
+    from pydantic import BaseModel
+
+    class ReviewRequest(BaseModel):
+        action: str  # dismiss, delete_comment
+        admin_notes: str = None
+
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Check admin
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Parse request
+    body = await request.json()
+    review_data = ReviewRequest(**body)
+
+    # Validate action
+    valid_actions = ["dismiss", "delete_comment"]
+    if review_data.action not in valid_actions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
+        )
+
+    logger.info(
+        "Reviewing comment flag",
+        correlation_id=correlation_id,
+        flag_id=flag_id,
+        user_id=user_id,
+        action=review_data.action
+    )
+
+    # Get flag
+    flag = db.query(CommentFlag).filter(CommentFlag.id == flag_id).first()
+
+    if not flag:
+        raise HTTPException(status_code=404, detail="Flag not found")
+
+    # Update flag
+    flag.status = "dismissed" if review_data.action == "dismiss" else "actioned"
+    flag.reviewed_by = user_id
+    flag.reviewed_at = datetime.utcnow()
+    flag.admin_notes = review_data.admin_notes
+
+    # Capture status before delete (in case comment delete cascades)
+    final_status = flag.status
+
+    # If delete_comment action, delete the comment
+    if review_data.action == "delete_comment":
+        comment = db.query(Comment).filter(Comment.id == flag.comment_id).first()
+        if comment:
+            # Delete comment (cascades to mentions, reactions, and flags)
+            db.delete(comment)
+
+            # Update diagram comment count
+            diagram = db.query(File).filter(File.id == comment.file_id).first()
+            if diagram:
+                diagram.comment_count = max(0, (diagram.comment_count or 1) - 1)
+                diagram.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    logger.info(
+        "Comment flag reviewed",
+        correlation_id=correlation_id,
+        flag_id=flag_id,
+        action=review_data.action
+    )
+
+    return {
+        "message": f"Flag {review_data.action.replace('_', ' ')}ed successfully",
+        "flag_id": flag_id,
+        "status": final_status
     }
 
 

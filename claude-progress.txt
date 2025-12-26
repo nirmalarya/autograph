@@ -15717,3 +15717,151 @@ TECHNICAL NOTES:
 
 SESSION COMPLETE: Feature #435 ✅ PASSING
 
+
+================================================================================
+SESSION: Feature #436 - Admin Delete Comments
+TIME: 2025-12-26 01:31:00
+================================================================================
+
+FEATURE IMPLEMENTED: #436 - Comments: Delete comments: admins delete any
+
+APPROACH:
+1. Analyzed existing delete comment authorization logic
+2. Found admin support already implemented in delete_comment_permanently()
+3. Created comprehensive test to verify admin deletion capabilities
+4. Tested end-to-end admin comment deletion flow
+
+IMPLEMENTATION DETAILS:
+
+Authorization Logic (already existed):
+- Location: services/diagram-service/src/main.py:4682-4742
+- Function: delete_comment_permanently()
+- Checks three conditions for deletion permission:
+  * is_owner: Comment author can delete
+  * is_diagram_owner: Diagram owner can delete any comment on their diagram
+  * is_admin: Admin users can delete ANY comment
+- Uses: user.role == "admin" check from User table
+
+TEST VERIFICATION:
+
+Created test_feature_436_admin_delete.py:
+1. Regular user creates diagram and posts comment
+2. Admin user is created and promoted (role='admin')
+3. Admin deletes regular user's comment
+4. Verification:
+   - Delete succeeds with 200 status
+   - Comment returns 404 (permanently deleted)
+   - Comment removed from comments list
+   - Comment count updated correctly
+
+Test Results:
+✅ Admin user can delete other users' comments
+✅ Comment is permanently deleted (404)  
+✅ Comment is removed from list
+✅ Admin privileges properly respected
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 436 features
+✅ No regressions (baseline improved by +5)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 436 (was 435)
+Percentage: 66.3%
+Remaining: 222 features
+
+NEXT FEATURE: #437 (to be determined)
+
+SESSION COMPLETE: Feature #436 ✅ PASSING
+
+================================================================================
+SESSION: Feature #437 - Comment Moderation: Flag Inappropriate
+DATE: 2025-12-26 01:50:00
+STATUS: ✅ COMPLETE
+================================================================================
+
+FEATURE DESCRIPTION:
+Enable users to flag inappropriate comments for moderation, with admin review capabilities.
+
+BUG FOUND AND FIXED:
+1. **AttributeError in get_comment_flags endpoint**
+   - Error: 'Comment' object has no attribute 'flag_count'
+   - Root cause: Code tried to access non-existent flag_count attribute on Comment model
+   - Fix: Calculate flag_count dynamically by querying CommentFlag table
+   - Location: services/diagram-service/src/main.py:4877-4880
+
+2. **Cascade Delete Issue**
+   - Problem: When admin deleted a comment, the flags were also deleted due to CASCADE
+   - Impact: Lost audit trail of moderation actions, flag status not updated to "actioned"
+   - Fix: Changed foreign key from CASCADE to SET NULL in comment_flags table
+   - Migration: alter_comment_flags_cascade.sql
+   - Model update: services/diagram-service/src/models.py:770
+
+IMPLEMENTATION DETAILS:
+
+Database Schema:
+- comment_flags table already existed with proper structure
+- Modified foreign key constraint: comment_id now uses SET NULL instead of CASCADE
+- Preserves flags even after comment deletion for audit trail
+
+API Endpoints (already implemented):
+- POST /diagrams/{diagram_id}/comments/{comment_id}/flag
+- GET /admin/comment-flags?status={status}  
+- POST /admin/comment-flags/{flag_id}/review
+
+Features Implemented:
+✅ Users can flag comments with reasons (spam, harassment, offensive, inappropriate, other)
+✅ Duplicate flag prevention (one flag per user per comment)
+✅ Admin-only endpoints to view all flags
+✅ Filter flags by status (pending, reviewed, dismissed, actioned)
+✅ Admin can dismiss flags (marks as reviewed but keeps comment)
+✅ Admin can delete comment (marks flag as actioned)
+✅ Flag metadata tracked (reviewer, review time, admin notes)
+✅ Audit trail preserved even after comment deletion
+
+TEST VERIFICATION:
+
+Test file: test_feature_437_flag_comment.py
+
+Test 1: Basic Flag Workflow
+✅ Created test users (author, flagger, admin)
+✅ Created diagram and comment
+✅ Flagger flagged comment successfully
+✅ Duplicate flag prevention (409 Conflict)
+✅ Admin retrieved all flags
+✅ Admin filtered flags by status
+✅ Admin dismissed flag
+✅ Flag status updated correctly
+✅ Comment preserved after dismiss
+
+Test 2: Admin Delete Flagged Comment
+✅ Admin deleted flagged comment
+✅ Comment removed from database
+✅ Flag status updated to "actioned"
+✅ Flag preserved for audit trail
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 437 features
+✅ No regressions (baseline +6)
+
+FILES MODIFIED:
+1. services/diagram-service/src/main.py (fixed flag_count calculation)
+2. services/diagram-service/src/models.py (changed cascade behavior)
+3. alter_comment_flags_cascade.sql (database migration)
+
+DOCKER:
+- Rebuilt diagram-service container to apply code changes
+- Applied database migration successfully
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 437 (was 436)
+Percentage: 66.4%
+Remaining: 221 features
+
+NEXT FEATURE: #438 (to be determined)
+
+SESSION COMPLETE: Feature #437 ✅ PASSING
+
