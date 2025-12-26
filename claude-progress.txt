@@ -17272,3 +17272,107 @@ PROGRESS: 460/658 features (69.9%)
 
 Session complete: Feature 460 PASSING ✅
 
+
+================================================================================
+SESSION: Feature #461 - Version Metadata (user, timestamp, description)
+DATE: 2025-12-26
+================================================================================
+
+FEATURE IMPLEMENTED:
+====================
+Feature #461: Version history: Version metadata: user, timestamp, description
+
+STATUS: ✅ PASSING
+
+IMPLEMENTATION DETAILS:
+=======================
+The version metadata feature was already fully implemented!
+
+Key Components:
+1. Version model fields (models.py lines 252-258):
+   - description (String, 500 chars) - User-provided description
+   - label (String, 100 chars) - Version label (e.g., "v1.0.0")
+   - created_by (ForeignKey to users) - User who created the version
+   - created_at (DateTime with timezone) - When version was created
+
+2. API Response includes:
+   - All Version model fields
+   - User details object: { full_name, email, avatar_url }
+   - Properly formatted ISO 8601 timestamps
+
+VERIFICATION:
+=============
+Created E2E test: test_feature_461_version_metadata.py
+
+Test Results:
+- ✅ created_by field returns valid user ID
+- ✅ created_at returns valid ISO 8601 timestamp  
+- ✅ description field accepts and returns custom text
+- ✅ label field accepts and returns custom labels
+- ✅ User details included in creation and GET responses
+- ✅ Metadata present in all API responses (create, get, list)
+- ✅ Timestamps are valid and parseable
+
+Example metadata:
+{
+  "version_number": 2,
+  "id": "39ad26b6-8128-420f-b1f6-dd2609e6a82c",
+  "file_id": "5c4a4a11-8674-44dd-bc2b-c77d9df39100",
+  "description": "This is the first version for testing metadata",
+  "label": "v1.0.0",
+  "created_by": "d82c3b0b-ae5c-4be7-8999-0ad0fac5bf47",
+  "created_at": "2025-12-26T11:01:44.878073+00:00",
+  "user": {
+    "full_name": "Thumbnail Test User 460",
+    "email": "thumbnail_test_460@example.com",
+    "avatar_url": null
+  }
+}
+
+Endpoints Used:
+- POST /api/diagrams/{id}/versions - Create version with metadata
+- GET /api/diagrams/{id}/versions/{version_id} - Get version metadata
+- GET /api/diagrams/{id}/versions - List versions with metadata
+
+E2E TEST RESULTS:
+=================
+✓ Created version with custom description and label
+✓ Verified all required metadata fields present
+✓ Verified created_by is valid user ID
+✓ Verified created_at is valid ISO timestamp
+✓ Verified description matches input
+✓ Verified label matches input
+✓ Verified user details included (name, email)
+✓ Verified metadata in creation response
+✓ Verified metadata in GET response
+✓ Verified metadata in list response
+✓ All 3 versions have complete metadata
+
+FILES CREATED:
+==============
+- test_feature_461_version_metadata.py (E2E test)
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (marked #461 as passing)
+
+NOTES:
+======
+- Version metadata was already fully implemented
+- API returns comprehensive version information
+- User details object provides full user context
+- Timestamps use proper ISO 8601 format with timezone
+- Default description is "Initial version" for first version
+- Default label is null (returned as "None" in list)
+
+REGRESSION CHECK:
+=================
+- Baseline: 431 features passing
+- Current: 461 features passing (+30 from baseline)
+- No regressions detected
+- All existing version features still working
+
+PROGRESS: 461/658 features (70.1%) - Crossed 70% threshold! 🎉
+
+Session complete: Feature 461 PASSING ✅
+
