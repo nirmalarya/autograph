@@ -23,7 +23,7 @@ import time
 from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 
 from .database import get_db
-from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, CustomRole, generate_uuid
+from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerificationToken, CustomRole, RoleTemplate, generate_uuid
 from .saml_handler import SAMLHandler
 from .gdpr_routes import router as gdpr_router
 from .push_routes import router as push_router
@@ -9699,176 +9699,172 @@ async def delete_team_custom_role(
 
 
 # ============================================================================
-# FEATURE #532: PERMISSION TEMPLATES - PRE-CONFIGURED ROLE SETS
+# FEATURE #531: PERMISSION TEMPLATES - PRE-CONFIGURED ROLE SETS
 # ============================================================================
 
 @app.get("/admin/roles/templates")
 async def get_permission_templates(
-    admin_user: User = Depends(get_admin_user)
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
 ):
     """
-    Feature #532: Get pre-configured permission templates
-    
-    Templates for common use cases:
-    - External Consultant
-    - Read-Only Auditor
-    - Content Creator
-    - Team Lead
-    - etc.
+    Feature #531: Get pre-configured permission templates from database
+
+    Returns all active role templates that teams can use to create custom roles.
+    Templates include standard roles like Admin, Editor, Viewer, etc.
     """
     try:
-        templates = {
-            "external_consultant": {
-                "name": "External Consultant",
-                "description": "View and comment only, no download or export",
+        # Fetch all active templates from database
+        templates = db.query(RoleTemplate).filter(
+            RoleTemplate.is_active == True
+        ).order_by(RoleTemplate.name).all()
+
+        # Convert to response format
+        templates_list = []
+        for template in templates:
+            templates_list.append({
+                "id": template.id,
+                "name": template.name,
+                "description": template.description,
+                "category": template.category,
                 "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": False,
-                    "delete_diagrams": False,
-                    "comment": True,
-                    "share": False,
-                    "export": False,
-                    "admin": False,
-                    "manage_users": False,
-                    "manage_teams": False,
-                    "view_audit_logs": False
-                },
-                "use_case": "Third-party consultants who need to review and provide feedback"
-            },
-            "read_only_auditor": {
-                "name": "Read-Only Auditor",
-                "description": "View everything including audit logs, no modifications",
-                "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": False,
-                    "delete_diagrams": False,
-                    "comment": False,
-                    "share": False,
-                    "export": True,
-                    "admin": False,
-                    "manage_users": False,
-                    "manage_teams": False,
-                    "view_audit_logs": True
-                },
-                "use_case": "Compliance auditors who need read-only access to everything"
-            },
-            "content_creator": {
-                "name": "Content Creator",
-                "description": "Create and edit diagrams, no administrative access",
-                "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": True,
-                    "delete_diagrams": False,
-                    "comment": True,
-                    "share": True,
-                    "export": True,
-                    "admin": False,
-                    "manage_users": False,
-                    "manage_teams": False,
-                    "view_audit_logs": False
-                },
-                "use_case": "Regular users who create content but don't manage teams"
-            },
-            "team_lead": {
-                "name": "Team Lead",
-                "description": "Full diagram access plus team management",
-                "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": True,
-                    "delete_diagrams": True,
-                    "comment": True,
-                    "share": True,
-                    "export": True,
-                    "admin": False,
-                    "manage_users": True,
-                    "manage_teams": True,
-                    "view_audit_logs": False
-                },
-                "use_case": "Team leaders who manage their teams"
-            },
-            "viewer_plus": {
-                "name": "Viewer Plus",
-                "description": "View, comment, and export",
-                "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": False,
-                    "delete_diagrams": False,
-                    "comment": True,
-                    "share": False,
-                    "export": True,
-                    "admin": False,
-                    "manage_users": False,
-                    "manage_teams": False,
-                    "view_audit_logs": False
-                },
-                "use_case": "Users who need to review and export diagrams"
-            },
-            "power_user": {
-                "name": "Power User",
-                "description": "Everything except admin and user management",
-                "permissions": {
-                    "view_diagrams": True,
-                    "edit_diagrams": True,
-                    "delete_diagrams": True,
-                    "comment": True,
-                    "share": True,
-                    "export": True,
-                    "admin": False,
-                    "manage_users": False,
-                    "manage_teams": False,
-                    "view_audit_logs": False
-                },
-                "use_case": "Advanced users who need full diagram access"
-            }
+                    "can_invite_members": template.can_invite_members,
+                    "can_remove_members": template.can_remove_members,
+                    "can_manage_roles": template.can_manage_roles,
+                    "can_create_diagrams": template.can_create_diagrams,
+                    "can_edit_own_diagrams": template.can_edit_own_diagrams,
+                    "can_edit_all_diagrams": template.can_edit_all_diagrams,
+                    "can_delete_own_diagrams": template.can_delete_own_diagrams,
+                    "can_delete_all_diagrams": template.can_delete_all_diagrams,
+                    "can_share_diagrams": template.can_share_diagrams,
+                    "can_comment": template.can_comment,
+                    "can_export": template.can_export,
+                    "can_view_analytics": template.can_view_analytics,
+                    "can_manage_team_settings": template.can_manage_team_settings
+                }
+            })
+
+        return {
+            "templates": templates_list,
+            "count": len(templates_list)
         }
-        
-        return {"templates": templates}
-        
+
     except Exception as e:
-        logger.error("Failed to get permission templates", exc=e)
+        logger.error("Failed to get permission templates", exc=e, correlation_id=str(admin_user.id))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get permission templates"
         )
 
 
+class ApplyTemplateRequest(BaseModel):
+    """Request to apply a role template."""
+    team_id: str
+    role_name: str
+    custom_description: str = None
+
+
 @app.post("/admin/roles/templates/{template_id}/apply")
 async def apply_permission_template(
     template_id: str,
-    role_name: str,
-    description: str = None,
+    request: ApplyTemplateRequest,
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """
-    Feature #532: Apply permission template to create new role
+    Feature #531: Apply permission template to create a new custom role
+
+    Creates a new CustomRole for a team based on a RoleTemplate.
     """
     try:
-        # Get templates
-        templates_response = await get_permission_templates(admin_user)
-        templates = templates_response["templates"]
-        
-        if template_id not in templates:
+        # Get the template
+        template = db.query(RoleTemplate).filter(
+            RoleTemplate.id == template_id,
+            RoleTemplate.is_active == True
+        ).first()
+
+        if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Template '{template_id}' not found"
+                detail=f"Template not found or inactive"
             )
-        
-        template = templates[template_id]
-        
-        # Create role from template
-        role_create = CustomRoleCreate(
-            name=role_name,
-            description=description or template["description"],
-            permissions=template["permissions"]
+
+        # Check if role name already exists for this team
+        existing_role = db.query(CustomRole).filter(
+            CustomRole.team_id == request.team_id,
+            CustomRole.name == request.role_name
+        ).first()
+
+        if existing_role:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Role '{request.role_name}' already exists for this team"
+            )
+
+        # Create new custom role from template
+        new_role = CustomRole(
+            team_id=request.team_id,
+            name=request.role_name,
+            description=request.custom_description or template.description,
+            # Copy all permissions from template
+            can_invite_members=template.can_invite_members,
+            can_remove_members=template.can_remove_members,
+            can_manage_roles=template.can_manage_roles,
+            can_create_diagrams=template.can_create_diagrams,
+            can_edit_own_diagrams=template.can_edit_own_diagrams,
+            can_edit_all_diagrams=template.can_edit_all_diagrams,
+            can_delete_own_diagrams=template.can_delete_own_diagrams,
+            can_delete_all_diagrams=template.can_delete_all_diagrams,
+            can_share_diagrams=template.can_share_diagrams,
+            can_comment=template.can_comment,
+            can_export=template.can_export,
+            can_view_analytics=template.can_view_analytics,
+            can_manage_team_settings=template.can_manage_team_settings,
+            is_system_role=False,
+            created_by=admin_user.id
         )
-        
-        return await create_custom_role(role_create, admin_user, db)
-        
+
+        db.add(new_role)
+        db.commit()
+        db.refresh(new_role)
+
+        # Log the action
+        audit_log = AuditLog(
+            user_id=admin_user.id,
+            action="role_created_from_template",
+            resource_type="custom_role",
+            resource_id=new_role.id,
+            details={
+                "template_id": template_id,
+                "template_name": template.name,
+                "role_name": request.role_name,
+                "team_id": request.team_id
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+
+        logger.info(
+            f"Custom role '{request.role_name}' created from template '{template.name}'",
+            correlation_id=new_role.id,
+            template_id=template_id,
+            team_id=request.team_id
+        )
+
+        return {
+            "id": new_role.id,
+            "name": new_role.name,
+            "description": new_role.description,
+            "team_id": new_role.team_id,
+            "template_used": template.name,
+            "created_at": new_role.created_at.isoformat()
+        }
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to apply permission template", exc=e)
+        db.rollback()
+        logger.error("Failed to apply permission template", exc=e, template_id=template_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to apply permission template"

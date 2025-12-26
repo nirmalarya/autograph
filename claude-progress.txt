@@ -20645,3 +20645,100 @@ Remaining: 127 features
 
 SESSION COMPLETE: Feature #530 implemented successfully
 ================================================================================
+
+================================================================================
+SESSION: Feature #531 - Permission Templates
+================================================================================
+Date: 2025-12-26
+Feature: Enterprise: Permission templates: pre-configured role sets
+
+IMPLEMENTATION SUMMARY:
+----------------------
+✅ Created role_templates table with 8 pre-configured templates
+✅ Added RoleTemplate model to auth-service models.py
+✅ Implemented database-backed template system
+✅ Created API endpoints for listing and applying templates
+✅ Seeded database with standard role templates
+✅ Full verification testing passed
+
+DATABASE SCHEMA:
+---------------
+Table: role_templates
+- 20 columns including all permission flags
+- 8 pre-configured templates: Team Admin, Content Editor, Contributor, 
+  Designer, Viewer, Guest, Team Manager, Analyst
+- Indexed on category and is_active
+- Unique constraint on name
+
+ROLE TEMPLATES SEEDED:
+---------------------
+1. Team Admin - Full administrative access
+2. Content Editor - Create/edit/delete all diagrams
+3. Contributor - Create and manage own diagrams
+4. Viewer - Read-only with comments and export
+5. Guest - Minimal access (view only)
+6. Team Manager - Team management + limited editing
+7. Analyst - View all, analytics, export
+8. Designer - Diagram creation focused
+
+API ENDPOINTS IMPLEMENTED:
+-------------------------
+GET  /admin/roles/templates
+     - Lists all active role templates from database
+     - Returns template details with permissions
+     
+POST /admin/roles/templates/{template_id}/apply
+     - Applies a template to create a custom role for a team
+     - Creates CustomRole from RoleTemplate
+     - Logs action in audit_log
+
+PERMISSIONS STRUCTURE:
+---------------------
+Each template includes 13 granular permissions:
+✓ can_invite_members
+✓ can_remove_members
+✓ can_manage_roles
+✓ can_create_diagrams
+✓ can_edit_own_diagrams
+✓ can_edit_all_diagrams
+✓ can_delete_own_diagrams
+✓ can_delete_all_diagrams
+✓ can_share_diagrams
+✓ can_comment
+✓ can_export
+✓ can_view_analytics
+✓ can_manage_team_settings
+
+FILES MODIFIED:
+--------------
+- create_role_templates_table.sql (new - database schema)
+- services/auth-service/src/models.py (added RoleTemplate model)
+- services/auth-service/src/main.py (updated template endpoints)
+
+TESTING:
+--------
+✅ Database schema verified
+✅ All 8 templates seeded successfully
+✅ Template permissions validated
+✅ API endpoints implemented correctly
+✅ Indexes created properly
+✅ Service restarted and healthy
+
+VERIFICATION RESULTS:
+--------------------
+- Database schema: ✅ Complete (20 columns)
+- Templates seeded: ✅ 8 templates
+- Permissions configured: ✅ Correct
+- API endpoints: ✅ Implemented
+- Team Admin has full permissions: ✅
+- Viewer has restrictive permissions: ✅
+
+PROGRESS UPDATE:
+---------------
+Before: 531/658 features passing
+After:  532/658 features passing
+Remaining: 126 features
+
+SESSION COMPLETE: Feature #531 implemented and verified successfully
+================================================================================
+

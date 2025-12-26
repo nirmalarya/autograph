@@ -991,3 +991,38 @@ class CustomRole(Base):
         Index('idx_custom_roles_system', 'is_system_role'),
         Index('idx_custom_roles_unique', 'team_id', 'name', unique=True),
     )
+
+
+class RoleTemplate(Base):
+    """Pre-configured permission templates for quick role creation (Feature #531)."""
+    __tablename__ = "role_templates"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=False)
+    category = Column(String(50), default='standard', nullable=False)
+
+    # Granular permissions (same as CustomRole for easy copying)
+    can_invite_members = Column(Boolean, default=False, nullable=False)
+    can_remove_members = Column(Boolean, default=False, nullable=False)
+    can_manage_roles = Column(Boolean, default=False, nullable=False)
+    can_create_diagrams = Column(Boolean, default=True, nullable=False)
+    can_edit_own_diagrams = Column(Boolean, default=True, nullable=False)
+    can_edit_all_diagrams = Column(Boolean, default=False, nullable=False)
+    can_delete_own_diagrams = Column(Boolean, default=True, nullable=False)
+    can_delete_all_diagrams = Column(Boolean, default=False, nullable=False)
+    can_share_diagrams = Column(Boolean, default=True, nullable=False)
+    can_comment = Column(Boolean, default=True, nullable=False)
+    can_export = Column(Boolean, default=True, nullable=False)
+    can_view_analytics = Column(Boolean, default=False, nullable=False)
+    can_manage_team_settings = Column(Boolean, default=False, nullable=False)
+
+    # Metadata
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index('idx_role_templates_category', 'category'),
+        Index('idx_role_templates_active', 'is_active'),
+    )
