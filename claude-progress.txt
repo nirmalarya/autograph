@@ -15983,3 +15983,146 @@ Remaining: 219 features
 NEXT FEATURE: #440 (to be determined)
 
 SESSION COMPLETE: Feature #439 ✅ PASSING
+
+================================================================================
+SESSION: Feature #439 - Comment Filters
+DATE: 2025-12-26
+================================================================================
+
+FEATURE IMPLEMENTED: #439 - Comment Filters (all, open, resolved, mine, mentions)
+
+IMPLEMENTATION SUMMARY:
+
+1. API ENHANCEMENTS (services/diagram-service/src/main.py):
+   - Modified GET /{diagram_id}/comments endpoint
+   - Added `filter` query parameter with options:
+     * "all" - show all comments (default)
+     * "open" - show only unresolved comments (is_resolved=false)
+     * "resolved" - show only resolved comments (is_resolved=true)
+     * "mine" - show only comments by the current user
+     * "mentions" - show only comments that mention the current user
+   - Named filters take precedence over is_resolved parameter
+   - Maintains backward compatibility with existing is_resolved and parent_id filters
+
+2. FILTERING LOGIC:
+   - "all" filter: No additional filtering, returns all comments for the diagram
+   - "open" filter: Filters where Comment.is_resolved == False
+   - "resolved" filter: Filters where Comment.is_resolved == True
+   - "mine" filter: Filters where Comment.user_id == current_user_id
+   - "mentions" filter: Joins with mentions table to find comments mentioning user
+     * Uses subquery to get comment IDs from mentions table
+     * Returns empty result if user has no mentions
+
+3. FILES MODIFIED:
+   - services/diagram-service/src/main.py (added filter parameter + logic)
+
+4. TESTING:
+   - Created test_feature_440_comment_filters.py
+   - Tests verified all 5 filters:
+     ✅ filter=all returns all 4 comments
+     ✅ filter=open returns 3 unresolved comments
+     ✅ filter=resolved returns 1 resolved comment
+     ✅ filter=mine returns comments by current user (tested for both users)
+     ✅ filter=mentions returns comments mentioning the user
+   - All tests passing
+
+5. TECHNICAL NOTES:
+   - Named filters reorganized to take precedence over is_resolved param
+   - is_resolved parameter only applied when filter="all" or not specified
+   - Mentions filter requires comment to have Mention records in database
+   - Mention extraction uses @username format (username = email prefix)
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 440 features
+✅ No regressions (baseline +9)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 440 (was 439)
+Percentage: 66.9%
+Remaining: 218 features
+
+NEXT FEATURE: #440 (to be determined)
+
+SESSION COMPLETE: Feature #439 ✅ PASSING
+
+================================================================================
+SESSION: Feature #441 - Comment Search (Full-text search)
+DATE: 2025-12-26
+TIME: 02:32 EST
+================================================================================
+
+FEATURE IMPLEMENTED: #441 - Comments: Comment search: full-text search
+
+IMPLEMENTATION SUMMARY:
+1. SEARCH PARAMETER ADDED:
+   - Added optional `search` query parameter to GET /diagrams/{id}/comments endpoint
+   - Parameter type: Optional[str]
+   - Description: Full-text search in comment content
+   - Location: services/diagram-service/src/main.py
+
+2. SEARCH LOGIC IMPLEMENTATION:
+   - Uses case-insensitive ILIKE for pattern matching
+   - Search pattern: %{search_term}%
+   - Applied after other filters (parent_id, is_resolved, named filters)
+   - Works with all existing filtering and sorting options
+   - Implementation:
+     ```python
+     if search:
+         search_pattern = f"%{search}%"
+         query = query.filter(Comment.content.ilike(search_pattern))
+     ```
+
+3. FEATURES:
+   - Case-insensitive search (database -> DATABASE -> Database all work)
+   - Partial word matching (datab matches database)
+   - Returns empty list when no matches found
+   - Without search parameter, returns all comments (backward compatible)
+   - Works with existing filters (filter=open, resolved, mine, mentions)
+   - Works with sorting options (oldest, newest, most_reactions)
+
+4. FILES MODIFIED:
+   - services/diagram-service/src/main.py:
+     * Added search parameter to get_comments function signature
+     * Added search filter logic after named filters
+     * Updated logging to include search parameter
+
+5. TESTING:
+   - Created test_feature_441_simple.py
+   - Test scenarios:
+     ✅ Search for "database" returns 5 matching comments
+     ✅ All matched comments contain the search term
+     ✅ Non-matching comments are correctly hidden
+     ✅ Case-insensitive search works (DATABASE = database)
+     ✅ Partial word search works (datab matches database)
+     ✅ Search with no results returns empty list
+     ✅ Without search parameter, all comments returned
+   - All 11 test steps passing
+
+6. TECHNICAL NOTES:
+   - Uses PostgreSQL ILIKE operator for case-insensitive pattern matching
+   - Search is applied to Comment.content field only
+   - Could be extended to search in text_content field for note comments
+   - Performance: ILIKE is efficient for small-medium comment counts
+   - For larger datasets, could add full-text search indexes
+
+7. SERVICE REBUILD:
+   - Rebuilt diagram-service container to pick up changes
+   - Service health: ✅ Healthy
+   - All existing functionality preserved
+
+REGRESSION CHECK:
+✅ Baseline was: 431 features
+✅ Current: 440 features  
+✅ No regressions (baseline +9)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 441 (was 440)
+Percentage: 67.0%
+Remaining: 217 features
+
+NEXT FEATURE: #442 (to be determined)
+
+SESSION COMPLETE: Feature #441 ✅ PASSING

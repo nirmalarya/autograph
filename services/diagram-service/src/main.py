@@ -4302,9 +4302,11 @@ async def get_comments(
     is_resolved: Optional[bool] = None,
     parent_id: Optional[str] = None,
     sort_by: Optional[str] = "oldest",  # oldest, newest, most_reactions
+    filter: Optional[str] = "all",  # all, open, resolved, mine, mentions
+    search: Optional[str] = None,  # full-text search in comment content
     db: Session = Depends(get_db)
 ):
-    """Get all comments for a diagram with filters and sorting."""
+    """Get all comments for a diagram with filters, sorting, and search."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     user_id = request.headers.get("X-User-ID")
     
@@ -4315,7 +4317,8 @@ async def get_comments(
         "Getting comments for diagram",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
-        user_id=user_id
+        user_id=user_id,
+        search=search if search else None
     )
     
     # Verify diagram exists and user has access
@@ -4325,14 +4328,40 @@ async def get_comments(
     
     # Build query
     query = db.query(Comment).filter(Comment.file_id == diagram_id)
-    
-    # Apply filters
-    if is_resolved is not None:
-        query = query.filter(Comment.is_resolved == is_resolved)
-    
+
+    # Apply parent_id filter if specified
     if parent_id is not None:
         query = query.filter(Comment.parent_id == parent_id)
-    
+
+    # Apply named filters (these take precedence over is_resolved param)
+    if filter == "open":
+        query = query.filter(Comment.is_resolved == False)
+    elif filter == "resolved":
+        query = query.filter(Comment.is_resolved == True)
+    elif filter == "mine":
+        query = query.filter(Comment.user_id == user_id)
+    elif filter == "mentions":
+        # Get comments that have mentions for the current user
+        mentioned_comment_ids = db.query(Mention.comment_id).filter(
+            Mention.user_id == user_id
+        ).all()
+        comment_ids = [m[0] for m in mentioned_comment_ids]
+        if comment_ids:
+            query = query.filter(Comment.id.in_(comment_ids))
+        else:
+            # No mentions for this user, return empty result
+            query = query.filter(Comment.id == None)  # This will return no results
+    else:
+        # filter == "all" or None - apply is_resolved filter if specified
+        if is_resolved is not None:
+            query = query.filter(Comment.is_resolved == is_resolved)
+
+    # Apply search filter if specified
+    if search:
+        # Use case-insensitive ILIKE for full-text search in content
+        search_pattern = f"%{search}%"
+        query = query.filter(Comment.content.ilike(search_pattern))
+
     # Apply sorting
     if sort_by == "newest":
         comments = query.order_by(Comment.created_at.desc()).all()
