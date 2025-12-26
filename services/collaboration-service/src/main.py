@@ -270,6 +270,25 @@ async def update_user_presence(room_id: str, user_id: str, **updates):
     return None
 
 
+def check_edit_permission(room_id: str, user_id: str) -> tuple[bool, Optional[str]]:
+    """
+    Check if a user has permission to edit in a room.
+    Returns: (has_permission: bool, error_message: Optional[str])
+
+    Feature #417: Viewers cannot edit, only EDITOR and ADMIN roles can edit.
+    """
+    if room_id not in room_users or user_id not in room_users[room_id]:
+        return False, "User not in room"
+
+    presence = room_users[room_id][user_id]
+
+    # Only EDITOR and ADMIN can edit, VIEWER cannot
+    if presence.role == UserRole.VIEWER:
+        return False, "You have view-only access"
+
+    return True, None
+
+
 async def check_away_users():
     """Background task to mark users as away after 5 minutes of inactivity."""
     while True:
@@ -829,20 +848,28 @@ async def leave_room(sid, data):
 async def diagram_update(sid, data):
     """
     Handle diagram update from a client.
-    Expected data: {"room": "file:<file_id>", "update": {...}}
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "update": {...}}
+    Feature #417: Check edit permissions - viewers cannot edit
     """
     try:
         room_id = data.get('room')
+        user_id = data.get('user_id') or session_user_map.get(sid)
         update = data.get('update', {})
-        
+
         if not room_id:
             return {"success": False, "error": "Room ID required"}
-        
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied edit permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
+
         logger.info(f"Diagram update in room {room_id} from {sid}")
-        
+
         # Broadcast to all other clients in the room
         await sio.emit('update', update, room=room_id, skip_sid=sid)
-        
+
         return {"success": True}
     except Exception as e:
         logger.error(f"Failed to handle diagram update: {e}")
@@ -985,6 +1012,7 @@ async def element_edit(sid, data):
     Handle when a user starts/stops editing an element.
     Expected data: {"room": "file:<file_id>", "user_id": "user-id", "element_id": "id" or null}
     Feature #402: Collision avoidance - warn if editing same element
+    Feature #417: Check edit permissions - viewers cannot edit
     """
     try:
         room_id = data.get('room')
@@ -993,6 +1021,13 @@ async def element_edit(sid, data):
 
         if not room_id:
             return {"success": False, "error": "Room ID required"}
+
+        # Feature #417: Check edit permission (only when starting to edit an element)
+        if element_id:  # Only check when starting to edit, not when stopping (element_id = null)
+            has_permission, error_message = check_edit_permission(room_id, user_id)
+            if not has_permission:
+                logger.warning(f"User {user_id} denied edit permission in room {room_id}: {error_message}")
+                return {"success": False, "error": error_message, "permission_denied": True}
 
         # COLLISION DETECTION: Check if someone else is editing this element
         if element_id:  # Only check when starting to edit (not when stopping)
@@ -1115,25 +1150,32 @@ async def shape_created(sid, data):
     """
     Handle shape creation event for activity feed.
     Expected data: {"room": "file:<file_id>", "user_id": "user-id", "shape_type": "rectangle", "shape_id": "id"}
+    Feature #417: Check edit permissions - viewers cannot create shapes
     """
     try:
         room_id = data.get('room')
         user_id = data.get('user_id')
         shape_type = data.get('shape_type', 'shape')
         shape_id = data.get('shape_id')
-        
+
         if not room_id or not user_id:
             return {"success": False, "error": "Room ID and User ID required"}
-        
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied shape creation permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
+
         # Get username
         username = "Unknown"
         if room_id in room_users and user_id in room_users[room_id]:
             username = room_users[room_id][user_id].username
-        
+
         # Add activity event
         event = add_activity_event(room_id, user_id, username, f"created {shape_type}", shape_id)
         await sio.emit('activity', event.to_dict(), room=room_id)
-        
+
         return {"success": True}
     except Exception as e:
         logger.error(f"Failed to handle shape created: {e}")
@@ -1145,25 +1187,32 @@ async def shape_deleted(sid, data):
     """
     Handle shape deletion event for activity feed.
     Expected data: {"room": "file:<file_id>", "user_id": "user-id", "shape_count": 1}
+    Feature #417: Check edit permissions - viewers cannot delete shapes
     """
     try:
         room_id = data.get('room')
         user_id = data.get('user_id')
         shape_count = data.get('shape_count', 1)
-        
+
         if not room_id or not user_id:
             return {"success": False, "error": "Room ID and User ID required"}
-        
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied shape deletion permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
+
         # Get username
         username = "Unknown"
         if room_id in room_users and user_id in room_users[room_id]:
             username = room_users[room_id][user_id].username
-        
+
         # Add activity event
         action = f"deleted {shape_count} shape{'s' if shape_count > 1 else ''}"
         event = add_activity_event(room_id, user_id, username, action, None)
         await sio.emit('activity', event.to_dict(), room=room_id)
-        
+
         return {"success": True}
     except Exception as e:
         logger.error(f"Failed to handle shape deleted: {e}")
@@ -1295,21 +1344,29 @@ async def set_role(sid, data):
 async def delta_update(sid, data):
     """
     Handle delta updates (only changed properties) for bandwidth optimization.
-    Expected data: {"room": "file:<file_id>", "delta": {"element_id": {...changes...}}}
+    Expected data: {"room": "file:<file_id>", "user_id": "user-id", "delta": {"element_id": {...changes...}}}
     Feature #419: Bandwidth optimization - delta updates
+    Feature #417: Check edit permissions - viewers cannot send delta updates
     """
     try:
         room_id = data.get('room')
+        user_id = data.get('user_id') or session_user_map.get(sid)
         delta = data.get('delta', {})
-        
+
         if not room_id:
             return {"success": False, "error": "Room ID required"}
-        
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied delta update permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
+
         logger.info(f"Delta update in room {room_id}: {len(delta)} elements changed")
-        
+
         # Broadcast delta to all other clients in the room
         await sio.emit('delta_update', delta, room=room_id, skip_sid=sid)
-        
+
         return {"success": True, "elements_updated": len(delta)}
     except Exception as e:
         logger.error(f"Failed to handle delta update: {e}")
@@ -1708,6 +1765,7 @@ async def element_update_ot(sid, data):
         "new_value": {...}
     }
     Feature #396: Operational Transform for concurrent edits
+    Feature #417: Check edit permissions - viewers cannot update elements
     """
     try:
         room_id = data.get('room')
@@ -1719,6 +1777,12 @@ async def element_update_ot(sid, data):
 
         if not room_id or not user_id or not element_id:
             return {"success": False, "error": "room, user_id, and element_id required"}
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied OT update permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
 
         # Create operation
         import uuid
@@ -2316,6 +2380,7 @@ async def annotation_draw(sid, data):
         "coordinates": {...}  # Depends on type
     }
     Feature #411: Collaborative annotations - temporary drawings
+    Feature #417: Check edit permissions - viewers cannot draw annotations
     """
     try:
         room_id = data.get('room')
@@ -2328,6 +2393,12 @@ async def annotation_draw(sid, data):
 
         if not coordinates:
             return {"success": False, "error": "coordinates required"}
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied annotation permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
 
         # Get user presence for username and color
         username = "Unknown"
@@ -2615,6 +2686,7 @@ async def lock_element(sid, data):
         "username": "User Name"
     }
     Feature #414: Collaborative locks - lock elements
+    Feature #417: Check edit permissions - viewers cannot lock elements
     """
     try:
         room_id = data.get('room')
@@ -2624,6 +2696,12 @@ async def lock_element(sid, data):
 
         if not room_id or not element_id or not user_id:
             return {"success": False, "error": "room, element_id, and user_id required"}
+
+        # Feature #417: Check edit permission
+        has_permission, error_message = check_edit_permission(room_id, user_id)
+        if not has_permission:
+            logger.warning(f"User {user_id} denied lock element permission in room {room_id}: {error_message}")
+            return {"success": False, "error": error_message, "permission_denied": True}
 
         # Initialize room's element locks if needed
         if room_id not in element_locks:
