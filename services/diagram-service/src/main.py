@@ -3782,19 +3782,27 @@ async def increment_export_count(
 async def get_versions(
     diagram_id: str,
     request: Request,
+    search: Optional[str] = None,
+    author: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all versions for a diagram."""
+    """Get all versions for a diagram with optional search/filter."""
     correlation_id = getattr(request.state, "correlation_id", "unknown")
     user_id = request.headers.get("X-User-ID")
-    
+
     logger.info(
         "Fetching versions",
         correlation_id=correlation_id,
         diagram_id=diagram_id,
-        user_id=user_id
+        user_id=user_id,
+        search=search,
+        author=author,
+        date_from=date_from,
+        date_to=date_to
     )
-    
+
     # Verify diagram exists
     diagram = db.query(FileModel).filter(FileModel.id == diagram_id).first()
     if not diagram:
@@ -3804,11 +3812,65 @@ async def get_versions(
             diagram_id=diagram_id
         )
         raise HTTPException(status_code=404, detail="Diagram not found")
-    
+
+    # Build query with filters
+    query = db.query(Version).filter(Version.file_id == diagram_id)
+
+    # Search by content (in description, label, canvas_data, note_content)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                Version.description.ilike(search_term),
+                Version.label.ilike(search_term),
+                cast(Version.canvas_data, String).ilike(search_term),
+                Version.note_content.ilike(search_term)
+            )
+        )
+
+    # Filter by author (by user ID or name/email)
+    if author:
+        # Try to find user by name or email
+        author_search = f"%{author}%"
+        matching_users = db.query(User).filter(
+            or_(
+                User.full_name.ilike(author_search),
+                User.email.ilike(author_search),
+                User.id == author
+            )
+        ).all()
+
+        if matching_users:
+            user_ids = [u.id for u in matching_users]
+            query = query.filter(Version.created_by.in_(user_ids))
+        else:
+            # No matching users, return empty result
+            return {
+                "versions": [],
+                "total": 0
+            }
+
+    # Filter by date range
+    if date_from:
+        try:
+            from datetime import datetime
+            from_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Version.created_at >= from_date)
+        except ValueError:
+            pass  # Ignore invalid dates
+
+    if date_to:
+        try:
+            from datetime import datetime, timedelta
+            to_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            # Add one day to include the entire date_to
+            to_date = to_date + timedelta(days=1)
+            query = query.filter(Version.created_at < to_date)
+        except ValueError:
+            pass  # Ignore invalid dates
+
     # Query all versions ordered by version_number descending (newest first)
-    versions = db.query(Version).filter(
-        Version.file_id == diagram_id
-    ).order_by(Version.version_number.desc()).all()
+    versions = query.order_by(Version.version_number.desc()).all()
     
     logger.info(
         "Versions fetched successfully",
@@ -3894,8 +3956,8 @@ async def create_share_link(
     
     # Get diagram (only active diagrams can be shared)
     diagram = db.query(FileModel).filter(
-        File.id == diagram_id,
-        File.is_deleted == False
+        FileModel.id == diagram_id,
+        FileModel.is_deleted == False
     ).first()
     
     if not diagram:
