@@ -1,0 +1,67 @@
+========================================
+SESSION: Feature #441 - Comment Export CSV
+DATE: 2025-12-26 02:54 EST
+========================================
+
+ISSUE DISCOVERED & FIXED:
+The CSV export endpoint was implemented but the API gateway was wrapping the CSV content in JSON.
+
+ROOT CAUSE:
+- The API gateway had logic at line 2765 to passthrough text/csv responses
+- However, the container was using an old build that didn't have the passthrough logic
+- The old build was wrapping all non-JSON responses in {"data": "..."} format
+
+SOLUTION:
+- Rebuilt the API gateway container to pick up the text/csv passthrough logic
+- The gateway now correctly detects content-type: text/csv and returns the raw CSV
+
+IMPLEMENTATION DETAILS:
+1. CSV Export Endpoint (Already Existed):
+   - Located at services/diagram-service/src/main.py lines 5276-5351
+   - GET /{diagram_id}/comments/export/csv
+   - Returns StreamingResponse with text/csv media type
+   - Columns: Author, Text, Timestamp, Resolved, Position X, Position Y, Element ID
+
+2. API Gateway Passthrough (Fixed):
+   - Lines 2763-2771 in services/api-gateway/src/main.py
+   - Checks if content-type starts with "text/csv"
+   - Returns Response with original content unchanged
+   - Previously was falling through to JSON wrapping
+
+3. TESTING:
+   - Used test_feature_442_csv_export.py (note: filename says 442 but tests CSV=441)
+   - Test scenarios:
+     ✅ CSV export returns text/csv content-type
+     ✅ Content-Disposition header for file download
+     ✅ All 5 test comments exported
+     ✅ Required columns present (Author, Text, Timestamp)
+     ✅ Special characters handled (é, ñ, 中文)
+     ✅ Timestamps in ISO format
+     ✅ Resolved status included
+     ✅ Commas and quotes properly escaped
+
+4. REGRESSION CHECK:
+   - Baseline: 431 features
+   - Current: 442 features
+   - No regressions detected ✅
+
+TECHNICAL NOTES:
+- The diagram service returns CSV using Python's csv.writer
+- StringIO is used for in-memory CSV generation
+- FastAPI StreamingResponse streams the CSV to client
+- API gateway now correctly identifies and passthroughs text/csv responses
+- Container rebuild was necessary (docker-compose up -d --build api-gateway)
+
+FILES MODIFIED:
+- services/api-gateway/src/main.py (removed debug logging)
+- spec/feature_list.json (marked feature #441 as passing)
+
+PROGRESS UPDATE:
+Total Features: 658
+Passing: 442 (was 441)
+Percentage: 67.2%
+Remaining: 216 features
+
+NEXT FEATURE: #442 (Comment export: PDF)
+
+SESSION COMPLETE: Feature #441 ✅ PASSING

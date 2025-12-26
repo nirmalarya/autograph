@@ -1,6 +1,6 @@
 """Diagram Service - Diagram CRUD and storage."""
 from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, validator
 from typing import Optional, Dict, Any
@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
 import uuid
+import csv
+import io
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, cast, String, func
 import httpx
@@ -5269,6 +5271,84 @@ async def mark_comment_as_read(
         "comment_id": comment_id,
         "read_at": comment_read.read_at
     }
+
+
+@app.get("/{diagram_id}/comments/export/csv")
+async def export_comments_csv(
+    diagram_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Export all comments for a diagram as CSV file."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    user_id = request.headers.get("X-User-ID")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    logger.info(
+        "Exporting comments to CSV",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        user_id=user_id
+    )
+
+    # Verify diagram exists and user has access
+    diagram = db.query(File).filter(File.id == diagram_id).first()
+    if not diagram:
+        raise HTTPException(status_code=404, detail="Diagram not found")
+
+    # Get all comments for the diagram
+    comments = db.query(Comment).filter(
+        Comment.file_id == diagram_id
+    ).order_by(Comment.created_at.asc()).all()
+
+    # Create CSV in memory
+    output = io.StringIO()
+    csv_writer = csv.writer(output)
+
+    # Write header row
+    csv_writer.writerow(['Author', 'Text', 'Timestamp', 'Resolved', 'Position X', 'Position Y', 'Element ID'])
+
+    # Write comment rows
+    for comment in comments:
+        # Get user info
+        user = db.query(User).filter(User.id == comment.user_id).first()
+        author = user.full_name if user and user.full_name else (user.email if user else "Unknown")
+
+        # Format timestamp
+        timestamp = comment.created_at.isoformat() if comment.created_at else ""
+
+        # Write row
+        csv_writer.writerow([
+            author,
+            comment.content,
+            timestamp,
+            "Yes" if comment.is_resolved else "No",
+            comment.position_x if comment.position_x is not None else "",
+            comment.position_y if comment.position_y is not None else "",
+            comment.element_id if comment.element_id else ""
+        ])
+
+    # Get CSV content
+    csv_content = output.getvalue()
+    output.close()
+
+    logger.info(
+        "Comments exported to CSV successfully",
+        correlation_id=correlation_id,
+        diagram_id=diagram_id,
+        count=len(comments)
+    )
+
+    # Return CSV file
+    return StreamingResponse(
+        io.StringIO(csv_content),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=comments_{diagram_id}.csv"
+        }
+    )
 
 
 # ==========================================

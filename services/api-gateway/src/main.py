@@ -2759,10 +2759,10 @@ async def proxy_request(service_name: str, path: str, request: Request):
             # Mark success in circuit breaker
             if circuit_breaker:
                 circuit_breaker._on_success()
-            
-            # For binary content types (images, PDFs), pass through unchanged
+
+            # For binary content types (images, PDFs, CSV), pass through unchanged
             content_type = response.headers.get("content-type", "")
-            if content_type.startswith(("image/", "application/pdf", "application/octet-stream")):
+            if content_type.startswith(("image/", "application/pdf", "application/octet-stream", "text/csv")):
                 return Response(
                     content=response.content,
                     status_code=response.status_code,
