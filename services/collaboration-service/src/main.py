@@ -211,6 +211,10 @@ redo_stacks: Dict[str, Dict[str, List[dict]]] = {}  # room_id -> {user_id: [acti
 # Track which elements are locked by which users for exclusive editing
 element_locks: Dict[str, Dict[str, str]] = {}  # room_id -> {element_id: user_id}
 
+# Background tasks set (Feature #422)
+# Keep references to background tasks to prevent garbage collection
+background_tasks: Set[asyncio.Task] = set()
+
 
 def verify_jwt_token(token: str) -> Optional[dict]:
     """Verify JWT token and return payload."""
@@ -388,8 +392,15 @@ async def redis_subscriber_task():
 
                         # Broadcast to all local WebSocket clients in this room
                         # This allows messages from other server instances to reach clients on this server
-                        await sio.emit('update', msg_data, room=room_id)
-                        logger.info(f"Broadcasted Redis message to local clients in room {room_id}")
+                        # Feature #422: Extract the 'update' payload for diagram_update messages
+                        if msg_data.get('type') == 'diagram_update':
+                            update_payload = msg_data.get('update', {})
+                            await sio.emit('update', update_payload, room=room_id)
+                            logger.info(f"Broadcasted diagram_update to local clients in room {room_id}")
+                        else:
+                            # For other message types, broadcast as-is
+                            await sio.emit('update', msg_data, room=room_id)
+                            logger.info(f"Broadcasted Redis message to local clients in room {room_id}")
 
                 except Exception as e:
                     logger.error(f"Error processing Redis message: {e}")
@@ -411,15 +422,22 @@ async def startup_event():
         logger.info("Connected to Redis successfully")
 
         # Start background task for checking away users
-        asyncio.create_task(check_away_users())
+        task1 = asyncio.create_task(check_away_users())
+        background_tasks.add(task1)
+        task1.add_done_callback(background_tasks.discard)
         logger.info("Started presence monitoring task")
 
-        # Start Redis subscriber task for cross-server broadcasting (Feature #397)
-        asyncio.create_task(redis_subscriber_task())
+        # Start Redis subscriber task for cross-server broadcasting (Feature #397 & #422)
+        # CRITICAL: Keep reference to prevent garbage collection
+        task2 = asyncio.create_task(redis_subscriber_task())
+        background_tasks.add(task2)
+        task2.add_done_callback(background_tasks.discard)
         logger.info("Started Redis subscriber task for cross-server broadcasting")
 
         # Start annotation cleanup task (Feature #411)
-        asyncio.create_task(cleanup_expired_annotations())
+        task3 = asyncio.create_task(cleanup_expired_annotations())
+        background_tasks.add(task3)
+        task3.add_done_callback(background_tasks.discard)
         logger.info("Started annotation cleanup task")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
@@ -867,8 +885,16 @@ async def diagram_update(sid, data):
 
         logger.info(f"Diagram update in room {room_id} from {sid}")
 
-        # Broadcast to all other clients in the room
+        # Broadcast to all other clients in the room (local instance)
         await sio.emit('update', update, room=room_id, skip_sid=sid)
+
+        # Feature #422: Publish to Redis for horizontal scaling across multiple instances
+        await publish_to_redis(f"room:{room_id}", {
+            "type": "diagram_update",
+            "update": update,
+            "user_id": user_id,
+            "source_sid": sid  # So we can skip the originating client
+        })
 
         return {"success": True}
     except Exception as e:
