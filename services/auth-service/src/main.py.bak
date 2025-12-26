@@ -9379,7 +9379,7 @@ class CustomRoleUpdate(BaseModel):
 
 
 @app.post("/admin/roles/custom")
-async def create_team_custom_role(
+async def create_custom_role(
     role: CustomRoleCreate,
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
@@ -9498,7 +9498,7 @@ async def create_team_custom_role(
 
 
 @app.get("/admin/roles/custom")
-async def list_team_custom_roles(
+async def list_custom_roles(
     admin_user: User = Depends(get_admin_user)
 ):
     """
@@ -9529,7 +9529,7 @@ async def list_team_custom_roles(
 
 
 @app.get("/admin/roles/custom/{role_name}")
-async def get_team_custom_role(
+async def get_custom_role(
     role_name: str,
     admin_user: User = Depends(get_admin_user)
 ):
@@ -9557,7 +9557,7 @@ async def get_team_custom_role(
 
 
 @app.put("/admin/roles/custom/{role_name}")
-async def update_team_custom_role(
+async def update_custom_role(
     role_name: str,
     role_update: CustomRoleUpdate,
     admin_user: User = Depends(get_admin_user),
@@ -9644,7 +9644,7 @@ async def update_team_custom_role(
 
 
 @app.delete("/admin/roles/custom/{role_name}")
-async def delete_team_custom_role(
+async def delete_custom_role(
     role_name: str,
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
@@ -10800,7 +10800,7 @@ class CustomRoleUpdate(BaseModel):
 
 
 @app.post("/api/v1/teams/{team_id}/custom-roles", status_code=status.HTTP_201_CREATED)
-async def create_team_custom_role(
+async def create_custom_role(
     team_id: str,
     role_create: CustomRoleCreate,
     current_user: User = Depends(get_current_active_user),
@@ -10904,7 +10904,7 @@ async def create_team_custom_role(
 
 
 @app.get("/api/v1/teams/{team_id}/custom-roles")
-async def list_team_custom_roles(
+async def list_custom_roles(
     team_id: str,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -10969,7 +10969,7 @@ async def list_team_custom_roles(
 
 
 @app.get("/api/v1/teams/{team_id}/custom-roles/{role_id}")
-async def get_team_custom_role(
+async def get_custom_role(
     team_id: str,
     role_id: str,
     current_user: User = Depends(get_current_active_user),
@@ -11039,7 +11039,7 @@ async def get_team_custom_role(
 
 
 @app.put("/api/v1/teams/{team_id}/custom-roles/{role_id}")
-async def update_team_custom_role(
+async def update_custom_role(
     team_id: str,
     role_id: str,
     role_update: CustomRoleUpdate,
@@ -11129,7 +11129,7 @@ async def update_team_custom_role(
 
 
 @app.delete("/api/v1/teams/{team_id}/custom-roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_team_custom_role(
+async def delete_custom_role(
     team_id: str,
     role_id: str,
     current_user: User = Depends(get_current_active_user),

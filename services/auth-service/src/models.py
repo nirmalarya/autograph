@@ -948,3 +948,46 @@ class SCIMToken(Base):
         Index('idx_scim_tokens_hash', 'token_hash'),
         Index('idx_scim_tokens_active', 'is_active'),
     )
+
+
+class CustomRole(Base):
+    """Custom roles for teams with granular permissions."""
+    __tablename__ = "custom_roles"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    team_id = Column(String(36), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text)
+
+    # Granular permissions
+    can_invite_members = Column(Boolean, default=False, nullable=False)
+    can_remove_members = Column(Boolean, default=False, nullable=False)
+    can_manage_roles = Column(Boolean, default=False, nullable=False)
+    can_create_diagrams = Column(Boolean, default=True, nullable=False)
+    can_edit_own_diagrams = Column(Boolean, default=True, nullable=False)
+    can_edit_all_diagrams = Column(Boolean, default=False, nullable=False)
+    can_delete_own_diagrams = Column(Boolean, default=True, nullable=False)
+    can_delete_all_diagrams = Column(Boolean, default=False, nullable=False)
+    can_share_diagrams = Column(Boolean, default=True, nullable=False)
+    can_comment = Column(Boolean, default=True, nullable=False)
+    can_export = Column(Boolean, default=True, nullable=False)
+    can_view_analytics = Column(Boolean, default=False, nullable=False)
+    can_manage_team_settings = Column(Boolean, default=False, nullable=False)
+
+    # System role flag (for built-in roles)
+    is_system_role = Column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Relationships
+    team = relationship("Team")
+    creator = relationship("User", foreign_keys=[created_by])
+
+    __table_args__ = (
+        Index('idx_custom_roles_team', 'team_id'),
+        Index('idx_custom_roles_system', 'is_system_role'),
+        Index('idx_custom_roles_unique', 'team_id', 'name', unique=True),
+    )
