@@ -207,6 +207,10 @@ viewport_states: Dict[str, Dict[str, dict]] = {}  # room_id -> {user_id: {pan_x,
 undo_stacks: Dict[str, Dict[str, List[dict]]] = {}  # room_id -> {user_id: [actions]}
 redo_stacks: Dict[str, Dict[str, List[dict]]] = {}  # room_id -> {user_id: [actions]}
 
+# Element locks (Feature #414)
+# Track which elements are locked by which users for exclusive editing
+element_locks: Dict[str, Dict[str, str]] = {}  # room_id -> {element_id: user_id}
+
 
 def verify_jwt_token(token: str) -> Optional[dict]:
     """Verify JWT token and return payload."""
@@ -635,6 +639,18 @@ async def disconnect(sid):
                             'timestamp': datetime.utcnow().isoformat()
                         }, room=room_id)
                         logger.info(f"Released lock on element {active_element} for disconnected user {user_id}")
+
+                    # Feature #414: Release all element locks held by this user
+                    if room_id in element_locks:
+                        locked_elements = [elem_id for elem_id, locked_by in element_locks[room_id].items() if locked_by == user_id]
+                        for elem_id in locked_elements:
+                            del element_locks[room_id][elem_id]
+                            await sio.emit('element_unlocked', {
+                                'element_id': elem_id,
+                                'user_id': user_id,
+                                'timestamp': datetime.utcnow().isoformat()
+                            }, room=room_id)
+                            logger.info(f"Released element lock {elem_id} for disconnected user {user_id}")
 
                     # Notify other users about user leaving
                     await sio.emit('user_left', {
@@ -2588,6 +2604,129 @@ async def redo_action(sid, data):
         return {"success": False, "error": str(e)}
 
 
+@sio.event
+async def lock_element(sid, data):
+    """
+    Lock an element for exclusive editing by a user.
+    Expected data: {
+        "room": "file:<file_id>",
+        "element_id": "element-id",
+        "user_id": "user-id",
+        "username": "User Name"
+    }
+    Feature #414: Collaborative locks - lock elements
+    """
+    try:
+        room_id = data.get('room')
+        element_id = data.get('element_id')
+        user_id = data.get('user_id')
+        username = data.get('username', 'Unknown User')
+
+        if not room_id or not element_id or not user_id:
+            return {"success": False, "error": "room, element_id, and user_id required"}
+
+        # Initialize room's element locks if needed
+        if room_id not in element_locks:
+            element_locks[room_id] = {}
+
+        # Check if element is already locked by someone else
+        if element_id in element_locks[room_id]:
+            locked_by_user_id = element_locks[room_id][element_id]
+            if locked_by_user_id != user_id:
+                # Get the username of the user who locked it
+                locked_by_username = "Another user"
+                if room_id in room_users and locked_by_user_id in room_users[room_id]:
+                    locked_by_username = room_users[room_id][locked_by_user_id].username
+
+                logger.info(f"Element {element_id} already locked by {locked_by_user_id} in room {room_id}")
+                return {
+                    "success": False,
+                    "error": f"Locked by {locked_by_username}",
+                    "locked_by": locked_by_user_id,
+                    "locked_by_username": locked_by_username
+                }
+
+        # Lock the element
+        element_locks[room_id][element_id] = user_id
+
+        logger.info(f"Element {element_id} locked by user {user_id} in room {room_id}")
+
+        # Broadcast lock event to all users in room
+        await sio.emit('element_locked', {
+            'element_id': element_id,
+            'user_id': user_id,
+            'username': username,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "element_id": element_id,
+            "locked_by": user_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to lock element: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def unlock_element(sid, data):
+    """
+    Unlock an element to allow other users to edit it.
+    Expected data: {
+        "room": "file:<file_id>",
+        "element_id": "element-id",
+        "user_id": "user-id"
+    }
+    Feature #414: Collaborative locks - unlock elements
+    """
+    try:
+        room_id = data.get('room')
+        element_id = data.get('element_id')
+        user_id = data.get('user_id')
+
+        if not room_id or not element_id or not user_id:
+            return {"success": False, "error": "room, element_id, and user_id required"}
+
+        # Check if element is locked
+        if room_id not in element_locks or element_id not in element_locks[room_id]:
+            logger.info(f"Element {element_id} not locked in room {room_id}")
+            return {
+                "success": True,
+                "message": "Element was not locked"
+            }
+
+        # Check if user owns the lock
+        locked_by = element_locks[room_id][element_id]
+        if locked_by != user_id:
+            logger.warning(f"User {user_id} attempted to unlock element {element_id} locked by {locked_by}")
+            return {
+                "success": False,
+                "error": "You don't own this lock",
+                "locked_by": locked_by
+            }
+
+        # Unlock the element
+        del element_locks[room_id][element_id]
+
+        logger.info(f"Element {element_id} unlocked by user {user_id} in room {room_id}")
+
+        # Broadcast unlock event to all users in room
+        await sio.emit('element_unlocked', {
+            'element_id': element_id,
+            'user_id': user_id,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "element_id": element_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to unlock element: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/undo-redo/stacks/{room_id}/{user_id}")
 async def get_undo_redo_stacks(room_id: str, user_id: str):
     """
@@ -2614,6 +2753,40 @@ async def get_undo_redo_stacks(room_id: str, user_id: str):
         }
     except Exception as e:
         logger.error(f"Failed to get undo/redo stacks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/element-locks/{room_id}")
+async def get_element_locks(room_id: str):
+    """
+    Get all element locks for a room.
+    Returns a mapping of element_id -> user_id for all locked elements.
+    Feature #414: View element locks
+    """
+    try:
+        locks = {}
+        if room_id in element_locks:
+            locks = element_locks[room_id].copy()
+
+        # Enrich with usernames if available
+        enriched_locks = {}
+        for element_id, user_id in locks.items():
+            username = "Unknown User"
+            if room_id in room_users and user_id in room_users[room_id]:
+                username = room_users[room_id][user_id].username
+
+            enriched_locks[element_id] = {
+                "user_id": user_id,
+                "username": username
+            }
+
+        return {
+            "room": room_id,
+            "locks": enriched_locks,
+            "count": len(enriched_locks)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get element locks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

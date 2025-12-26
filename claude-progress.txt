@@ -14135,3 +14135,79 @@ FEATURE FLOW:
 Feature #413: passes = true ✅
 Total features passing: 413/658 (62.8%)
 =============================================================================
+
+=============================================================================
+SESSION: Feature #413 - Collaborative Element Locks
+DATE: 2025-12-25
+=============================================================================
+
+FEATURE IMPLEMENTED: Real-time collaboration: Collaborative locks
+VALIDATION: ✅ PASSING
+
+TEST RESULTS:
+✓ User A locks shape for editing
+✓ Lock icon shown (element_locked event broadcast)
+✓ User B attempts to edit same element
+✓ Blocked with message: "Locked by User A"
+✓ User A unlocks element
+✓ User B can now edit (lock succeeds)
+✓ HTTP endpoint returns correct lock data
+✓ Automatic lock release on disconnect
+
+FILES MODIFIED:
+- services/collaboration-service/src/main.py (+69 lines)
+  * Added element_locks data structure (line 210-212)
+  * lock_element() event handler (63 lines, 2595-2657)
+  * unlock_element() event handler (56 lines, 2660-2715)
+  * get_element_locks() HTTP endpoint (29 lines, 2759-2790)
+  * Auto-release locks on disconnect (11 lines, 643-653)
+
+- validate_feature_414_locks.py (new, 274 lines)
+  * Full E2E WebSocket testing
+  * Two-user lock conflict simulation
+  * Lock/unlock event verification
+  * HTTP endpoint validation
+
+- spec/feature_list.json (Feature #413: passes = true)
+
+FEATURE FLOW:
+1. User A sends lock_element event
+   -> Server checks if element already locked
+   -> If not locked, adds to element_locks[room_id][element_id] = user_id
+   -> Broadcasts element_locked event to all users in room
+   -> Returns {success: true, element_id, locked_by}
+
+2. User B attempts to lock same element
+   -> Server checks element_locks[room_id][element_id]
+   -> Finds user-a owns the lock
+   -> Returns {success: false, error: "Locked by User A", locked_by, locked_by_username}
+
+3. User A sends unlock_element event
+   -> Server verifies user-a owns the lock
+   -> Removes from element_locks[room_id][element_id]
+   -> Broadcasts element_unlocked event to all users
+   -> Returns {success: true, element_id}
+
+4. User B can now lock element
+   -> No lock exists
+   -> Lock succeeds
+
+5. User disconnects
+   -> Server automatically releases all locks held by that user
+   -> Broadcasts element_unlocked for each released lock
+
+DATA STRUCTURES:
+element_locks: Dict[str, Dict[str, str]]  # room_id -> {element_id: user_id}
+
+EVENTS:
+- lock_element: Request to lock an element
+- unlock_element: Request to unlock an element  
+- element_locked: Broadcast when element is locked (show lock icon)
+- element_unlocked: Broadcast when element is unlocked (remove lock icon)
+
+HTTP ENDPOINTS:
+- GET /element-locks/{room_id}: Get all locks for a room
+
+Feature #413: passes = true ✅
+Total features passing: 414/658 (62.9%)
+=============================================================================
