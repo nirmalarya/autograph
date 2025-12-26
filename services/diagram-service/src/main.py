@@ -8995,31 +8995,31 @@ def cleanup_old_data(
         # Delete diagrams older than retention period (soft delete - move to trash)
         diagram_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.diagram_retention_days)
         old_diagrams = db.query(FileModel).filter(
-            File.created_at < diagram_cutoff,
-            File.is_deleted == False
+            FileModel.created_at < diagram_cutoff,
+            FileModel.is_deleted == False
         ).all()
-        
+
         old_diagrams_count = len(old_diagrams)
-        
+
         # Soft-delete old diagrams (move to trash)
         for diagram in old_diagrams:
             diagram.is_deleted = True
             diagram.deleted_at = datetime.now(timezone.utc)
-        
+
         # Hard delete from trash (permanently delete)
         trash_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.deleted_retention_days)
         deleted_from_trash = db.query(FileModel).filter(
-            File.is_deleted == True,
-            File.deleted_at < trash_cutoff
+            FileModel.is_deleted == True,
+            FileModel.deleted_at < trash_cutoff
         ).delete()
-        
+
         # Delete old versions (keep current version)
         version_cutoff = datetime.now(timezone.utc) - timedelta(days=cleanup_req.version_retention_days)
-        
+
         # Get all files and their current version numbers
-        files_with_versions = db.query(File.id, File.current_version).all()
+        files_with_versions = db.query(FileModel.id, FileModel.current_version).all()
         file_current_versions = {f[0]: f[1] for f in files_with_versions}
-        
+
         # Delete old versions that are not current
         deleted_versions = 0
         for file_id, current_version in file_current_versions.items():

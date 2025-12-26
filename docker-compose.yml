@@ -83,6 +83,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       TLS_ENABLED: ${TLS_ENABLED:-false}
       SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY}
+      DIAGRAM_SERVICE_URL: http://diagram-service:8082
     ports:
     - ${AUTH_SERVICE_PORT}:8085
     volumes:
