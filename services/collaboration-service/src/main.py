@@ -565,33 +565,67 @@ async def connect(sid, environ, auth):
 
 @sio.event
 async def disconnect(sid):
-    """Handle client disconnection."""
+    """
+    Handle client disconnection with complete cleanup.
+    Feature #403: Clean up cursor, user list, and locks on disconnect
+    """
     try:
         logger.info(f"Client disconnected: {sid}")
-        
+
         # Get user and room info
         user_id = session_user_map.get(sid)
         room_id = session_room_map.get(sid)
-        
+
         # Remove from all rooms
         for room_id in list(active_rooms.keys()):
             if sid in active_rooms[room_id]:
                 active_rooms[room_id].remove(sid)
                 if not active_rooms[room_id]:
                     del active_rooms[room_id]
-                
+
                 # Update presence and notify
                 if room_id in room_users and user_id in room_users[room_id]:
                     presence = room_users[room_id][user_id]
+
+                    # Get element being edited (if any) before cleanup
+                    active_element = presence.active_element
+
+                    # Feature #403: Clean up cursor position
+                    presence.cursor_x = 0
+                    presence.cursor_y = 0
+
+                    # Feature #403: Release any element locks
+                    presence.active_element = None
+                    presence.selected_elements = []
+                    presence.is_typing = False
+
+                    # Mark as offline
                     presence.status = PresenceStatus.OFFLINE
-                    
-                    # Notify other users
+
+                    # Feature #403: Notify others about cursor removal
+                    await sio.emit('cursor_removed', {
+                        'user_id': user_id,
+                        'username': presence.username,
+                        'timestamp': datetime.utcnow().isoformat()
+                    }, room=room_id)
+
+                    # Feature #403: If user was editing, notify about lock release
+                    if active_element:
+                        await sio.emit('element_unlocked', {
+                            'user_id': user_id,
+                            'username': presence.username,
+                            'element_id': active_element,
+                            'timestamp': datetime.utcnow().isoformat()
+                        }, room=room_id)
+                        logger.info(f"Released lock on element {active_element} for disconnected user {user_id}")
+
+                    # Notify other users about user leaving
                     await sio.emit('user_left', {
                         'user_id': user_id,
                         'username': presence.username,
                         'timestamp': datetime.utcnow().isoformat()
                     }, room=room_id)
-                    
+
                     # Remove from room users after delay (in case of reconnect)
                     await asyncio.sleep(30)
                     if room_id in room_users and user_id in room_users[room_id]:
@@ -599,15 +633,19 @@ async def disconnect(sid):
                             del room_users[room_id][user_id]
                             if not room_users[room_id]:
                                 del room_users[room_id]
-                
-                logger.info(f"Removed {sid} from room {room_id}")
-        
+
+                logger.info(f"Removed {sid} from room {room_id} with full cleanup")
+
         # Clean up mappings
         if sid in session_user_map:
             del session_user_map[sid]
         if sid in session_room_map:
             del session_room_map[sid]
-            
+
+        # Feature #403: Clean up cursor throttle data
+        if sid in cursor_update_throttle:
+            del cursor_update_throttle[sid]
+
     except Exception as e:
         logger.error(f"Error during disconnect: {e}")
 

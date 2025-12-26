@@ -13105,3 +13105,95 @@ NOTES:
 - Just needed to include it in the serialization
 - Frontend can now show "Last active X minutes ago"
 - Timestamp updates automatically when users are active
+
+
+================================================================================
+SESSION: Feature #402 - Collision Avoidance
+================================================================================
+Date: 2025-12-25
+Feature: Real-time collaboration: Collision avoidance: warn if editing same element
+Status: ✅ COMPLETE
+
+IMPLEMENTATION SUMMARY:
+Added collision detection to the collaboration service's element_edit event handler.
+When a user tries to start editing an element that another user is already editing,
+the system returns an error with a warning message identifying who is currently
+editing the element. This prevents concurrent edits on the same element and reduces
+conflicts.
+
+CHANGES:
+1. services/collaboration-service/src/main.py:
+   - Enhanced element_edit() event handler (lines 855-911)
+   - Added collision detection before allowing edit
+   - Check if any other user has this element as their active_element
+   - Return detailed error response with:
+     * error: "collision"
+     * message: "{username} is currently editing this"
+     * editing_user: {user_id, username, color}
+   - Only blocks when starting to edit (element_id not null)
+   - User can stop editing by setting element_id to null
+   - After first user finishes, second user can then edit
+
+2. validate_feature_402_collision_avoidance.py (new):
+   - Comprehensive E2E test for collision avoidance
+   - Simulates two WebSocket clients (Alice and Bob)
+   - Test scenarios:
+     * Alice starts editing shape-123
+     * Bob tries to edit same shape - gets collision error
+     * Verify error message contains Alice's name
+     * Verify editing_user details are correct
+     * Alice finishes editing (element_id = null)
+     * Bob tries again - now succeeds
+   - All scenarios pass
+
+3. spec/feature_list.json:
+   - Feature #402: passes = true
+
+TESTING RESULTS:
+✅ User A starts editing element successfully
+✅ User B receives collision error when trying to edit same element
+✅ Error message: "Alice is currently editing this"
+✅ Editing user info returned (user_id, username, color)
+✅ User A can stop editing (element_id = null)
+✅ User B can edit after User A finishes
+✅ WebSocket event handling works correctly
+✅ E2E test passes all scenarios
+
+IMPLEMENTATION DETAILS:
+- Collision check happens before updating presence
+- Loops through all users in room to find conflicts
+- Only checks when element_id is not null (starting edit)
+- Returns error response immediately if collision found
+- No database changes needed (uses in-memory presence data)
+- Warning message is user-friendly and informative
+- Includes color for UI highlighting of conflicting user
+
+SERVICE HEALTH:
+✅ Collaboration service rebuilt and restarted
+✅ Service is healthy
+✅ All 11 services running and healthy
+
+REGRESSION CHECK:
+Baseline: 215/215 passing (no regressions)
+Total: 402/658 passing (+1 from this session)
+
+QUALITY GATES:
+✅ Service health check passed
+✅ E2E test created and passing
+✅ Collision detection working correctly
+✅ Warning messages clear and helpful
+✅ No breaking changes
+✅ No regressions (baseline intact)
+✅ WebSocket authentication working
+
+Git Commit: 3421d5e
+
+NOTES:
+- This feature prevents the most common type of edit conflict
+- Users get immediate feedback about who is editing
+- Frontend can use this info to show visual indicators
+- active_element tracking was already implemented (Feature #391)
+- This builds on existing presence tracking infrastructure
+- Simple but effective conflict prevention mechanism
+- Can be enhanced later with automatic locking/unlocking
+
