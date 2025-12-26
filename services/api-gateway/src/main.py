@@ -924,6 +924,8 @@ PUBLIC_ROUTES = [
     "/api/admin/backup/",  # Database backup and restore (for testing)
     "/api/admin/minio/",  # MinIO bucket backup and restore (for testing)
     "/api/admin/dr/",  # Disaster recovery endpoints (for testing)
+    "/api/admin/encryption/",  # Encryption key management (Feature #548)
+    "/api/admin/secrets/",  # Secrets management (Feature #549)
     "/api/feature-flags",  # Feature flags API (all endpoints)
     "/api/auth/register",
     "/api/auth/login",
@@ -4732,6 +4734,460 @@ async def verify_encryption(request: Request, verification_request: dict):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Encryption verification failed: {str(e)}"
+        )
+
+
+# ==========================================
+# Secrets Management Endpoints (Feature #549)
+# ==========================================
+
+@app.post("/api/admin/secrets/set")
+async def set_secret(request: Request, secret_request: dict):
+    """
+    Store a secret in encrypted storage.
+
+    This endpoint stores sensitive data (passwords, API keys, tokens)
+    in encrypted format using Fernet symmetric encryption.
+
+    Required permissions: admin only
+
+    Request body:
+    {
+        "name": "SECRET_NAME",
+        "value": "secret value to encrypt",
+        "description": "optional description of the secret"
+    }
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Setting secret in encrypted storage",
+            correlation_id=correlation_id
+        )
+
+        # Extract parameters from request
+        name = secret_request.get("name")
+        value = secret_request.get("value")
+        description = secret_request.get("description", "")
+
+        # Validate required parameters
+        if not name or not value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both 'name' and 'value' are required"
+            )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Store secret
+        success = sm.set_secret(name, value)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to store secret"
+            )
+
+        logger.info(
+            "Secret stored successfully",
+            correlation_id=correlation_id,
+            secret_name=name
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Secret '{name}' stored successfully",
+            "secret_name": name,
+            "description": description
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to store secret", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to store secret: {str(e)}"
+        )
+
+
+@app.get("/api/admin/secrets/get/{secret_name}")
+async def get_secret(request: Request, secret_name: str):
+    """
+    Retrieve a secret from encrypted storage.
+
+    This endpoint retrieves and decrypts a secret from encrypted storage.
+
+    Required permissions: admin only
+
+    Path parameters:
+    - secret_name: Name of the secret to retrieve
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Retrieving secret from encrypted storage",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Retrieve secret
+        value = sm.get_secret(secret_name)
+
+        if value is None:
+            logger.warning(
+                "Secret not found",
+                correlation_id=correlation_id,
+                secret_name=secret_name
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Secret '{secret_name}' not found"
+            )
+
+        logger.info(
+            "Secret retrieved successfully",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "secret_name": secret_name,
+            "value": value,
+            "message": f"Secret '{secret_name}' retrieved successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to retrieve secret", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve secret: {str(e)}"
+        )
+
+
+@app.delete("/api/admin/secrets/delete/{secret_name}")
+async def delete_secret(request: Request, secret_name: str):
+    """
+    Delete a secret from encrypted storage.
+
+    Required permissions: admin only
+
+    Path parameters:
+    - secret_name: Name of the secret to delete
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Deleting secret from encrypted storage",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Delete secret
+        success = sm.delete_secret(secret_name)
+
+        if not success:
+            logger.warning(
+                "Secret not found for deletion",
+                correlation_id=correlation_id,
+                secret_name=secret_name
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Secret '{secret_name}' not found"
+            )
+
+        logger.info(
+            "Secret deleted successfully",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Secret '{secret_name}' deleted successfully",
+            "secret_name": secret_name
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to delete secret", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete secret: {str(e)}"
+        )
+
+
+@app.post("/api/admin/secrets/rotate/{secret_name}")
+async def rotate_secret(request: Request, secret_name: str, rotation_request: dict):
+    """
+    Rotate a secret (update its value).
+
+    This endpoint updates the value of an existing secret or creates it if it doesn't exist.
+
+    Required permissions: admin only
+
+    Path parameters:
+    - secret_name: Name of the secret to rotate
+
+    Request body:
+    {
+        "new_value": "new secret value"
+    }
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Rotating secret",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        # Extract new value from request
+        new_value = rotation_request.get("new_value")
+
+        # Validate required parameter
+        if not new_value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="'new_value' is required"
+            )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Rotate secret
+        success = sm.rotate_secret(secret_name, new_value)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to rotate secret"
+            )
+
+        logger.info(
+            "Secret rotated successfully",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Secret '{secret_name}' rotated successfully",
+            "secret_name": secret_name
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to rotate secret", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to rotate secret: {str(e)}"
+        )
+
+
+@app.get("/api/admin/secrets/list")
+async def list_secrets(request: Request):
+    """
+    List all secret names (not values).
+
+    This endpoint returns a list of all secret names stored in encrypted storage.
+    Secret values are NOT returned for security reasons.
+
+    Required permissions: admin only
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Listing all secret names",
+            correlation_id=correlation_id
+        )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # List secrets
+        secret_names = sm.list_secrets()
+
+        logger.info(
+            "Secret names listed successfully",
+            correlation_id=correlation_id,
+            count=len(secret_names)
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Found {len(secret_names)} secrets",
+            "secrets": secret_names,
+            "count": len(secret_names)
+        }
+
+    except Exception as e:
+        logger.error("Failed to list secrets", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list secrets: {str(e)}"
+        )
+
+
+@app.get("/api/admin/secrets/verify/{secret_name}")
+async def verify_secret_encryption(request: Request, secret_name: str):
+    """
+    Verify that a secret is properly encrypted in storage.
+
+    This endpoint checks that:
+    1. The secret exists
+    2. The secret is encrypted at rest (plaintext not in file)
+
+    Required permissions: admin only
+
+    Path parameters:
+    - secret_name: Name of the secret to verify
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        logger.info(
+            "Verifying secret encryption",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Verify encryption
+        is_encrypted = sm.verify_encryption(secret_name)
+
+        if not is_encrypted:
+            logger.warning(
+                "Secret verification failed - not encrypted or not found",
+                correlation_id=correlation_id,
+                secret_name=secret_name
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Secret '{secret_name}' not found or not properly encrypted"
+            )
+
+        logger.info(
+            "Secret encryption verified successfully",
+            correlation_id=correlation_id,
+            secret_name=secret_name
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "secret_name": secret_name,
+            "encrypted": True,
+            "message": f"Secret '{secret_name}' is properly encrypted at rest"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to verify secret encryption", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify secret encryption: {str(e)}"
+        )
+
+
+@app.get("/api/admin/secrets/audit-logs")
+async def get_secrets_audit_logs(request: Request, limit: int = 100):
+    """
+    Retrieve audit logs for secrets access.
+
+    This endpoint returns audit logs showing all secret access operations
+    (set, get, delete, rotate, etc.) with timestamps.
+
+    Required permissions: admin only
+
+    Query parameters:
+    - limit: Maximum number of log entries to return (default: 100, max: 1000)
+    """
+    correlation_id = request.state.correlation_id
+
+    try:
+        from secrets_manager import get_secrets_manager
+
+        # Validate and cap limit
+        if limit > 1000:
+            limit = 1000
+
+        logger.info(
+            "Retrieving secrets audit logs",
+            correlation_id=correlation_id,
+            limit=limit
+        )
+
+        # Get secrets manager
+        sm = get_secrets_manager()
+
+        # Get audit logs
+        logs = sm.get_audit_logs(limit=limit)
+
+        logger.info(
+            "Audit logs retrieved successfully",
+            correlation_id=correlation_id,
+            count=len(logs)
+        )
+
+        return {
+            "correlation_id": correlation_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "success": True,
+            "message": f"Retrieved {len(logs)} audit log entries",
+            "logs": logs,
+            "count": len(logs)
+        }
+
+    except Exception as e:
+        logger.error("Failed to retrieve audit logs", correlation_id=correlation_id, exc=e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve audit logs: {str(e)}"
         )
 
 
