@@ -16790,3 +16790,119 @@ FILES CREATED:
 
 SESSION COMPLETE: Feature 454 PASSING
 
+
+
+SESSION: Feature 454 - Version History Auto-Save
+Date: 2025-12-26
+
+CRITICAL BUG DISCOVERED AND FIXED:
+=====================================
+Issue: AttributeError in update_diagram endpoint
+- Line 2852-2853 used `File.id` instead of `FileModel.id`
+- `File` is imported from FastAPI (file upload function)
+- `FileModel` is the SQLAlchemy model
+- This was causing 500 Internal Server Error on all diagram updates
+- Fixed by replacing all occurrences with `FileModel`
+
+Impact: This bug was blocking ALL diagram updates!
+
+FEATURE COMPLETED:
+==================
+Feature 454: Version History Auto-Save Every 5 Minutes - PASSING
+
+Implementation Details:
+- Auto-versioning logic already implemented in update_diagram()
+- Tracks `last_auto_versioned_at` timestamp in files table
+- Creates initial version on first edit (when last_auto_versioned_at is NULL)
+- Creates version when 5+ minutes (300 seconds) have passed since last auto-version
+- Does NOT create version within 5 minutes
+- Major edits (10+ elements deleted) also trigger immediate versioning
+
+Test Results:
+✓ Initial version created on first edit
+✓ No version created within 5 minutes
+✓ Version created after 5+ minutes
+✓ All versions saved with canvas_data in database
+
+FILES MODIFIED:
+- services/diagram-service/src/main.py (bug fix: File → FileModel)
+- spec/feature_list.json (marked #454 as passing)
+
+FILES CREATED:
+- test_feature_454_auto_version.py (comprehensive E2E test)
+
+REGRESSION CHECK:
+- Baseline: 431 features passing
+- Current: 455 features passing (+24 since baseline)
+- No regressions detected
+
+PROGRESS: 455/658 features (69.1%)
+
+Session complete: Feature 454 PASSING + Critical bug fixed
+
+================================================================================
+SESSION: Feature 455 - Major Edit Detection (Immediate Versioning)
+Date: 2025-12-26 10:28 UTC
+================================================================================
+
+FEATURE COMPLETED:
+==================
+Feature 455: Version History - Major Edit Detection
+- Immediate version creation when 10+ elements are deleted
+- No waiting for 5-minute auto-save timer
+
+IMPLEMENTATION STATUS:
+======================
+✅ Feature already implemented in diagram-service
+- Code checks if 10+ elements deleted between old and new canvas_data
+- Marks as major edit
+- Creates version immediately
+- Does NOT update last_auto_versioned_at (keeps 5-min timer running)
+
+TEST CREATED:
+=============
+File: test_feature_455_major_edit.py
+- Creates diagram with 15 shapes
+- Deletes all shapes (15 deletions = major edit)
+- Verifies version created immediately (version #2)
+- Verifies description = "Major edit"
+- ✅ ALL TESTS PASSED
+
+TEST RESULTS:
+=============
+✓ Login successful
+✓ Diagram created with 15 shapes
+✓ Initial version count: 1
+✓ Deleted all shapes (major edit triggered)
+✓ Version count after deletion: 2 (immediate versioning!)
+✓ Version #2 created with description "Major edit"
+✓ No waiting for auto-save timer
+
+KEY FINDINGS:
+=============
+1. Major edit detection working perfectly
+2. Immediate versioning on 10+ element deletions
+3. Preserves 5-minute timer (doesn't update last_auto_versioned_at)
+4. Version snapshots state BEFORE the major deletion
+
+FILES CREATED:
+==============
+- test_feature_455_major_edit.py (E2E test)
+- create_test_user_455.sql (test user setup)
+- generate_hash_455.py (password hash generation)
+- test_login_455.py (login verification)
+- decode_jwt_455.py (JWT decoding utility)
+
+FILES MODIFIED:
+===============
+- spec/feature_list.json (marked #455 as passing)
+
+REGRESSION CHECK:
+=================
+- Baseline: 431 features passing
+- Current: 456 features passing (+25 since baseline)
+- No regressions detected
+
+PROGRESS: 456/658 features (69.3%)
+
+Session complete: Feature 455 PASSING ✅
