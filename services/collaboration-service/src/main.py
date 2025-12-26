@@ -198,6 +198,10 @@ session_room_map: Dict[str, str] = {}  # sid -> room_id
 activity_feeds: Dict[str, List[ActivityEvent]] = {}  # room_id -> list of events (max 100)
 next_color_index: int = 0
 
+# Follow mode tracking (Feature #411)
+follow_relationships: Dict[str, Dict[str, str]] = {}  # room_id -> {follower_user_id: following_user_id}
+viewport_states: Dict[str, Dict[str, dict]] = {}  # room_id -> {user_id: {pan_x, pan_y, zoom}}
+
 
 def verify_jwt_token(token: str) -> Optional[dict]:
     """Verify JWT token and return payload."""
@@ -385,6 +389,10 @@ async def startup_event():
         # Start Redis subscriber task for cross-server broadcasting (Feature #397)
         asyncio.create_task(redis_subscriber_task())
         logger.info("Started Redis subscriber task for cross-server broadcasting")
+
+        # Start annotation cleanup task (Feature #411)
+        asyncio.create_task(cleanup_expired_annotations())
+        logger.info("Started annotation cleanup task")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
 
@@ -1990,6 +1998,388 @@ async def clear_offline_queue(user_id: str):
         }
     except Exception as e:
         logger.error(f"Failed to clear offline queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@sio.event
+async def follow_user(sid, data):
+    """
+    Handle user following another user's viewport.
+    Expected data: {
+        "room": "file:<file_id>",
+        "follower_id": "user-id-following",
+        "following_id": "user-id-being-followed"
+    }
+    Feature #411: Follow mode - follow another user's viewport
+    """
+    try:
+        room_id = data.get('room')
+        follower_id = data.get('follower_id')
+        following_id = data.get('following_id')
+
+        if not room_id or not follower_id or not following_id:
+            return {"success": False, "error": "room, follower_id, and following_id required"}
+
+        # Initialize follow relationships for this room
+        if room_id not in follow_relationships:
+            follow_relationships[room_id] = {}
+
+        # Set up follow relationship
+        follow_relationships[room_id][follower_id] = following_id
+
+        # Get usernames for logging
+        follower_name = "Unknown"
+        following_name = "Unknown"
+        if room_id in room_users:
+            if follower_id in room_users[room_id]:
+                follower_name = room_users[room_id][follower_id].username
+            if following_id in room_users[room_id]:
+                following_name = room_users[room_id][following_id].username
+
+        logger.info(f"Follow mode: {follower_name} is now following {following_name} in room {room_id}")
+
+        # Notify follower that they're now following
+        await sio.emit('follow_started', {
+            'follower_id': follower_id,
+            'following_id': following_id,
+            'following_username': following_name,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        # If the user being followed has a viewport state, send it to the follower
+        if room_id in viewport_states and following_id in viewport_states[room_id]:
+            viewport = viewport_states[room_id][following_id]
+            await sio.emit('viewport_sync', {
+                'user_id': following_id,
+                'viewport': viewport,
+                'timestamp': datetime.utcnow().isoformat()
+            }, room=room_id)
+
+        return {
+            "success": True,
+            "follower_id": follower_id,
+            "following_id": following_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle follow_user: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def unfollow_user(sid, data):
+    """
+    Handle user unfollowing another user's viewport.
+    Expected data: {
+        "room": "file:<file_id>",
+        "follower_id": "user-id"
+    }
+    Feature #411: Follow mode - stop following
+    """
+    try:
+        room_id = data.get('room')
+        follower_id = data.get('follower_id')
+
+        if not room_id or not follower_id:
+            return {"success": False, "error": "room and follower_id required"}
+
+        # Remove follow relationship
+        was_following = None
+        if room_id in follow_relationships and follower_id in follow_relationships[room_id]:
+            was_following = follow_relationships[room_id][follower_id]
+            del follow_relationships[room_id][follower_id]
+
+        # Get username for logging
+        follower_name = "Unknown"
+        if room_id in room_users and follower_id in room_users[room_id]:
+            follower_name = room_users[room_id][follower_id].username
+
+        logger.info(f"Follow mode: {follower_name} stopped following in room {room_id}")
+
+        # Notify follower that they've stopped following
+        await sio.emit('follow_stopped', {
+            'follower_id': follower_id,
+            'was_following_id': was_following,
+            'timestamp': datetime.utcnow().isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "follower_id": follower_id,
+            "was_following": was_following
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle unfollow_user: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@sio.event
+async def viewport_update(sid, data):
+    """
+    Handle viewport update (pan/zoom) and broadcast to followers.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id",
+        "pan_x": 100,
+        "pan_y": 200,
+        "zoom": 1.5
+    }
+    Feature #411: Follow mode - broadcast viewport changes
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        pan_x = data.get('pan_x', 0)
+        pan_y = data.get('pan_y', 0)
+        zoom = data.get('zoom', 1.0)
+
+        if not room_id or not user_id:
+            return {"success": False, "error": "room and user_id required"}
+
+        # Store viewport state
+        if room_id not in viewport_states:
+            viewport_states[room_id] = {}
+
+        viewport_states[room_id][user_id] = {
+            'pan_x': pan_x,
+            'pan_y': pan_y,
+            'zoom': zoom
+        }
+
+        # Check if anyone is following this user
+        followers = []
+        if room_id in follow_relationships:
+            for follower_id, following_id in follow_relationships[room_id].items():
+                if following_id == user_id:
+                    followers.append(follower_id)
+
+        # If there are followers, broadcast the viewport update
+        if followers:
+            logger.info(f"Viewport update: User {user_id} has {len(followers)} followers in room {room_id}")
+
+            # Broadcast to all users in room (followers will react to it)
+            await sio.emit('viewport_changed', {
+                'user_id': user_id,
+                'pan_x': pan_x,
+                'pan_y': pan_y,
+                'zoom': zoom,
+                'followers': followers,  # List of users who should follow this update
+                'timestamp': datetime.utcnow().isoformat()
+            }, room=room_id)
+
+        return {
+            "success": True,
+            "followers_count": len(followers)
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle viewport_update: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/rooms/{room_id}/follow-relationships")
+async def get_follow_relationships(room_id: str):
+    """
+    Get all follow relationships in a room.
+    Feature #411: View who is following whom
+    """
+    try:
+        relationships = follow_relationships.get(room_id, {})
+
+        # Format for response
+        follow_list = []
+        for follower_id, following_id in relationships.items():
+            follower_name = "Unknown"
+            following_name = "Unknown"
+
+            if room_id in room_users:
+                if follower_id in room_users[room_id]:
+                    follower_name = room_users[room_id][follower_id].username
+                if following_id in room_users[room_id]:
+                    following_name = room_users[room_id][following_id].username
+
+            follow_list.append({
+                "follower_id": follower_id,
+                "follower_username": follower_name,
+                "following_id": following_id,
+                "following_username": following_name
+            })
+
+        return {
+            "room": room_id,
+            "relationships": follow_list,
+            "count": len(follow_list)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get follow relationships: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Annotation storage
+annotations: Dict[str, List[dict]] = {}  # room_id -> list of active annotations
+
+
+@dataclass
+class Annotation:
+    """Temporary annotation drawing."""
+    annotation_id: str
+    user_id: str
+    username: str
+    color: str
+    annotation_type: str  # 'circle', 'arrow', 'line', 'rectangle', 'freehand'
+    coordinates: dict  # Depends on type: {x, y, radius} for circle, etc.
+    created_at: datetime
+    expires_at: datetime  # Auto-fade after 10 seconds
+
+    def to_dict(self):
+        return {
+            "annotation_id": self.annotation_id,
+            "user_id": self.user_id,
+            "username": self.username,
+            "color": self.color,
+            "annotation_type": self.annotation_type,
+            "coordinates": self.coordinates,
+            "created_at": self.created_at.isoformat(),
+            "expires_at": self.expires_at.isoformat()
+        }
+
+
+async def cleanup_expired_annotations():
+    """Background task to remove expired annotations."""
+    while True:
+        try:
+            await asyncio.sleep(1)  # Check every second
+            now = datetime.utcnow()
+
+            for room_id in list(annotations.keys()):
+                if room_id not in annotations:
+                    continue
+
+                # Filter out expired annotations
+                active_annotations = []
+                expired_annotations = []
+
+                for ann_dict in annotations[room_id]:
+                    expires_at = datetime.fromisoformat(ann_dict['expires_at'])
+                    if expires_at > now:
+                        active_annotations.append(ann_dict)
+                    else:
+                        expired_annotations.append(ann_dict)
+
+                # Update list if any expired
+                if expired_annotations:
+                    annotations[room_id] = active_annotations
+
+                    # Notify room that annotations expired (auto-fade)
+                    for ann_dict in expired_annotations:
+                        await sio.emit('annotation_expired', {
+                            'annotation_id': ann_dict['annotation_id'],
+                            'timestamp': now.isoformat()
+                        }, room=room_id)
+
+                        logger.info(f"Annotation {ann_dict['annotation_id']} expired in room {room_id}")
+
+                # Clean up empty room
+                if not annotations[room_id]:
+                    del annotations[room_id]
+        except Exception as e:
+            logger.error(f"Error in cleanup_expired_annotations: {e}")
+
+
+@sio.event
+async def annotation_draw(sid, data):
+    """
+    Handle temporary annotation drawing.
+    Expected data: {
+        "room": "file:<file_id>",
+        "user_id": "user-id",
+        "annotation_type": "circle",  # circle, arrow, line, rectangle, freehand
+        "coordinates": {...}  # Depends on type
+    }
+    Feature #411: Collaborative annotations - temporary drawings
+    """
+    try:
+        room_id = data.get('room')
+        user_id = data.get('user_id')
+        annotation_type = data.get('annotation_type', 'circle')
+        coordinates = data.get('coordinates', {})
+
+        if not room_id or not user_id:
+            return {"success": False, "error": "room and user_id required"}
+
+        if not coordinates:
+            return {"success": False, "error": "coordinates required"}
+
+        # Get user presence for username and color
+        username = "Unknown"
+        color = "#FF6B6B"  # Default color
+
+        if room_id in room_users and user_id in room_users[room_id]:
+            presence = room_users[room_id][user_id]
+            username = presence.username
+            color = presence.color
+
+        # Create annotation with 10-second expiry
+        import uuid
+        now = datetime.utcnow()
+        expires_at = now + timedelta(seconds=10)
+
+        annotation = Annotation(
+            annotation_id=str(uuid.uuid4()),
+            user_id=user_id,
+            username=username,
+            color=color,
+            annotation_type=annotation_type,
+            coordinates=coordinates,
+            created_at=now,
+            expires_at=expires_at
+        )
+
+        # Store annotation
+        if room_id not in annotations:
+            annotations[room_id] = []
+
+        annotations[room_id].append(annotation.to_dict())
+
+        logger.info(f"Annotation created: {annotation_type} by {username} in room {room_id}, expires in 10s")
+
+        # Broadcast annotation to all users in the room
+        await sio.emit('annotation_created', {
+            **annotation.to_dict(),
+            'timestamp': now.isoformat()
+        }, room=room_id)
+
+        return {
+            "success": True,
+            "annotation_id": annotation.annotation_id,
+            "expires_at": expires_at.isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to handle annotation_draw: {e}", exc=e)
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/annotations/{room_id}")
+async def get_room_annotations(room_id: str):
+    """
+    Get all active annotations in a room.
+    Feature #411: View active temporary annotations
+    """
+    try:
+        room_annotations = annotations.get(room_id, [])
+
+        # Filter out expired ones
+        now = datetime.utcnow()
+        active = [
+            ann for ann in room_annotations
+            if datetime.fromisoformat(ann['expires_at']) > now
+        ]
+
+        return {
+            "room": room_id,
+            "annotations": active,
+            "count": len(active)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get annotations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
