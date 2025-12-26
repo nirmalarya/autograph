@@ -284,7 +284,12 @@ class Comment(Base):
     position_x = Column(Float)
     position_y = Column(Float)
     element_id = Column(String(255))  # TLDraw element ID
-    
+
+    # Text selection (for note comments)
+    text_start = Column(Integer)  # Starting character position in note
+    text_end = Column(Integer)  # Ending character position in note
+    text_content = Column(Text)  # Selected text content for reference
+
     # Comment metadata
     is_resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True))

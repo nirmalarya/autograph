@@ -10,9 +10,10 @@ interface TLDrawCanvasProps {
   theme?: 'light' | 'dark';
   diagramId?: string;
   onAddComment?: (elementId: string, position: { x: number; y: number }) => void;
+  onAddNoteComment?: (elementId: string, textStart: number, textEnd: number, textContent: string) => void;
 }
 
-export default function TLDrawCanvas({ initialData, onSave, theme = 'light', diagramId, onAddComment }: TLDrawCanvasProps) {
+export default function TLDrawCanvas({ initialData, onSave, theme = 'light', diagramId, onAddComment, onAddNoteComment }: TLDrawCanvasProps) {
   const [mounted, setMounted] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
   const performanceMonitorRef = useRef<number | null>(null);
@@ -158,6 +159,35 @@ export default function TLDrawCanvas({ initialData, onSave, theme = 'light', dia
               const bounds = editor.getShapePageBounds(shape.id);
               if (bounds && onAddComment) {
                 onAddComment(shape.id, { x: bounds.x, y: bounds.y });
+              }
+            }
+          },
+        },
+        'add-note-comment': {
+          id: 'add-note-comment',
+          label: 'Comment on Note Selection',
+          readonlyOk: false,
+          kbd: 'shift+c',
+          onSelect(source: any) {
+            const selectedShapes = editor.getSelectedShapes();
+            if (selectedShapes.length > 0) {
+              const shape = selectedShapes[0];
+
+              // Check if it's a note shape
+              if (shape.type === 'note') {
+                // Get the text selection from the note
+                // TLDraw notes have text content in shape.props.text
+                const text = (shape.props as any)?.text || '';
+
+                // For now, use whole text as selection
+                // In a real implementation, you'd capture the actual text selection
+                const textStart = 0;
+                const textEnd = text.length;
+                const textContent = text;
+
+                if (onAddNoteComment && textContent) {
+                  onAddNoteComment(shape.id, textStart, textEnd, textContent);
+                }
               }
             }
           },

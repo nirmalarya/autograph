@@ -3914,6 +3914,9 @@ class CreateCommentRequest(BaseModel):
     position_x: Optional[float] = None  # For canvas comments
     position_y: Optional[float] = None
     element_id: Optional[str] = None  # TLDraw element ID
+    text_start: Optional[int] = None  # For note text selection
+    text_end: Optional[int] = None  # For note text selection
+    text_content: Optional[str] = None  # Selected text content
     is_private: Optional[bool] = False  # Private comments visible only to team
 
 class UpdateCommentRequest(BaseModel):
@@ -3930,6 +3933,9 @@ class CommentResponse(BaseModel):
     position_x: Optional[float] = None
     position_y: Optional[float] = None
     element_id: Optional[str] = None
+    text_start: Optional[int] = None  # For note text selection
+    text_end: Optional[int] = None  # For note text selection
+    text_content: Optional[str] = None  # Selected text content
     is_resolved: bool
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
@@ -4030,6 +4036,9 @@ async def get_comments(
             "position_x": comment.position_x,
             "position_y": comment.position_y,
             "element_id": comment.element_id,
+            "text_start": comment.text_start,
+            "text_end": comment.text_end,
+            "text_content": comment.text_content,
             "is_resolved": comment.is_resolved,
             "resolved_at": comment.resolved_at,
             "resolved_by": comment.resolved_by,
@@ -4104,6 +4113,9 @@ async def create_comment(
         position_x=comment_data.position_x,
         position_y=comment_data.position_y,
         element_id=comment_data.element_id,
+        text_start=comment_data.text_start,
+        text_end=comment_data.text_end,
+        text_content=comment_data.text_content,
         is_private=comment_data.is_private or False
     )
     
