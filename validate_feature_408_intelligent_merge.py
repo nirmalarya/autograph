@@ -104,17 +104,24 @@ async def test_intelligent_merge():
                     state_dict[element_id] = {}
 
                 # Merge properties from operation
-                if 'operation_type' in op_data:
-                    if op_data['operation_type'] == 'move' and 'new_value' in op_data:
-                        if 'x' in op_data['new_value']:
-                            state_dict[element_id]['x'] = op_data['new_value']['x']
-                        if 'y' in op_data['new_value']:
-                            state_dict[element_id]['y'] = op_data['new_value']['y']
-                    elif op_data['operation_type'] == 'resize' and 'new_value' in op_data:
-                        if 'width' in op_data['new_value']:
-                            state_dict[element_id]['width'] = op_data['new_value']['width']
-                        if 'height' in op_data['new_value']:
-                            state_dict[element_id]['height'] = op_data['new_value']['height']
+                if 'operation_type' in op_data and 'new_value' in op_data:
+                    new_value = op_data['new_value']
+                    operation_type = op_data['operation_type']
+
+                    if operation_type == 'move':
+                        if 'x' in new_value:
+                            state_dict[element_id]['x'] = new_value['x']
+                        if 'y' in new_value:
+                            state_dict[element_id]['y'] = new_value['y']
+                    elif operation_type == 'resize':
+                        if 'width' in new_value:
+                            state_dict[element_id]['width'] = new_value['width']
+                        if 'height' in new_value:
+                            state_dict[element_id]['height'] = new_value['height']
+                    elif operation_type == 'merged':
+                        # For merged operations, update all properties from new_value
+                        if isinstance(new_value, dict):
+                            state_dict[element_id].update(new_value)
         return handler
 
     # Set up event handlers
@@ -184,19 +191,20 @@ async def test_intelligent_merge():
         print(f"User A received: {len(updates_a)} updates")
         print(f"User B received: {len(updates_b)} updates")
 
-        # Test 1: Both operations should be in the updates
+        # Test 1: Check for move and merged operations (intelligent merge)
         move_ops = [u for u in all_updates if isinstance(u, dict) and
-                   u.get('operation_type') == 'move' or
-                   (u.get('data', {}).get('operation_type') == 'move')]
-        resize_ops = [u for u in all_updates if isinstance(u, dict) and
-                     u.get('operation_type') == 'resize' or
-                     (u.get('data', {}).get('operation_type') == 'resize')]
+                   (u.get('operation_type') == 'move' or
+                    u.get('data', {}).get('operation_type') == 'move')]
+        merged_ops = [u for u in all_updates if isinstance(u, dict) and
+                     (u.get('operation_type') == 'merged' or
+                      u.get('data', {}).get('operation_type') == 'merged')]
 
         print(f"\nMove operations found: {len(move_ops)}")
-        print(f"Resize operations found: {len(resize_ops)}")
+        print(f"Merged operations found: {len(merged_ops)}")
 
-        test1_pass = len(move_ops) > 0 and len(resize_ops) > 0
-        print(f"\nTest 1: Both operations applied - {'✓ PASS' if test1_pass else '✗ FAIL'}")
+        # With intelligent merge: we should see 1 move operation, then 1 merged operation
+        test1_pass = len(move_ops) > 0 and len(merged_ops) > 0
+        print(f"\nTest 1: Operations applied (move + merged) - {'✓ PASS' if test1_pass else '✗ FAIL'}")
 
         # Test 2: Check final state convergence
         print(f"\nFinal state User A: {final_state_a}")
