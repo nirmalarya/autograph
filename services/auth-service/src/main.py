@@ -27,6 +27,7 @@ from .models import User, RefreshToken, PasswordResetToken, AuditLog, EmailVerif
 from .saml_handler import SAMLHandler
 from .gdpr_routes import router as gdpr_router
 from .push_routes import router as push_router
+from .scim_routes import router as scim_router
 import redis
 import secrets
 import pyotp
@@ -302,6 +303,7 @@ app = FastAPI(
 # Include GDPR compliance routes
 app.include_router(gdpr_router)
 app.include_router(push_router, prefix="/push")
+app.include_router(scim_router)
 
 # CORS Middleware
 from fastapi.middleware.cors import CORSMiddleware

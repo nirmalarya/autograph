@@ -33,6 +33,11 @@ class User(Base):
     # SSO fields
     sso_provider = Column(String(50))  # microsoft, okta, onelogin
     sso_id = Column(String(255))
+
+    # SCIM fields
+    scim_external_id = Column(String(255))  # External ID from IdP
+    scim_active = Column(Boolean, default=True)  # SCIM active status
+    scim_meta = Column(JSONB, default={})  # SCIM metadata (resourceType, location, etc.)
     
     # MFA fields
     mfa_enabled = Column(Boolean, default=False, nullable=False)
@@ -64,6 +69,7 @@ class User(Base):
     __table_args__ = (
         Index('idx_users_email', 'email'),
         Index('idx_users_sso', 'sso_provider', 'sso_id'),
+        Index('idx_users_scim_external_id', 'scim_external_id'),
     )
 
 
@@ -919,4 +925,26 @@ class PushSubscription(Base):
         Index('idx_push_subscriptions_user', 'user_id'),
         Index('idx_push_subscriptions_endpoint', 'endpoint', unique=True, postgresql_using='hash'),
         Index('idx_push_subscriptions_active', 'user_id', 'is_active'),
+    )
+
+
+class SCIMToken(Base):
+    """SCIM API tokens for provisioning."""
+    __tablename__ = "scim_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    token_hash = Column(String(255), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    scopes = Column(JSON, default=["read", "write"])
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_used_at = Column(DateTime(timezone=True))
+    expires_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index('idx_scim_tokens_hash', 'token_hash'),
+        Index('idx_scim_tokens_active', 'is_active'),
     )
