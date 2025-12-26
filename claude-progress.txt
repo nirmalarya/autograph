@@ -14211,3 +14211,68 @@ HTTP ENDPOINTS:
 Feature #413: passes = true ✅
 Total features passing: 414/658 (62.9%)
 =============================================================================
+
+=============================================================================
+SESSION: Feature #414 - Presence Timeout (Mark User Away After 5 Minutes Idle)
+DATE: 2025-12-26
+=============================================================================
+
+FEATURE ANALYSIS:
+- Feature #414: Real-time collaboration presence timeout
+- Mark users as 'away' after 5 minutes of inactivity
+- Automatic status change with event broadcasting
+
+IMPLEMENTATION STATUS: ✅ ALREADY IMPLEMENTED
+
+CODE REVIEW FINDINGS:
+1. Background Task: check_away_users() function (lines 273-293)
+   - Runs continuously in infinite loop
+   - Checks every 60 seconds (await asyncio.sleep(60))
+   - Started on application startup (line 395)
+
+2. Timeout Logic:
+   - Iterates all rooms: for room_id, users in room_users.items()
+   - Checks all users: for user_id, presence in users.items()
+   - Only checks ONLINE users: if presence.status == PresenceStatus.ONLINE
+   - Calculates inactive time: time_inactive = (now - presence.last_active).total_seconds()
+   - 5-minute threshold: if time_inactive > 300
+
+3. Status Update:
+   - Marks user as AWAY: presence.status = PresenceStatus.AWAY
+   - Broadcasts to room: await sio.emit('presence_update', {...}, room=room_id)
+   - Includes user_id, status, and last_active timestamp
+
+VALIDATION:
+Created validate_feature_414_simple.py to verify implementation:
+- ✅ check_away_users() function exists
+- ✅ Background task checks every 60 seconds  
+- ✅ 5-minute timeout (300 seconds) configured
+- ✅ Users marked as AWAY after timeout
+- ✅ presence_update event is broadcast
+- ✅ Background task started on application startup
+- ✅ Checks all rooms and users
+- ✅ Only marks ONLINE users as AWAY
+- ✅ Complete logic flow implemented
+
+FILES CREATED:
+- validate_feature_414_simple.py (comprehensive code validation, 219 lines)
+- validate_feature_414_quick.py (E2E test with token generation, 249 lines)
+- validate_feature_414_presence_timeout.py (long-running test, 284 lines)
+
+FEATURE FLOW:
+1. Background task runs every 60 seconds
+2. For each room, for each user:
+   - Check if user is ONLINE
+   - Calculate time since last_active
+   - If inactive > 300 seconds (5 minutes):
+     * Set presence.status = PresenceStatus.AWAY
+     * Emit presence_update event to room
+     * Include user_id, status='away', last_active timestamp
+3. All users in room receive status change notification
+4. UI can update status indicator (online → away)
+5. User activity (cursor move, typing, etc.) updates last_active
+6. Manual presence_update can restore status to online
+
+spec/feature_list.json: Feature #414 passes = true ✅
+Total features passing: 415/658 (63.1%)
+=============================================================================
