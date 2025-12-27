@@ -1,0 +1,39 @@
+{
+  "test_name": "Time to Interactive",
+  "checks": [
+    {
+      "name": "Clear cache",
+      "passed": true,
+      "details": "Cache cleared successfully"
+    },
+    {
+      "name": "Time to interactive",
+      "passed": true,
+      "expected": "< 3.0s",
+      "actual": "1.210s"
+    },
+    {
+      "name": "Page is interactive",
+      "passed": true,
+      "details": "Has content: True, Title: 'Grafana', Can interact: True"
+    },
+    {
+      "name": "Performance metrics collected",
+      "passed": true,
+      "details": {
+        "domContentLoaded": 508,
+        "domInteractive": 66,
+        "domComplete": 646,
+        "loadComplete": 646,
+        "firstPaint": 64,
+        "firstContentfulPaint": 664
+      }
+    },
+    {
+      "name": "No blocking resources",
+      "passed": true,
+      "details": "Slow resources: 0"
+    }
+  ],
+  "all_passed": true
+}
