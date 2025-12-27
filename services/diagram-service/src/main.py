@@ -26,7 +26,7 @@ from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, gene
 
 # Import database and models
 from .database import get_db
-from .models import File as FileModel, User, Version, Folder, Share, Template, Comment, Mention, CommentReaction, CommentRead, CommentHistory, CommentAttachment, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag, AuditLog
+from .models import File as FileModel, User, Version, Folder, FolderPermission, Share, Template, Comment, Mention, CommentReaction, CommentRead, CommentHistory, CommentAttachment, ExportHistory, Team, Icon, IconCategory, UserRecentIcon, UserFavoriteIcon, CommentFlag, AuditLog
 from .email_service import get_email_service
 
 load_dotenv()
@@ -2418,6 +2418,269 @@ async def get_folder_breadcrumbs(
             error=str(e)
         )
         raise HTTPException(status_code=500, detail=f"Failed to get folder breadcrumbs: {str(e)}")
+
+
+# Pydantic models for folder permissions
+class FolderPermissionRequest(BaseModel):
+    """Request model for adding/updating folder permissions."""
+    user_id: str
+    permission: str = "view"  # view or edit
+
+
+class FolderPermissionUpdate(BaseModel):
+    """Request model for updating folder permissions."""
+    permission: str  # view or edit
+
+
+@app.post("/folders/{folder_id}/permissions", status_code=201)
+async def add_folder_permission(
+    request: Request,
+    folder_id: str,
+    permission_request: FolderPermissionRequest,
+    db: Session = Depends(get_db)
+):
+    """Add a user permission to a folder."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+
+    # Get user ID from header (folder owner)
+    owner_id = request.headers.get("X-User-ID")
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    logger.info(
+        "Adding folder permission",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        owner_id=owner_id,
+        target_user_id=permission_request.user_id,
+        permission=permission_request.permission
+    )
+
+    try:
+        # Verify folder exists and requester is the owner
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == owner_id
+        ).first()
+
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found or you don't have permission")
+
+        # Verify target user exists
+        target_user = db.query(User).filter(User.id == permission_request.user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Target user not found")
+
+        # Validate permission type
+        if permission_request.permission not in ["view", "edit"]:
+            raise HTTPException(status_code=400, detail="Permission must be 'view' or 'edit'")
+
+        # Check if permission already exists
+        existing = db.query(FolderPermission).filter(
+            FolderPermission.folder_id == folder_id,
+            FolderPermission.user_id == permission_request.user_id
+        ).first()
+
+        if existing:
+            # Update existing permission
+            existing.permission = permission_request.permission
+            existing.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(existing)
+            permission_id = existing.id
+        else:
+            # Create new permission
+            new_permission = FolderPermission(
+                id=str(uuid.uuid4()),
+                folder_id=folder_id,
+                user_id=permission_request.user_id,
+                permission=permission_request.permission,
+                granted_by=owner_id
+            )
+            db.add(new_permission)
+            db.commit()
+            db.refresh(new_permission)
+            permission_id = new_permission.id
+
+        # Metrics
+        request_duration.labels(method="POST", path="/folders/{id}/permissions").observe(time.time() - start_time)
+        request_count.labels(method="POST", path="/folders/{id}/permissions", status_code=201).inc()
+
+        logger.info(
+            "Folder permission added successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id,
+            permission_id=permission_id
+        )
+
+        return {
+            "id": permission_id,
+            "folder_id": folder_id,
+            "user_id": permission_request.user_id,
+            "permission": permission_request.permission,
+            "granted_by": owner_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to add folder permission",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to add folder permission: {str(e)}")
+
+
+@app.get("/folders/{folder_id}/permissions")
+async def list_folder_permissions(
+    request: Request,
+    folder_id: str,
+    db: Session = Depends(get_db)
+):
+    """List all permissions for a folder."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+
+    # Get user ID from header
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    logger.info(
+        "Listing folder permissions",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        user_id=user_id
+    )
+
+    try:
+        # Verify folder exists and user has access (owner or has permission)
+        folder = db.query(Folder).filter(Folder.id == folder_id).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        # Check if user is owner or has permission
+        if folder.owner_id != user_id:
+            has_permission = db.query(FolderPermission).filter(
+                FolderPermission.folder_id == folder_id,
+                FolderPermission.user_id == user_id
+            ).first()
+            if not has_permission:
+                raise HTTPException(status_code=403, detail="You don't have access to this folder")
+
+        # Get all permissions
+        permissions = db.query(FolderPermission).filter(
+            FolderPermission.folder_id == folder_id
+        ).all()
+
+        result = []
+        for perm in permissions:
+            user = db.query(User).filter(User.id == perm.user_id).first()
+            result.append({
+                "id": perm.id,
+                "user_id": perm.user_id,
+                "user_email": user.email if user else None,
+                "permission": perm.permission,
+                "granted_by": perm.granted_by,
+                "created_at": perm.created_at.isoformat() if perm.created_at else None
+            })
+
+        # Metrics
+        request_duration.labels(method="GET", path="/folders/{id}/permissions").observe(time.time() - start_time)
+        request_count.labels(method="GET", path="/folders/{id}/permissions", status_code=200).inc()
+
+        logger.info(
+            "Folder permissions listed successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id,
+            count=len(result)
+        )
+
+        return {"permissions": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to list folder permissions",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to list folder permissions: {str(e)}")
+
+
+@app.delete("/folders/{folder_id}/permissions/{user_id}")
+async def remove_folder_permission(
+    request: Request,
+    folder_id: str,
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """Remove a user's permission from a folder."""
+    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    start_time = time.time()
+
+    # Get owner ID from header
+    owner_id = request.headers.get("X-User-ID")
+    if not owner_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    logger.info(
+        "Removing folder permission",
+        correlation_id=correlation_id,
+        folder_id=folder_id,
+        owner_id=owner_id,
+        target_user_id=user_id
+    )
+
+    try:
+        # Verify folder exists and requester is the owner
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.owner_id == owner_id
+        ).first()
+
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found or you don't have permission")
+
+        # Find and delete permission
+        permission = db.query(FolderPermission).filter(
+            FolderPermission.folder_id == folder_id,
+            FolderPermission.user_id == user_id
+        ).first()
+
+        if not permission:
+            raise HTTPException(status_code=404, detail="Permission not found")
+
+        db.delete(permission)
+        db.commit()
+
+        # Metrics
+        request_duration.labels(method="DELETE", path="/folders/{id}/permissions/{user_id}").observe(time.time() - start_time)
+        request_count.labels(method="DELETE", path="/folders/{id}/permissions/{user_id}", status_code=200).inc()
+
+        logger.info(
+            "Folder permission removed successfully",
+            correlation_id=correlation_id,
+            folder_id=folder_id,
+            user_id=user_id
+        )
+
+        return {"message": "Permission removed successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "Failed to remove folder permission",
+            correlation_id=correlation_id,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to remove folder permission: {str(e)}")
 
 
 @app.put("/{diagram_id}/folder")

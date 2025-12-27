@@ -164,6 +164,34 @@ class Folder(Base):
     )
 
 
+class FolderPermission(Base):
+    """Folder permissions table for access control."""
+    __tablename__ = "folder_permissions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    folder_id = Column(String(36), ForeignKey("folders.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Permission settings
+    permission = Column(String(20), default="view", nullable=False)  # view, edit
+    granted_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    folder = relationship("Folder", backref="permissions")
+    user = relationship("User", foreign_keys=[user_id], backref="folder_permissions")
+    granted_by_user = relationship("User", foreign_keys=[granted_by])
+
+    __table_args__ = (
+        Index('idx_folder_permissions_folder', 'folder_id'),
+        Index('idx_folder_permissions_user', 'user_id'),
+        Index('idx_folder_permissions_granted_by', 'granted_by'),
+    )
+
+
 class File(Base):
     """Diagram/file table."""
     __tablename__ = "files"
