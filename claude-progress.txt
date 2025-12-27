@@ -23542,3 +23542,64 @@ NOTES:
 - Fixed bugs improve reliability of existing features #578 (create folder) and related
 - Folder rename was already implemented, just needed verification and bug fixes
 
+
+========================================
+SESSION: Feature #581 Implementation
+========================================
+Timestamp: $(date)
+
+1. Feature #581: Organization: Folders: delete folder
+   STATUS: ✅ IMPLEMENTED AND VERIFIED
+   
+   Endpoint: DELETE /folders/{folder_id}
+   
+   Implementation details:
+   - Modified delete_folder function to soft-delete all contents before deleting folder
+   - Recursively handles nested subfolders
+   - Soft-deletes all files (sets is_deleted=true, deleted_at=timestamp)
+   - Deletes the folder itself after moving contents to trash
+   - Returns count of files moved to trash
+   
+   Key changes:
+   - Changed from "must be empty" to "move contents to trash"
+   - Added recursive subfolder handling
+   - Soft-delete all files with is_deleted and deleted_at fields
+   - Files moved to trash: returned in response
+   
+   Files modified:
+   - services/diagram-service/src/main.py (delete_folder function)
+
+TESTS CREATED:
+- test_feature_581_direct.py (direct service test)
+- validate_feature_581_final.py (comprehensive E2E with DB verification)
+- create_test_user_581.sql (test user setup)
+
+VERIFICATION:
+✅ Folder deletion works
+✅ All files moved to trash (soft-deleted)
+✅ is_deleted=true set on all files
+✅ deleted_at timestamp set on all files
+✅ Folder removed from database
+✅ Soft-deleted files filtered from GET requests
+✅ Nested subfolders handled correctly
+
+REGRESSION CHECK:
+✅ No regressions - baseline intact (591/658)
+
+DOCKER:
+✅ Rebuilt diagram-service image with changes
+✅ Service restarted and tested
+
+ENDING STATUS:
+- Features passing: 591/658 (89.8%)
+- Features gained: +1
+- Remaining: 67 features
+
+TIME: ~35 minutes
+DIFFICULTY: Medium (required understanding soft-delete pattern and Docker rebuild)
+
+NOTES:
+- Feature requirement: "Verify contents moved to trash" ✅
+- Implements proper soft-delete pattern
+- Handles nested folder structures recursively
+- Returns useful metrics (files_moved_to_trash count)

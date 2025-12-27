@@ -2253,61 +2253,87 @@ async def delete_folder(
     folder_id: str,
     db: Session = Depends(get_db)
 ):
-    """Delete a folder (must be empty)."""
+    """Delete a folder and move all contents to trash."""
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     start_time = time.time()
-    
+
     # Get user ID from header
     user_id = request.headers.get("X-User-ID")
     if not user_id:
         raise HTTPException(status_code=401, detail="User ID required")
-    
+
     logger.info(
         "Deleting folder",
         correlation_id=correlation_id,
         folder_id=folder_id,
         user_id=user_id
     )
-    
+
     try:
         # Get folder
         folder = db.query(Folder).filter(
             Folder.id == folder_id,
             Folder.owner_id == user_id
         ).first()
-        
+
         if not folder:
             raise HTTPException(status_code=404, detail="Folder not found")
-        
-        # Check if folder has subfolders
-        subfolder_count = db.query(Folder).filter(Folder.parent_id == folder_id).count()
-        if subfolder_count > 0:
-            raise HTTPException(status_code=400, detail="Cannot delete folder with subfolders")
-        
-        # Check if folder has files
-        file_count = db.query(FileModel).filter(
+
+        # Recursively soft-delete all subfolders
+        def soft_delete_subfolders(parent_folder_id: str):
+            """Recursively soft-delete all subfolders and their contents."""
+            subfolders = db.query(Folder).filter(Folder.parent_id == parent_folder_id).all()
+            for subfolder in subfolders:
+                # First, recursively handle nested subfolders
+                soft_delete_subfolders(subfolder.id)
+
+                # Soft-delete all files in this subfolder
+                files_in_subfolder = db.query(FileModel).filter(
+                    FileModel.folder_id == subfolder.id,
+                    FileModel.is_deleted == False
+                ).all()
+                for file in files_in_subfolder:
+                    file.is_deleted = True
+                    file.deleted_at = datetime.utcnow()
+
+                # Delete the subfolder itself
+                db.delete(subfolder)
+
+        # First, recursively handle all subfolders
+        soft_delete_subfolders(folder_id)
+
+        # Soft-delete all files in the folder
+        files = db.query(FileModel).filter(
             FileModel.folder_id == folder_id,
             FileModel.is_deleted == False
-        ).count()
-        if file_count > 0:
-            raise HTTPException(status_code=400, detail="Cannot delete folder with files")
-        
-        # Delete folder
+        ).all()
+
+        files_moved = 0
+        for file in files:
+            file.is_deleted = True
+            file.deleted_at = datetime.utcnow()
+            files_moved += 1
+
+        # Delete the folder itself
         db.delete(folder)
         db.commit()
-        
+
         # Metrics
         request_duration.labels(method="DELETE", path="/folders/{id}").observe(time.time() - start_time)
         request_count.labels(method="DELETE", path="/folders/{id}", status_code=200).inc()
-        
+
         logger.info(
             "Folder deleted successfully",
             correlation_id=correlation_id,
-            folder_id=folder_id
+            folder_id=folder_id,
+            files_moved_to_trash=files_moved
         )
-        
-        return {"message": "Folder deleted successfully"}
-        
+
+        return {
+            "message": "Folder deleted successfully",
+            "files_moved_to_trash": files_moved
+        }
+
     except HTTPException:
         raise
     except Exception as e:
