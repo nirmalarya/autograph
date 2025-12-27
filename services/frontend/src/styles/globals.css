@@ -295,21 +295,21 @@
   }
   
   .alert-success {
-    @apply alert bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300;
+    @apply alert bg-green-50 border-green-200 dark:bg-green-900 dark:bg-opacity-20 dark:border-green-800 dark:text-green-300;
     color: hsl(var(--success-color));  /* WCAG AA compliant green text */
   }
   
   .alert-error {
-    @apply alert bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300;
+    @apply alert bg-red-50 border-red-200 dark:bg-red-900 dark:bg-opacity-20 dark:border-red-800 dark:text-red-300;
     color: hsl(var(--error-color));  /* WCAG AA compliant red text */
   }
   
   .alert-warning {
-    @apply alert bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300;
+    @apply alert bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900 dark:bg-opacity-20 dark:border-yellow-800 dark:text-yellow-300;
   }
   
   .alert-info {
-    @apply alert bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300;
+    @apply alert bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900 dark:bg-opacity-20 dark:border-blue-800 dark:text-blue-300;
   }
   
   /* Tooltip Styles */
@@ -773,7 +773,7 @@
   }
   
   .icon-button-primary {
-    @apply icon-button hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-600 dark:hover:text-blue-400;
+    @apply icon-button hover:bg-blue-50 dark:hover:bg-blue-900 dark:hover:bg-opacity-20 hover:text-blue-600 dark:hover:text-blue-400;
   }
   
   /* Loading States */
@@ -787,7 +787,7 @@
   
   .loading-shimmer::after {
     content: '';
-    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer;
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white via-opacity-20 to-transparent animate-shimmer;
   }
   
   @keyframes shimmer {
