@@ -2,18 +2,23 @@ import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import '../src/styles/globals.css';
 import { ThemeProvider } from './components/ThemeProvider';
-import PWAInstaller from './components/PWAInstaller';
-import PushNotifications from './components/PushNotifications';
-import OfflineStatusBanner from './components/OfflineStatusBanner';
 import ErrorBoundary from './components/ErrorBoundary';
 import PageTransition from './components/PageTransition';
-import WelcomeTour from './components/WelcomeTour';
-import InteractiveTutorial from './components/InteractiveTutorial';
-import GlobalHelpCenter from './components/GlobalHelpCenter';
-import { ContextualTooltipsProvider, ContextualTooltipsSettings, ContextualTooltipsToggle } from './components/ContextualTooltips';
-import { NotificationProvider, NotificationCenter } from './components/NotificationSystem';
+import { ContextualTooltipsProvider } from './components/ContextualTooltips';
+import { NotificationProvider } from './components/NotificationSystem';
+import {
+  PWAInstaller,
+  PushNotifications,
+  OfflineStatusBanner,
+  WelcomeTour,
+  InteractiveTutorial,
+  GlobalHelpCenter,
+  ContextualTooltipsSettings,
+  ContextualTooltipsToggle,
+  NotificationCenter,
+} from './components/DynamicComponents';
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ['latin'], display: 'swap' });
 
 // Branding configuration - supports white-label branding via environment variables
 const isCustomBranding = process.env.NEXT_PUBLIC_ENABLE_CUSTOM_BRANDING === 'true';

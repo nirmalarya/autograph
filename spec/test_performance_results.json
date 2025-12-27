@@ -1,0 +1,44 @@
+{
+  "test_name": "Initial Load Performance",
+  "checks": [
+    {
+      "name": "Clear cache",
+      "passed": true,
+      "details": "Cache cleared successfully"
+    },
+    {
+      "name": "Initial load time",
+      "passed": true,
+      "expected": "< 2.0s",
+      "actual": "0.448s"
+    },
+    {
+      "name": "Time to interactive",
+      "passed": true,
+      "expected": "< 3.0s",
+      "actual": "1.104s"
+    },
+    {
+      "name": "Critical content rendered",
+      "passed": true,
+      "details": "Page has content: True, Title: 'Grafana'"
+    },
+    {
+      "name": "Performance metrics collected",
+      "passed": true,
+      "details": {
+        "domContentLoaded": 439,
+        "domComplete": 548,
+        "loadComplete": 548,
+        "firstPaint": 68,
+        "firstContentfulPaint": 564
+      }
+    },
+    {
+      "name": "No JavaScript errors",
+      "passed": true,
+      "details": "Errors found: 0"
+    }
+  ],
+  "all_passed": true
+}

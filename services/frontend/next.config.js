@@ -6,7 +6,12 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '10mb',
     },
+    optimizePackageImports: ['lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-select'],
   },
+  // Enable compression
+  compress: true,
+  // Production optimization
+  productionBrowserSourceMaps: false,
   // Optimize code splitting
   webpack: (config, { isServer }) => {
     if (!isServer) {
@@ -121,8 +126,10 @@ const nextConfig = {
       },
     ];
   },
-  // Image optimization
+  // Image optimization - merge with earlier config
   images: {
+    formats: ['image/avif', 'image/webp'],
+    minimumCacheTTL: 60,
     domains: ['localhost'],
     remotePatterns: [
       {
