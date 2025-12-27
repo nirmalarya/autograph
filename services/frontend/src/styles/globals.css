@@ -1323,3 +1323,469 @@
     }
   }
 }
+
+/* ============================================================================
+   TABLET RESPONSIVE DESIGN (Feature #600)
+   ============================================================================
+   Optimized layouts and interactions for tablet devices (768px - 1024px).
+   Balances the larger screen real estate of tablets with touch interactions.
+   Uses Tailwind's md (768px) and lg (1024px) breakpoints.
+   ============================================================================ */
+
+@layer utilities {
+  /* Tablet viewport optimization (768px - 1024px) */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    /* ===== TYPOGRAPHY ===== */
+    /* Optimize text sizes for tablet reading distance */
+    h1 {
+      @apply text-5xl;
+      line-height: 1.1;
+    }
+
+    h2 {
+      @apply text-4xl;
+      line-height: 1.2;
+    }
+
+    h3 {
+      @apply text-3xl;
+      line-height: 1.3;
+    }
+
+    h4 {
+      @apply text-2xl;
+      line-height: 1.4;
+    }
+
+    h5 {
+      @apply text-xl;
+      line-height: 1.5;
+    }
+
+    h6 {
+      @apply text-lg;
+      line-height: 1.5;
+    }
+
+    p {
+      @apply text-base leading-relaxed;
+      max-width: 65ch; /* Optimal line length for reading */
+    }
+
+    /* ===== LAYOUT & SPACING ===== */
+    /* Optimize container padding for tablet */
+    .container-padding {
+      @apply px-8 py-10;
+    }
+
+    .container-padding-sm {
+      @apply px-6 py-8;
+    }
+
+    .container-padding-lg {
+      @apply px-10 py-12;
+    }
+
+    /* Section spacing optimized for tablet */
+    .section-spacing {
+      @apply mb-12;
+    }
+
+    .section-spacing-sm {
+      @apply mb-8;
+    }
+
+    .section-spacing-lg {
+      @apply mb-16;
+    }
+
+    /* Grid layouts - 2-3 columns work well on tablets */
+    .tablet-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    .tablet-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+
+    /* ===== INTERACTIVE ELEMENTS ===== */
+    /* Tablet-optimized touch targets (slightly smaller than phone) */
+    button,
+    [role="button"],
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"] {
+      min-height: 44px !important;
+      min-width: 44px !important;
+      padding: 10px 20px !important;
+      font-size: 15px !important;
+    }
+
+    /* Form inputs optimized for tablet */
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="search"],
+    input[type="tel"],
+    input[type="url"],
+    input[type="number"],
+    textarea,
+    select {
+      min-height: 44px !important;
+      padding: 10px 16px !important;
+      font-size: 15px !important;
+    }
+
+    /* Links optimized for tablet touch */
+    a:not(p a):not(span a):not(li a) {
+      min-height: 44px !important;
+      padding: 10px 16px !important;
+    }
+
+    /* ===== NAVIGATION ===== */
+    /* Tablet navigation can show more items horizontally */
+    nav,
+    [role="navigation"] {
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+    }
+
+    nav a,
+    nav button,
+    [role="navigation"] a,
+    [role="navigation"] button {
+      min-height: 44px !important;
+      padding: 10px 20px !important;
+      font-size: 15px !important;
+      margin: 0 0.5rem;
+    }
+
+    /* ===== CARDS & PANELS ===== */
+    /* Cards look great in 2-3 column layouts on tablets */
+    .card {
+      @apply p-6;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-padding {
+      @apply p-8;
+    }
+
+    /* ===== MODALS & DIALOGS ===== */
+    /* Modals can be larger on tablets */
+    [role="dialog"],
+    .modal {
+      max-width: 90vw !important;
+      width: 600px !important;
+      padding: 2rem !important;
+    }
+
+    /* Modal close buttons - tablet optimized */
+    [role="dialog"] button[aria-label*="close"],
+    [role="dialog"] button[aria-label*="Close"] {
+      min-width: 44px !important;
+      min-height: 44px !important;
+      padding: 10px !important;
+    }
+
+    /* ===== TOOLBARS & MENUS ===== */
+    /* Toolbars can display more buttons on tablets */
+    [role="toolbar"],
+    .toolbar {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      padding: 1rem;
+    }
+
+    [role="toolbar"] button,
+    .toolbar button {
+      min-width: 44px !important;
+      min-height: 44px !important;
+      padding: 10px 14px !important;
+      margin: 0 !important;
+    }
+
+    /* Dropdown menus */
+    [role="menu"],
+    [role="listbox"] {
+      min-width: 250px !important;
+      max-width: 400px !important;
+    }
+
+    [role="menu"] [role="menuitem"],
+    [role="listbox"] [role="option"] {
+      min-height: 44px !important;
+      padding: 10px 16px !important;
+      font-size: 15px !important;
+    }
+
+    /* ===== TABS ===== */
+    /* Tabs work well horizontally on tablets */
+    [role="tablist"] {
+      display: flex;
+      flex-direction: row;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    [role="tab"] {
+      min-height: 44px !important;
+      min-width: 120px !important;
+      padding: 10px 20px !important;
+      font-size: 15px !important;
+      flex-shrink: 0;
+    }
+
+    /* ===== TABLES ===== */
+    /* Tables can show more columns on tablets */
+    table {
+      font-size: 14px !important;
+    }
+
+    th,
+    td {
+      padding: 12px 16px !important;
+    }
+
+    /* ===== FORMS ===== */
+    /* Form layouts can use 2 columns on tablets */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    .form-grid-full {
+      grid-column: 1 / -1;
+    }
+
+    /* ===== SIDEBARS ===== */
+    /* Sidebars can be shown on tablets (not collapsed) */
+    .sidebar {
+      display: block !important;
+      width: 280px !important;
+      min-width: 280px !important;
+    }
+
+    .main-content-with-sidebar {
+      margin-left: 280px !important;
+    }
+
+    /* ===== IMAGES & MEDIA ===== */
+    /* Images scale well on tablets */
+    img,
+    video {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* ===== LIST VIEWS ===== */
+    /* List items optimized for tablet */
+    [role="listitem"],
+    .list-item {
+      min-height: 60px !important;
+      padding: 16px 24px !important;
+      font-size: 15px !important;
+    }
+
+    /* ===== SEARCH & FILTERS ===== */
+    /* Search bars can be larger on tablets */
+    input[type="search"],
+    .search-input {
+      min-width: 400px !important;
+      max-width: 600px !important;
+      font-size: 15px !important;
+    }
+
+    /* Filter panels can be shown inline on tablets */
+    .filters {
+      display: flex !important;
+      flex-direction: row !important;
+      gap: 1rem !important;
+      flex-wrap: wrap !important;
+    }
+  }
+
+  /* ===== TABLET PORTRAIT (768px - 834px) ===== */
+  @media (min-width: 768px) and (max-width: 834px) and (orientation: portrait) {
+    /* Narrower tablet portrait - similar to iPad Mini/standard iPad */
+    .container {
+      max-width: 100% !important;
+      padding: 0 2rem !important;
+    }
+
+    /* Use 2-column grid primarily */
+    .tablet-grid-3 {
+      grid-template-columns: repeat(2, 1fr) !important;
+    }
+
+    /* Sidebar can be toggleable in portrait */
+    .sidebar {
+      width: 240px !important;
+      min-width: 240px !important;
+    }
+  }
+
+  /* ===== TABLET LANDSCAPE (835px - 1024px) ===== */
+  @media (min-width: 835px) and (max-width: 1024px) and (orientation: landscape) {
+    /* Wider tablet landscape - more like desktop */
+    .container {
+      max-width: 960px !important;
+      margin: 0 auto !important;
+      padding: 0 2rem !important;
+    }
+
+    /* Can use 3-4 column grids in landscape */
+    .tablet-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+    }
+
+    /* Sidebar is always visible in landscape */
+    .sidebar {
+      width: 300px !important;
+      min-width: 300px !important;
+    }
+
+    /* More horizontal navigation space */
+    nav,
+    [role="navigation"] {
+      padding: 1rem 3rem;
+    }
+  }
+
+  /* ===== TABLET-SPECIFIC UTILITY CLASSES ===== */
+  /* Show/hide elements based on tablet breakpoint */
+  .tablet-only {
+    display: none !important;
+  }
+
+  @media (min-width: 768px) and (max-width: 1024px) {
+    .tablet-only {
+      display: block !important;
+    }
+
+    .tablet-hidden {
+      display: none !important;
+    }
+  }
+
+  /* Tablet-optimized spacing */
+  .tablet-spacing {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      padding: 1.5rem !important;
+    }
+  }
+
+  .tablet-spacing-x {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      padding-left: 1.5rem !important;
+      padding-right: 1.5rem !important;
+    }
+  }
+
+  .tablet-spacing-y {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      padding-top: 1.5rem !important;
+      padding-bottom: 1.5rem !important;
+    }
+  }
+
+  /* Tablet-optimized flex layouts */
+  .tablet-flex-row {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      display: flex !important;
+      flex-direction: row !important;
+    }
+  }
+
+  .tablet-flex-col {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      display: flex !important;
+      flex-direction: column !important;
+    }
+  }
+
+  /* Tablet-optimized text alignment */
+  .tablet-text-center {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      text-align: center !important;
+    }
+  }
+
+  .tablet-text-left {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      text-align: left !important;
+    }
+  }
+
+  /* Tablet-optimized widths */
+  .tablet-w-full {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      width: 100% !important;
+    }
+  }
+
+  .tablet-w-1/2 {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      width: 50% !important;
+    }
+  }
+
+  .tablet-w-1/3 {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      width: 33.333333% !important;
+    }
+  }
+
+  .tablet-w-2/3 {
+    @media (min-width: 768px) and (max-width: 1024px) {
+      width: 66.666667% !important;
+    }
+  }
+
+  /* ===== TABLET PERFORMANCE OPTIMIZATIONS ===== */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    /* Optimize animations for tablet */
+    * {
+      will-change: auto !important; /* Prevent over-optimization */
+    }
+
+    /* Smooth scrolling on tablets */
+    html {
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Optimize touch interactions */
+    button,
+    a,
+    [role="button"] {
+      -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+      touch-action: manipulation;
+    }
+
+    /* Prevent zoom on inputs */
+    input,
+    select,
+    textarea {
+      font-size: 16px !important; /* Prevents iOS zoom */
+    }
+
+    /* Optimize scrollable areas */
+    .scrollable {
+      -webkit-overflow-scrolling: touch;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+  }
+}
