@@ -23475,3 +23475,70 @@ ENDING STATUS:
 
 TIME: ~30 minutes
 DIFFICULTY: Easy (verification only)
+
+================================================================================
+SESSION: Feature #580 - Organization Folders Rename
+DATE: 2025-12-26
+TIME: ~25 minutes
+================================================================================
+
+OBJECTIVE:
+Implement and verify Feature #580: Organization folders rename functionality
+
+STARTING STATUS:
+- Features passing: 589/658 (89.5%)
+- Feature #580: NOT passing
+- Baseline features: 589 (all passing)
+
+IMPLEMENTATION:
+
+1. Feature #580: Organization: Folders: rename folder
+   STATUS: ✅ IMPLEMENTED AND VERIFIED
+   
+   Endpoint: PUT /api/diagrams/folders/{folder_id}
+   Request body: {"name": "new folder name"}
+   
+   Implementation details:
+   - Folder rename via UpdateFolderRequest with name field
+   - Validates ownership before allowing rename
+   - Returns updated folder with new name
+   - Name persists correctly in database
+   
+   Critical bugs found and fixed:
+   - File.folder_id -> FileModel.folder_id (5 occurrences)
+   - File.updated_at -> FileModel.updated_at (1 occurrence)
+   
+   These bugs were causing 500 errors in:
+   - POST /folders (create folder)
+   - GET /folders/{id} (get folder)
+   - PUT /folders/{id} (update folder)
+   - DELETE /folders/{id} (delete folder)
+
+TESTS CREATED:
+- test_folder_rename_direct.py (direct diagram service test)
+- validate_feature_580_rename_folder.py (full E2E test via API gateway)
+- create_test_user_580.sql (test user setup)
+
+VERIFICATION:
+✅ Folder creation works
+✅ Folder rename works
+✅ Renamed name persists
+✅ All folder CRUD operations functional after bug fixes
+
+REGRESSION CHECK:
+✅ No regressions - baseline intact (589/589)
+✅ Bug fixes improve existing folder functionality
+
+ENDING STATUS:
+- Features passing: 590/658 (89.7%)
+- Features gained: +1
+- Remaining: 68 features
+
+TIME: ~25 minutes
+DIFFICULTY: Medium (found and fixed critical bugs)
+
+NOTES:
+- Discovered File vs FileModel naming collision bug affecting all folder operations
+- Fixed bugs improve reliability of existing features #578 (create folder) and related
+- Folder rename was already implemented, just needed verification and bug fixes
+
