@@ -1922,8 +1922,8 @@ async def create_folder(
         
         # Get file count
         file_count = db.query(FileModel).filter(
-            File.folder_id == folder.id,
-            File.is_deleted == False
+            FileModel.folder_id == folder.id,
+            FileModel.is_deleted == False
         ).count()
         
         # Metrics
@@ -2084,9 +2084,9 @@ async def get_folder(
         
         # Get files in folder
         files = db.query(FileModel).filter(
-            File.folder_id == folder_id,
-            File.is_deleted == False
-        ).order_by(File.updated_at.desc()).all()
+            FileModel.folder_id == folder_id,
+            FileModel.is_deleted == False
+        ).order_by(FileModel.updated_at.desc()).all()
         
         file_list = [{
             "id": f.id,
@@ -2209,8 +2209,8 @@ async def update_folder(
         
         # Get file count
         file_count = db.query(FileModel).filter(
-            File.folder_id == folder.id,
-            File.is_deleted == False
+            FileModel.folder_id == folder.id,
+            FileModel.is_deleted == False
         ).count()
         
         # Metrics
@@ -2286,8 +2286,8 @@ async def delete_folder(
         
         # Check if folder has files
         file_count = db.query(FileModel).filter(
-            File.folder_id == folder_id,
-            File.is_deleted == False
+            FileModel.folder_id == folder_id,
+            FileModel.is_deleted == False
         ).count()
         if file_count > 0:
             raise HTTPException(status_code=400, detail="Cannot delete folder with files")
