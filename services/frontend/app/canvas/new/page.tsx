@@ -7,13 +7,12 @@ import { API_ENDPOINTS } from '@/lib/api-config';
 export default function NewCanvasPage() {
   const router = useRouter();
   const [error, setError] = useState('');
-  const [creating, setCreating] = useState(true);
 
   useEffect(() => {
-    createNewCanvas();
+    createNewCanvasOptimistic();
   }, []);
 
-  const createNewCanvas = async () => {
+  const createNewCanvasOptimistic = async () => {
     try {
       // Check authentication
       const token = localStorage.getItem('access_token');
@@ -25,7 +24,21 @@ export default function NewCanvasPage() {
       // Decode JWT to get user info
       const payload = JSON.parse(atob(token.split('.')[1]));
 
-      // Create a new canvas diagram
+      // OPTIMISTIC UI: Create temporary ID and redirect immediately
+      const tempId = `temp-${Date.now()}`;
+
+      // Store temp diagram in sessionStorage for the canvas page to use
+      sessionStorage.setItem('optimistic-canvas', JSON.stringify({
+        id: tempId,
+        title: 'Untitled Canvas',
+        file_type: 'canvas',
+        pending: true,
+      }));
+
+      // Redirect immediately (no spinner!)
+      router.push(`/canvas/${tempId}`);
+
+      // Create diagram in background
       const response = await fetch(API_ENDPOINTS.diagrams.create, {
         method: 'POST',
         headers: {
@@ -34,7 +47,7 @@ export default function NewCanvasPage() {
         },
         body: JSON.stringify({
           title: 'Untitled Canvas',
-          type: 'canvas',
+          file_type: 'canvas',
           canvas_data: {
             // Empty TLDraw canvas initial state
             store: {},
@@ -55,15 +68,20 @@ export default function NewCanvasPage() {
 
       const newDiagram = await response.json();
 
-      // Redirect to the canvas editor
-      router.push(`/canvas/${newDiagram.id}`);
+      // Update with real ID via sessionStorage
+      sessionStorage.setItem('optimistic-canvas-real-id', newDiagram.id);
+
+      // Redirect to real canvas URL (this will replace browser history)
+      router.replace(`/canvas/${newDiagram.id}`);
     } catch (err: any) {
       console.error('Failed to create canvas:', err);
       setError(err.message || 'Failed to create canvas');
-      setCreating(false);
+      // Clear optimistic data on error
+      sessionStorage.removeItem('optimistic-canvas');
     }
   };
 
+  // Only show error state, no loading state (optimistic!)
   if (error) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -82,12 +100,6 @@ export default function NewCanvasPage() {
     );
   }
 
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-        <p className="text-gray-600">Creating new canvas...</p>
-      </div>
-    </main>
-  );
+  // Render nothing while redirecting (no spinner!)
+  return null;
 }

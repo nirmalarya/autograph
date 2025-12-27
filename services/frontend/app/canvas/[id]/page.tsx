@@ -89,7 +89,51 @@ export default function CanvasEditorPage() {
     try {
       const token = localStorage.getItem('access_token');
       const payload = JSON.parse(atob(token!.split('.')[1]));
-      
+
+      // Check if this is an optimistic (temporary) diagram
+      if (diagramId.startsWith('temp-')) {
+        const optimisticData = sessionStorage.getItem('optimistic-canvas');
+        if (optimisticData) {
+          const tempDiagram = JSON.parse(optimisticData);
+          // Show temp diagram immediately (OPTIMISTIC UI - no spinner!)
+          setDiagram({
+            id: tempDiagram.id,
+            title: tempDiagram.title,
+            file_type: tempDiagram.file_type,
+            canvas_data: {
+              store: {},
+              schema: {
+                schemaVersion: 2,
+                sequences: {
+                  com: 5,
+                },
+              },
+            },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            current_version: 1,
+            pending: true, // Flag to indicate this is pending server creation
+          });
+          setLoading(false);
+
+          // Check for real ID from background sync
+          const checkRealId = setInterval(() => {
+            const realId = sessionStorage.getItem('optimistic-canvas-real-id');
+            if (realId) {
+              clearInterval(checkRealId);
+              sessionStorage.removeItem('optimistic-canvas');
+              sessionStorage.removeItem('optimistic-canvas-real-id');
+              // Redirect to real diagram
+              router.replace(`/canvas/${realId}`);
+            }
+          }, 100);
+
+          // Cleanup interval after 10 seconds
+          setTimeout(() => clearInterval(checkRealId), 10000);
+          return;
+        }
+      }
+
       // Try to fetch from server first
       if (isOnline) {
         try {
@@ -110,7 +154,7 @@ export default function CanvasEditorPage() {
 
           const data = await response.json();
           setDiagram(data);
-          
+
           // Cache the diagram for offline access
           await cacheDiagram({
             id: data.id,
@@ -122,13 +166,13 @@ export default function CanvasEditorPage() {
             updated_at: data.updated_at,
             cached_at: Date.now(),
           });
-          
+
           return;
         } catch (fetchError) {
           console.warn('Failed to fetch from server, trying cache...', fetchError);
         }
       }
-      
+
       // If offline or fetch failed, try to load from cache
       const cachedDiagram = await getCachedDiagram(diagramId);
       if (cachedDiagram) {
