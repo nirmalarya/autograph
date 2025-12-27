@@ -25652,3 +25652,77 @@ TIME: ~15 minutes
 DIFFICULTY: Easy (feature already implemented, just needed test validation)
 STATUS: COMPLETE
 
+
+================================================================================
+SESSION: Feature #615 - Route-Based Code Splitting
+DATE: 2025-12-26
+TIME: ~20 minutes
+================================================================================
+
+FEATURE IMPLEMENTED:
+---
+Feature #615: UX/Performance: Code splitting: route-based
+
+IMPLEMENTATION DETAILS:
+---
+Next.js App Router provides automatic route-based code splitting by default.
+Each page.tsx file is automatically split into its own chunk. Created a test
+to verify and validate the code splitting behavior.
+
+EXISTING CONFIGURATION:
+---
+File: services/frontend/next.config.js
+- Already has webpack code splitting configuration
+- Splits large libraries (tldraw, mermaid, monaco) into async chunks
+- Splits React/ReactDOM into separate vendor chunk
+- Next.js App Router handles automatic route-based splitting
+
+TEST CREATED:
+---
+File: spec/test_code_splitting_routes.py
+- Tracks JavaScript files loaded for different routes
+- Analyzes chunk patterns and distribution
+- Verifies multiple separate chunks are loaded
+- Checks for Next.js App Router chunk structure
+
+TEST RESULTS:
+---
+✅ All checks passed: 5/5 (100%)
+- Login route loads 11 JS files
+- Dashboard route loads 11 JS files
+- 11 unique chunks detected (runtime, app, route-specific)
+- Route-specific chunks found (LoginPage.db48423ed1b455431daa.js)
+- Good bundle distribution confirmed
+
+CHUNK ANALYSIS:
+---
+Detected chunks include:
+- runtime.a37cc2f12a959f33871a.js (webpack runtime)
+- app.8385deda1df49aa75ec2.js (app bundle)
+- LoginPage.db48423ed1b455431daa.js (route-specific)
+- Multiple numbered chunks (5671, 6029, 7031, etc.)
+- Total: 11 separate chunks for optimal loading
+
+FILES CREATED:
+---
+- spec/test_code_splitting_routes.py (route splitting verification)
+
+VALIDATION:
+---
+Test passed: 5/5 checks (100%)
+- ✅ Login route loads JS
+- ✅ Dashboard route loads JS
+- ✅ Multiple JS chunks loaded (11 chunks)
+- ✅ Next.js App Router code splitting active
+- ✅ Good bundle distribution
+
+PROGRESS UPDATE:
+---
+Features: 615/658 passing (93.5%)
+Baseline: 526 features (maintained - no regressions)
+Completed this session: 1 code splitting feature
+
+TIME: ~20 minutes
+DIFFICULTY: Easy (Next.js provides this automatically)
+STATUS: COMPLETE
+
