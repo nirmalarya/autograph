@@ -1788,4 +1788,500 @@
       overscroll-behavior: contain;
     }
   }
+
+  /* ===== DESKTOP RESPONSIVE DESIGN (>1024px) ===== */
+  /* Full layout with 3-column grid and all panels visible */
+
+  /* Desktop breakpoints */
+  @media (min-width: 1025px) {
+    /* Typography - optimized for larger screens */
+    body {
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    h1 {
+      font-size: 2.5rem; /* 40px */
+      line-height: 1.2;
+      margin-bottom: 1.5rem;
+    }
+
+    h2 {
+      font-size: 2rem; /* 32px */
+      line-height: 1.3;
+      margin-bottom: 1.25rem;
+    }
+
+    h3 {
+      font-size: 1.5rem; /* 24px */
+      line-height: 1.4;
+      margin-bottom: 1rem;
+    }
+
+    h4 {
+      font-size: 1.25rem; /* 20px */
+      line-height: 1.4;
+      margin-bottom: 0.75rem;
+    }
+
+    h5, h6 {
+      font-size: 1rem; /* 16px */
+      line-height: 1.5;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Layout Container - max width for readability */
+    .container {
+      max-width: 1920px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    .container-wide {
+      max-width: 2560px;
+      margin: 0 auto;
+      padding: 0 3rem;
+    }
+
+    /* 3-Column Grid System */
+    .desktop-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2rem;
+    }
+
+    .desktop-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2rem;
+    }
+
+    .desktop-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+    }
+
+    /* Sidebar + Main + Aside Layout (classic 3-panel) */
+    .desktop-layout-3col {
+      display: grid;
+      grid-template-columns: 280px 1fr 320px;
+      gap: 2rem;
+      min-height: calc(100vh - 4rem);
+    }
+
+    /* Sidebar + Main Layout (2-panel) */
+    .desktop-layout-2col {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 2rem;
+    }
+
+    /* Panels - full visibility on desktop */
+    .desktop-panel {
+      display: block !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+    }
+
+    .desktop-sidebar {
+      position: sticky;
+      top: 4rem;
+      height: calc(100vh - 6rem);
+      overflow-y: auto;
+    }
+
+    .desktop-main {
+      min-height: calc(100vh - 6rem);
+    }
+
+    .desktop-aside {
+      position: sticky;
+      top: 4rem;
+      height: calc(100vh - 6rem);
+      overflow-y: auto;
+    }
+
+    /* Navigation - horizontal on desktop */
+    nav.desktop-nav {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    nav.desktop-nav ul {
+      display: flex;
+      flex-direction: row;
+      gap: 1rem;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Cards - larger on desktop */
+    .desktop-card {
+      padding: 2rem;
+      border-radius: 0.75rem;
+    }
+
+    .desktop-card-sm {
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+    }
+
+    /* Touch targets - smaller on desktop (mouse precision) */
+    button,
+    a,
+    [role="button"],
+    input[type="button"],
+    input[type="submit"] {
+      min-height: 40px;
+      min-width: 40px;
+      padding: 0.625rem 1.25rem;
+    }
+
+    /* Forms - multi-column on desktop */
+    .desktop-form-2col {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    .desktop-form-3col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+
+    /* Modal dialogs - larger on desktop */
+    .desktop-modal {
+      max-width: 800px;
+      width: 90%;
+    }
+
+    .desktop-modal-lg {
+      max-width: 1200px;
+      width: 95%;
+    }
+
+    /* Data tables - full features visible */
+    .desktop-table {
+      width: 100%;
+      overflow-x: visible;
+    }
+
+    .desktop-table th,
+    .desktop-table td {
+      padding: 1rem 1.5rem;
+    }
+
+    /* Show all table columns on desktop */
+    .desktop-table .desktop-show {
+      display: table-cell !important;
+    }
+
+    /* Spacing - generous on desktop */
+    .desktop-space-y-sm > * + * {
+      margin-top: 1rem;
+    }
+
+    .desktop-space-y-md > * + * {
+      margin-top: 1.5rem;
+    }
+
+    .desktop-space-y-lg > * + * {
+      margin-top: 2rem;
+    }
+
+    /* Images - larger previews */
+    .desktop-img-preview {
+      max-width: 600px;
+      max-height: 400px;
+    }
+
+    /* Hover effects - desktop only */
+    .desktop-hover:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+      transition: all 0.2s ease;
+    }
+
+    /* Tooltips - show on hover */
+    .desktop-tooltip {
+      position: relative;
+    }
+
+    .desktop-tooltip:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 0.25rem;
+      white-space: nowrap;
+      font-size: 0.875rem;
+      z-index: 1000;
+      margin-bottom: 0.5rem;
+    }
+  }
+
+  /* Large Desktop (>1440px) - even more space */
+  @media (min-width: 1441px) {
+    .container {
+      max-width: 1920px;
+      padding: 0 3rem;
+    }
+
+    .desktop-layout-3col {
+      grid-template-columns: 320px 1fr 380px;
+      gap: 3rem;
+    }
+
+    .desktop-grid-3 {
+      gap: 3rem;
+    }
+
+    .desktop-grid-4 {
+      grid-template-columns: repeat(4, 1fr);
+      gap: 2rem;
+    }
+
+    /* Ultra-wide support */
+    .desktop-grid-6 {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 2rem;
+    }
+  }
+
+  /* Extra Large Desktop (>1920px) - ultra-wide monitors */
+  @media (min-width: 1921px) {
+    .container {
+      max-width: 2560px;
+      padding: 0 4rem;
+    }
+
+    .desktop-layout-3col {
+      grid-template-columns: 380px 1fr 420px;
+      gap: 4rem;
+    }
+
+    .desktop-grid-3 {
+      gap: 4rem;
+    }
+
+    /* Support for 4K displays */
+    h1 {
+      font-size: 3rem; /* 48px */
+    }
+
+    h2 {
+      font-size: 2.25rem; /* 36px */
+    }
+  }
+
+  /* Desktop Utility Classes */
+  @media (min-width: 1025px) {
+    .desktop-hidden {
+      display: none !important;
+    }
+
+    .desktop-visible {
+      display: block !important;
+    }
+
+    .desktop-flex {
+      display: flex !important;
+    }
+
+    .desktop-grid {
+      display: grid !important;
+    }
+
+    .desktop-inline-flex {
+      display: inline-flex !important;
+    }
+
+    /* Flexbox utilities */
+    .desktop-flex-row {
+      flex-direction: row !important;
+    }
+
+    .desktop-flex-col {
+      flex-direction: column !important;
+    }
+
+    .desktop-flex-wrap {
+      flex-wrap: wrap !important;
+    }
+
+    .desktop-flex-nowrap {
+      flex-wrap: nowrap !important;
+    }
+
+    .desktop-justify-start {
+      justify-content: flex-start !important;
+    }
+
+    .desktop-justify-center {
+      justify-content: center !important;
+    }
+
+    .desktop-justify-end {
+      justify-content: flex-end !important;
+    }
+
+    .desktop-justify-between {
+      justify-content: space-between !important;
+    }
+
+    .desktop-items-start {
+      align-items: flex-start !important;
+    }
+
+    .desktop-items-center {
+      align-items: center !important;
+    }
+
+    .desktop-items-end {
+      align-items: flex-end !important;
+    }
+
+    /* Width utilities */
+    .desktop-w-auto {
+      width: auto !important;
+    }
+
+    .desktop-w-full {
+      width: 100% !important;
+    }
+
+    .desktop-w-1/2 {
+      width: 50% !important;
+    }
+
+    .desktop-w-1/3 {
+      width: 33.333333% !important;
+    }
+
+    .desktop-w-2/3 {
+      width: 66.666667% !important;
+    }
+
+    .desktop-w-1/4 {
+      width: 25% !important;
+    }
+
+    .desktop-w-3/4 {
+      width: 75% !important;
+    }
+
+    /* Text alignment */
+    .desktop-text-left {
+      text-align: left !important;
+    }
+
+    .desktop-text-center {
+      text-align: center !important;
+    }
+
+    .desktop-text-right {
+      text-align: right !important;
+    }
+
+    /* Spacing utilities */
+    .desktop-p-0 { padding: 0 !important; }
+    .desktop-p-1 { padding: 0.25rem !important; }
+    .desktop-p-2 { padding: 0.5rem !important; }
+    .desktop-p-4 { padding: 1rem !important; }
+    .desktop-p-6 { padding: 1.5rem !important; }
+    .desktop-p-8 { padding: 2rem !important; }
+
+    .desktop-m-0 { margin: 0 !important; }
+    .desktop-m-1 { margin: 0.25rem !important; }
+    .desktop-m-2 { margin: 0.5rem !important; }
+    .desktop-m-4 { margin: 1rem !important; }
+    .desktop-m-6 { margin: 1.5rem !important; }
+    .desktop-m-8 { margin: 2rem !important; }
+
+    .desktop-mt-0 { margin-top: 0 !important; }
+    .desktop-mt-2 { margin-top: 0.5rem !important; }
+    .desktop-mt-4 { margin-top: 1rem !important; }
+    .desktop-mt-8 { margin-top: 2rem !important; }
+
+    .desktop-mb-0 { margin-bottom: 0 !important; }
+    .desktop-mb-2 { margin-bottom: 0.5rem !important; }
+    .desktop-mb-4 { margin-bottom: 1rem !important; }
+    .desktop-mb-8 { margin-bottom: 2rem !important; }
+  }
+
+  /* ===== DESKTOP PERFORMANCE OPTIMIZATIONS ===== */
+  @media (min-width: 1025px) {
+    /* Enable GPU acceleration for smoother animations */
+    .desktop-gpu-accelerate {
+      transform: translateZ(0);
+      will-change: transform;
+    }
+
+    /* Smooth scrolling */
+    html {
+      scroll-behavior: smooth;
+    }
+
+    /* Optimize hover effects */
+    * {
+      transition-duration: 0.2s;
+      transition-timing-function: ease;
+    }
+
+    /* High refresh rate monitor support */
+    @media (min-resolution: 120dpi) {
+      * {
+        transition-duration: 0.15s;
+      }
+    }
+
+    /* Optimize mouse interactions */
+    button:hover,
+    a:hover,
+    [role="button"]:hover {
+      cursor: pointer;
+    }
+
+    /* Focus visible for keyboard navigation */
+    *:focus-visible {
+      outline: 2px solid hsl(var(--ring));
+      outline-offset: 2px;
+    }
+
+    /* Optimize scrollable areas */
+    .desktop-scrollable {
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--muted)) transparent;
+    }
+
+    /* Custom scrollbar for webkit browsers */
+    .desktop-scrollable::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .desktop-scrollable::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .desktop-scrollable::-webkit-scrollbar-thumb {
+      background: hsl(var(--muted));
+      border-radius: 4px;
+    }
+
+    .desktop-scrollable::-webkit-scrollbar-thumb:hover {
+      background: hsl(var(--muted-foreground));
+    }
+  }
 }
